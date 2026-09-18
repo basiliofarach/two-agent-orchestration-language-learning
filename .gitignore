@@ -1,0 +1,44 @@
+# Generated documentation site
+site/
+
+# Literature review PDF — not part of this artifact
+*.pdf
+LiteratureReview.pdf
+
+# AI assistant rules — kept out of the graded artifact
+CLAUDE.md
+.cursor/
+.claude/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Node
+node_modules/
+dist/
+build/
+.react-router/
+*.tsbuildinfo
+
+# Models — pinned by SHA in the ADR, never committed as weights
+models/
+*.gguf
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo

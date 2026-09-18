@@ -1,0 +1,81 @@
+# Documentation site (Zensical, MIT). Markdown in docs/ remains the source of truth.
+# After the repo is on GitHub, set site_url to https://<user>.github.io/<repo>/
+# and repo_url to the repository URL so search, sitemap, and edit links work.
+
+[project]
+site_name = "Supervised two-agent language-learning tutor"
+site_description = "Compliance-evidence prototype for EU AI Act Articles 10, 12, 14 and 15."
+site_author = "Basilio Farach"
+docs_dir = "docs"
+site_dir = "site"
+# site_url = "https://<user>.github.io/<repo>/"
+# repo_url = "https://github.com/<user>/<repo>"
+# edit_uri = "edit/main/docs/"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Requirements" = "requirements.md" },
+  { "Architecture" = [
+    { "Architecture" = "architecture/ARCHITECTURE.md" },
+    { "Implementation plan" = "architecture/IMPLEMENTATION-PLAN.md" },
+  ] },
+  { "Decisions" = [
+    { "Index" = "decisions/README.md" },
+    { "DEC-0001 Interface-first OOP" = "decisions/0001-interface-first-oop-di-capability-scoping.md" },
+    { "DEC-0002 Pydantic only" = "decisions/0002-pydantic-basemodel-only.md" },
+    { "DEC-0003 uv FastAPI wireup" = "decisions/0003-python-toolchain-uv-fastapi-wireup.md" },
+    { "DEC-0004 LangGraph" = "decisions/0004-langgraph-orchestration-backbone.md" },
+    { "DEC-0005 Oversight gates" = "decisions/0005-oversight-gates-chain-of-responsibility.md" },
+    { "DEC-0006 Postgres pgvector" = "decisions/0006-postgres-pgvector-single-store.md" },
+    { "DEC-0007 Local pinned model" = "decisions/0007-local-pinned-open-weight-model.md" },
+    { "DEC-0008 React Router dashboard" = "decisions/0008-frontend-react-router-v8-shadcn.md" },
+    { "DEC-0009 LangGraph state" = "decisions/0009-langgraph-state-wraps-frozen-turnstate.md" },
+  ] },
+]
+
+[project.theme]
+language = "en"
+features = [
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+  "toc.follow",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tasklist.custom_checkbox = true

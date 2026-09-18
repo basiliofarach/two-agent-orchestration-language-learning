@@ -1,0 +1,30 @@
+# Decision records
+
+One record per choice: what was decided, what was rejected, and why. These document *decisions and their rationale* — the requirements live in
+[../requirements.md](../requirements.md), the architecture in
+[../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), and the build
+order in [../architecture/IMPLEMENTATION-PLAN.md](../architecture/IMPLEMENTATION-PLAN.md).
+
+Format: [MADR](https://adr.github.io/madr/). Immutable once `Accepted` — supersede
+rather than edit, so each decision keeps a stable identifier.
+
+| ID | Decision | Status |
+|----|----------|--------|
+| [DEC-0001](0001-interface-first-oop-di-capability-scoping.md) | Interface-first OOP; DI as capability scoping | Accepted |
+| [DEC-0002](0002-pydantic-basemodel-only.md) | Pydantic `BaseModel` as the only model type | Accepted |
+| [DEC-0003](0003-python-toolchain-uv-fastapi-wireup.md) | uv + FastAPI + wireup | Accepted |
+| [DEC-0004](0004-langgraph-orchestration-backbone.md) | LangGraph as deterministic backbone | Accepted |
+| [DEC-0005](0005-oversight-gates-chain-of-responsibility.md) | Oversight gates as ordered handlers across the graph | Accepted |
+| [DEC-0006](0006-postgres-pgvector-single-store.md) | Postgres + pgvector, single store | Accepted |
+| [DEC-0007](0007-local-pinned-open-weight-model.md) | Local pinned Qwen3-8B behind a provider port | Accepted |
+| [DEC-0008](0008-frontend-react-router-v8-shadcn.md) | React Router v8 + fs-routes + shadcn/ui | Accepted |
+| [DEC-0009](0009-langgraph-state-wraps-frozen-turnstate.md) | LangGraph state wraps a frozen `TurnState` | Accepted |
+
+## Article coverage
+
+| AI Act article | Records |
+|---|---|
+| Art. 10 — Data governance | 0002, 0006, 0007 |
+| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009 |
+| Art. 14 — Human oversight | 0004, 0005, 0008 |
+| Art. 15 — Accuracy and robustness | 0001, 0005, 0007 |
