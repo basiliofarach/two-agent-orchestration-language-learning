@@ -1,0 +1,69 @@
+# Unified hook config for prek and pre-commit.
+# Install: `prek install` (or `pre-commit install`)
+# Run:     `prek run --all-files`
+
+default_language_version:
+  python: python3.12
+
+exclude: |
+  (?x)^(
+    site/|
+    \.venv/|
+    \.ruff_cache/|
+    \.mypy_cache/|
+    \.pytest_cache/|
+    \.import_linter_cache/
+  )
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+        exclude: (^uv\.lock$)
+      - id: check-json
+        files: '\.(json|code-workspace)$'
+        types: [file]
+        exclude: '(tsconfig.*\.json|\.vscode/.*\.json)$'
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
+      - id: detect-private-key
+      - id: debug-statements
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.2
+    hooks:
+      - id: markdownlint-cli2
+        files: \.md$
+        exclude: '(^CHANGELOG\.md$|^site/)'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        types_or: [python, pyi]
+        args: ["--fix"]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        name: mypy (tutor-core)
+        files: ^tutor-core/
+        additional_dependencies:
+          - pydantic>=2.10
+        args:
+          - --config-file=mypy.ini
+
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.5.14
+    hooks:
+      - id: biome-check
+        types_or: [javascript, jsx, ts, tsx, css]

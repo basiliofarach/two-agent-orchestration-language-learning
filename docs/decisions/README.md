@@ -1,15 +1,17 @@
 # Decision records
 
-One record per choice: what was decided, what was rejected, and why. These document *decisions and their rationale* — the requirements live in
+One record per choice: what was decided, what was rejected, and why. These
+document *decisions and their rationale* — the requirements live in
 [../requirements.md](../requirements.md), the architecture in
-[../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), and the build
-order in [../architecture/IMPLEMENTATION-PLAN.md](../architecture/IMPLEMENTATION-PLAN.md).
+[../architecture/ARCHITECTURE.md](../architecture/ARCHITECTURE.md), and the
+build order in
+[../architecture/IMPLEMENTATION-PLAN.md](../architecture/IMPLEMENTATION-PLAN.md).
 
-Format: [MADR](https://adr.github.io/madr/). Immutable once `Accepted` — supersede
-rather than edit, so each decision keeps a stable identifier.
+Format: [MADR](https://adr.github.io/madr/). Immutable once `Accepted` —
+supersede rather than edit, so each decision keeps a stable identifier.
 
 | ID | Decision | Status |
-|----|----------|--------|
+| ---- | ---------- | -------- |
 | [DEC-0001](0001-interface-first-oop-di-capability-scoping.md) | Interface-first OOP; DI as capability scoping | Accepted |
 | [DEC-0002](0002-pydantic-basemodel-only.md) | Pydantic `BaseModel` as the only model type | Accepted |
 | [DEC-0003](0003-python-toolchain-uv-fastapi-wireup.md) | uv + FastAPI + wireup | Accepted |
@@ -23,7 +25,7 @@ rather than edit, so each decision keeps a stable identifier.
 ## Article coverage
 
 | AI Act article | Records |
-|---|---|
+| --- | --- |
 | Art. 10 — Data governance | 0002, 0006, 0007 |
 | Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009 |
 | Art. 14 — Human oversight | 0004, 0005, 0008 |

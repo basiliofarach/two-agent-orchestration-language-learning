@@ -1,0 +1,32 @@
+target-version = "py312"
+src = ["tutor-core/src", "tutor-api/src"]
+exclude = [
+    ".venv",
+    "site",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".pytest_cache",
+]
+
+[lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "TID",
+]
+
+[lint.flake8-tidy-imports.banned-api]
+"dataclasses".msg = "DEC-0002: use Pydantic BaseModel, not dataclasses"
+"dataclasses.dataclass".msg = "DEC-0002: dataclasses are prohibited"
+"typing.TypedDict".msg = "DEC-0002: TypedDict is prohibited for domain data"
+"typing.NamedTuple".msg = "DEC-0002: NamedTuple is prohibited for domain data"
+
+[lint.isort]
+known-first-party = ["tutor_core", "tutor_api"]
+
+[format]
+docstring-code-format = true

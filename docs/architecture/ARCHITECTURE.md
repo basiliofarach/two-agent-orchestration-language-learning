@@ -4,22 +4,23 @@ Architectural description of the prototype: layers, module structure, every
 interface, the data model, and the runtime behaviour of a tutoring turn.
 
 **This document is the implementer source of truth**, together with
-[../requirements.md](../requirements.md) (`REQ-*`) and [../decisions/](../decisions/).
-Bare section numbers below refer to **this file**. §12 traces each requirement to the
-element that carries it.
+[../requirements.md](../requirements.md) (`REQ-*`) and
+[../decisions/](../decisions/). Bare section numbers below refer to **this
+file**. §12 traces each requirement to the element that carries it.
 
-Scope is the technical and compliance layer only. Pedagogical effectiveness is out of
-scope.
+Scope is the technical and compliance layer only. Pedagogical effectiveness is
+out of scope.
 
 ---
 
 ## 1. System context
 
-REQ-COMP. Adult tutor submits a learner query; PII is redacted at the input boundary;
-the Data Retrieval Agent reads the curated knowledge base and the minimal history
-schema; the Content Generation Agent (one local LLM) produces a draft; grammar, safety,
-and source-support checks run; the tutor dashboard is the only path to the learner. The
-minor never operates the system. Every step appends to the per-turn audit log.
+REQ-COMP. Adult tutor submits a learner query; PII is redacted at the input
+boundary; the Data Retrieval Agent reads the curated knowledge base and the
+minimal history schema; the Content Generation Agent (one local LLM) produces a
+draft; grammar, safety, and source-support checks run; the tutor dashboard is
+the only path to the learner. The minor never operates the system. Every step
+appends to the per-turn audit log.
 
 ```mermaid
 flowchart LR
@@ -57,12 +58,13 @@ flowchart LR
     style minor stroke-dasharray: 5 5
 ```
 
-No external network dependency exists at runtime. Learner data never leaves the host —
-a structural property, not a contractual one (DEC-0007).
+No external network dependency exists at runtime. Learner data never leaves the
+host — a structural property, not a contractual one (DEC-0007).
 
 ## 2. Architectural style and the dependency rule
 
-Hexagonal (ports and adapters) over four layers, with a strict inward dependency rule.
+Hexagonal (ports and adapters) over four layers, with a strict inward dependency
+rule.
 
 ```mermaid
 flowchart TB
@@ -94,17 +96,18 @@ flowchart TB
     style dom fill:#1f6f4a,color:#fff
 ```
 
-**The rule.** Arrows point inward only. `domain` imports no framework — no FastAPI, no
-LangGraph, no SQLAlchemy, no HTTP client. `infrastructure` depends on `domain` because
-it *implements* its ports; the reverse never happens. Enforced by `import-linter` in
-CI, not by convention.
+**The rule.** Arrows point inward only. `domain` imports no framework — no
+FastAPI, no LangGraph, no SQLAlchemy, no HTTP client. `infrastructure` depends
+on `domain` because it *implements* its ports; the reverse never happens.
+Enforced by `import-linter` in CI, not by convention.
 
-This is what makes the compliance claims testable: the domain runs with every adapter
-substituted, so a scripted scenario replays without a database or a model.
+This is what makes the compliance claims testable: the domain runs with every
+adapter substituted, so a scripted scenario replays without a database or a
+model.
 
 ## 3. Module structure
 
-```
+```text
 tutor-core/src/tutor_core/           # pure domain + application, no I/O
   domain/
     models/        turn.py · audit.py · retrieval.py · learner.py · safety.py · verdict.py
@@ -178,15 +181,16 @@ classDiagram
     PgVectorKnowledgeBase ..> EmbeddingPort
 ```
 
-`PiiRedactionPort` runs at the input boundary, in real time, before the prompt reaches
-any agent or the log (REQ-MINOR). `KnowledgeBasePort` exposes no open-web method
-(REQ-KB). `LearnerHistoryPort` is read-only and allowlist-bound (REQ-HISTORY).
+`PiiRedactionPort` runs at the input boundary, in real time, before the prompt
+reaches any agent or the log (REQ-MINOR). `KnowledgeBasePort` exposes no
+open-web method (REQ-KB). `LearnerHistoryPort` is read-only and allowlist-bound
+(REQ-HISTORY).
 
 ### 4.2 Generation and output checks
 
-REQ-COMP attaches three checks to the Content Generation Agent — grammar, safety and
-source-support — plus an AI-generated disclosure and refusal for out-of-scope prompts
-(REQ-ACCURACY, REQ-MINOR).
+REQ-COMP attaches three checks to the Content Generation Agent — grammar, safety
+and source-support — plus an AI-generated disclosure and refusal for
+out-of-scope prompts (REQ-ACCURACY, REQ-MINOR).
 
 ```mermaid
 classDiagram
@@ -242,18 +246,20 @@ classDiagram
     SourceSupportPort <|.. ClaimSpanVerifier
 ```
 
-`SourceSupportPort` implements REQ-ACCURACY's hallucination control: it verifies that
-key claims in a generated explanation are supported by retrieved sources and **flags
-unsupported spans for human review** rather than silently removing them.
+`SourceSupportPort` implements REQ-ACCURACY's hallucination control: it verifies
+that key claims in a generated explanation are supported by retrieved sources
+and **flags unsupported spans for human review** rather than silently removing
+them.
 
-`LanguageModelPort` takes a prompt and returns text. It has no retrieval method and no
-HTTP client, so a prompt-injected instruction to fetch external content has no
-reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications, tool-scoping).
-`revision()` supplies the pinned SHA written into every audit record.
+`LanguageModelPort` takes a prompt and returns text. It has no retrieval method
+and no HTTP client, so a prompt-injected instruction to fetch external content
+has no reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications,
+tool-scoping). `revision()` supplies the pinned SHA written into every audit
+record.
 
 `FixedPromptTemplate` carries the tone constraints and target proficiency level;
-`template_version()` is logged, because REQ-ACCURACY treats prompt formulation as a
-testable accuracy control rather than a cosmetic concern.
+`template_version()` is logged, because REQ-ACCURACY treats prompt formulation
+as a testable accuracy control rather than a cosmetic concern.
 
 ### 4.3 Oversight, audit and policy
 
@@ -306,22 +312,22 @@ classDiagram
     ClockPort <|.. FrozenClock
 ```
 
-`AuditSinkPort` declares `append()` and nothing else — no update, no delete (Art. 12,
-REQ-AUDIT).
+`AuditSinkPort` declares `append()` and nothing else — no update, no delete
+(Art. 12, REQ-AUDIT).
 
 `PolicyArtifactPort` implements REQ-POLICY: a machine-readable, versioned
-deployment-layer artifact encoding allowed and denied actions, escalation requirements,
-evidentiary logging, and mappings to the AI Act. Its version is written into every
-audit record, so the log records not only what was generated but **against which rule
-version it was checked**.
+deployment-layer artifact encoding allowed and denied actions, escalation
+requirements, evidentiary logging, and mappings to the AI Act. Its version is
+written into every audit record, so the log records not only what was generated
+but **against which rule version it was checked**.
 
 ## 5. Domain model
 
 Pydantic v2 throughout; `dataclass` prohibited (DEC-0002). **Audit and evidence
 records** (`TurnAuditRecord`, `HumanAction`, `GateVerdict`) are frozen. Working
 turn state is not: `TurnState` is accumulated across the turn, and how that
-accumulation is represented is left to implementation. Immutability is required of
-the record written to the log, not of the in-flight object.
+accumulation is represented is left to implementation. Immutability is required
+of the record written to the log, not of the in-flight object.
 
 ```mermaid
 classDiagram
@@ -413,23 +419,24 @@ classDiagram
     TurnAuditRecord *-- HumanAction
 ```
 
-Frozen audit types use `ConfigDict(frozen=True, extra="forbid")`. Sequence fields on
-those types are `tuple`, never `list` — a mutable member would defeat the frozen
-guarantee. The in-memory type of `decoding_params` is left to implementation; the
-log must record the parameters REQ-AUDIT names.
+Frozen audit types use `ConfigDict(frozen=True, extra="forbid")`. Sequence
+fields on those types are `tuple`, never `list` — a mutable member would defeat
+the frozen guarantee. The in-memory type of `decoding_params` is left to
+implementation; the log must record the parameters REQ-AUDIT names.
 
 Two details that follow REQ-AUDIT:
 
-- **The prompt is stored, not digested.** The log records the learner prompt. Data
-  protection is achieved as REQ-MINOR prescribes — **real-time PII redaction at the
-  input boundary** — so what is logged is the redacted prompt, with the categories
-  redacted recorded alongside it.
-- **Output before *and* after checks.** Both are stored; `human_action.edited_output`
-  captures a third state when the tutor edits.
+- **The prompt is stored, not digested.** The log records the learner prompt.
+  Data protection is achieved as REQ-MINOR prescribes — **real-time PII
+  redaction at the input boundary** — so what is logged is the redacted prompt,
+  with the categories redacted recorded alongside it.
+- **Output before *and* after checks.** Both are stored;
+  `human_action.edited_output` captures a third state when the tutor edits.
 
 ## 6. Oversight gate chain
 
-Ordered handlers across the graph (DEC-0005, REQ-GATES). Four gates, one class each.
+Ordered handlers across the graph (DEC-0005, REQ-GATES). Four gates, one class
+each.
 
 ```mermaid
 classDiagram
@@ -480,22 +487,22 @@ classDiagram
     TurnOrchestrator ..> PolicyArtifactPort : rule version per verdict
 ```
 
-**There is no single-pass `run()` over a finished turn.** Each gate is invoked at its
-own graph node, because REQ-GATES fixes different positions for different gates. A
-single pass would require retrieval and generation to have already executed before any
-gate is consulted, making the permission and conflict gates detective rather than
-preventive — the failure DEC-0005 names explicitly.
+**There is no single-pass `run()` over a finished turn.** Each gate is invoked
+at its own graph node, because REQ-GATES fixes different positions for different
+gates. A single pass would require retrieval and generation to have already
+executed before any gate is consulted, making the permission and conflict gates
+detective rather than preventive — the failure DEC-0005 names explicitly.
 
 Invariants:
 
-- A gate **returns a verdict; it never mutates** the turn. A gate permitted to rewrite
-  content would make the log ambiguous about what the model produced.
-- **A non-pass verdict routes to human review, not to the next pipeline stage.** A
-  permission `stop` means retrieval does not run.
-- **Every gate that had sufficient input to evaluate is logged**, fired or not, with
-  its `policy_rule_id`. A gate never reached because an earlier gate stopped the turn is
-  recorded as `not_evaluated` with the reason. The log distinguishes *checked and
-  passed*, *checked and fired*, and *not reached*.
+- A gate **returns a verdict; it never mutates** the turn. A gate permitted to
+  rewrite content would make the log ambiguous about what the model produced.
+- **A non-pass verdict routes to human review, not to the next pipeline stage.**
+  A permission `stop` means retrieval does not run.
+- **Every gate that had sufficient input to evaluate is logged**, fired or not,
+  with its `policy_rule_id`. A gate never reached because an earlier gate
+  stopped the turn is recorded as `not_evaluated` with the reason. The log
+  distinguishes *checked and passed*, *checked and fired*, and *not reached*.
 - A failure inside a gate is a `stop`, not a `pass`. Fail closed.
 
 ## 7. Persistence
@@ -591,20 +598,20 @@ erDiagram
 retrievable until reviewed. `learner.retain_until` carries the REQ-MINOR GDPR
 retention policy, enforced by a scheduled job in `tutor-api/retention/`.
 
-`turn_audit` and `gate_evaluation` are append-only, enforced twice — a `BEFORE UPDATE
-OR DELETE` trigger, and an application role granted only `INSERT` and `SELECT`
-(DEC-0006). `record_hash` chains each record to its predecessor, giving the
-hash-chained execution path of REQ-AUDIT that an auditor can walk.
+`turn_audit` and `gate_evaluation` are append-only, enforced twice — a `BEFORE
+UPDATE OR DELETE` trigger, and an application role granted only `INSERT` and
+`SELECT` (DEC-0006). `record_hash` chains each record to its predecessor, giving
+the hash-chained execution path of REQ-AUDIT that an auditor can walk.
 
 ## 8. Runtime view
 
 ### 8.1 Control flow
 
-REQ-GATES, plus two pipeline steps the gate table does not itself name: PII redaction
-(REQ-MINOR) before the permission gate, and output checks (REQ-ACCURACY) after
-generation. Grammar, safety and source-support are attached to the Content Generation
-Agent in REQ-COMP; making them an explicit state here is so the graph can interrupt
-on their flags.
+REQ-GATES, plus two pipeline steps the gate table does not itself name: PII
+redaction (REQ-MINOR) before the permission gate, and output checks
+(REQ-ACCURACY) after generation. Grammar, safety and source-support are attached
+to the Content Generation Agent in REQ-COMP; making them an explicit state here
+is so the graph can interrupt on their flags.
 
 ```mermaid
 stateDiagram-v2
@@ -702,17 +709,18 @@ sequenceDiagram
 
 ### 8.3 Invariants
 
-1. **PII redaction precedes everything**, including the audit write. No unredacted
-   learner text exists downstream of the boundary.
-2. **The permission gate precedes retrieval.** A preventive control: verifying scope
-   after a read proves nothing (DEC-0005, REQ-GATES).
-3. **Retrieval always precedes generation**, as a graph edge. No path reaches the
-   generation node without retrieval.
-4. **A gate's non-pass verdict halts the pipeline and routes to human review.** Gates
-   downstream of the halt are logged as `not_evaluated`, never run on absent input.
+1. **PII redaction precedes everything**, including the audit write. No
+   unredacted learner text exists downstream of the boundary.
+2. **The permission gate precedes retrieval.** A preventive control: verifying
+   scope after a read proves nothing (DEC-0005, REQ-GATES).
+3. **Retrieval always precedes generation**, as a graph edge. No path reaches
+   the generation node without retrieval.
+4. **A gate's non-pass verdict halts the pipeline and routes to human review.**
+   Gates downstream of the halt are logged as `not_evaluated`, never run on
+   absent input.
 5. **Every output carries an AI-generated disclosure** (REQ-COMP, REQ-MINOR).
-6. **Nothing reaches the learner without a tutor decision.** `pass` only means no gate
-   objected; approval is still required.
+6. **Nothing reaches the learner without a tutor decision.** `pass` only means
+   no gate objected; approval is still required.
 7. **Every transition appends a record** in the same transaction as the work it
    describes. A turn is fully logged or it did not happen.
 8. `stop` terminates the session and **preserves state**.
@@ -758,39 +766,41 @@ flowchart LR
 
 ## 10. Cross-cutting concerns
 
-**Time.** `ClockPort` injected everywhere; no `datetime.now()` in domain or application
-code. Replay determinism depends on it.
+**Time.** `ClockPort` injected everywhere; no `datetime.now()` in domain or
+application code. Replay determinism depends on it.
 
 **Composition.** `container.py` is the only site naming concrete classes. wireup
-validates lifetimes at startup, so a singleton retaining request-scoped learner state
-fails the boot rather than leaking one minor's history into another's session.
+validates lifetimes at startup, so a singleton retaining request-scoped learner
+state fails the boot rather than leaking one minor's history into another's
+session.
 
-**Retention.** `learner.retain_until` plus a scheduled purge, per REQ-MINOR's GDPR
-retention requirement. Purges are themselves logged.
+**Retention.** `learner.retain_until` plus a scheduled purge, per REQ-MINOR's
+GDPR retention requirement. Purges are themselves logged.
 
-**Non-discrimination.** REQ-MINOR requires periodic review of retrieval and generation
-outcomes across learner cohorts. Supported by a cohort-aggregation query over
-`turn_audit`; that cohort review is a human activity, not an automated control.
+**Non-discrimination.** REQ-MINOR requires periodic review of retrieval and
+generation outcomes across learner cohorts. Supported by a cohort-aggregation
+query over `turn_audit`; that cohort review is a human activity, not an
+automated control.
 
 **Errors.** A failure inside a gate is a `stop`, not a `pass`. Fail closed.
 
 ## 11. Gate ordering
 
-REQ-GATES and DEC-0005. Permission before retrieval, conflict before generation, human
-stop before the learner. Ordering is enforced by graph structure, not by the order of
-calls inside a method. An implementation that consults gates after the work they govern
-has already run would falsify REQ-GATES — which is why there is no single-pass chain
-over a finished turn (§6, DEC-0005).
+REQ-GATES and DEC-0005. Permission before retrieval, conflict before generation,
+human stop before the learner. Ordering is enforced by graph structure, not by
+the order of calls inside a method. An implementation that consults gates after
+the work they govern has already run would falsify REQ-GATES — which is why
+there is no single-pass chain over a finished turn (§6, DEC-0005).
 
-The post-retrieval property — that what came back stayed in bounds — needs no gate. It
-holds by construction, because `KnowledgeBasePort` exposes no open-web method and
-`LearnerHistoryPort` is allowlist-bound (DEC-0001, REQ-KB, REQ-HISTORY). The gate count
-stays at four.
+The post-retrieval property — that what came back stayed in bounds — needs no
+gate. It holds by construction, because `KnowledgeBasePort` exposes no open-web
+method and `LearnerHistoryPort` is allowlist-bound (DEC-0001, REQ-KB,
+REQ-HISTORY). The gate count stays at four.
 
 ## 12. Traceability — requirement to architecture
 
 | Requirement | Architectural element |
-|---|---|
+| --- | --- |
 | REQ-COMP Data Retrieval Agent | `DataRetrievalAgent`, `KnowledgeBasePort`, `LearnerHistoryPort`, `SourceRef` |
 | REQ-COMP Content Generation Agent, single LLM | `ContentGenerationAgent`, `LanguageModelPort` |
 | REQ-COMP grammar, safety and source-support | `GrammarCheckPort`, `SafetyClassifierPort`, `SourceSupportPort` |
@@ -817,14 +827,15 @@ stays at four.
 
 ## 13. Deliberate limitations
 
-- **Single learner, single tutor per session.** Concurrent multi-learner supervision is
-  out of scope.
-- **No authentication beyond a tutor identifier.** This prototype argues oversight
-  mechanics, not identity management.
-- **Drift gate is per-session.** REQ-GATES specifies monitoring behaviour against an
-  expected envelope; true cross-cohort drift detection needs a longitudinal corpus
-  this prototype does not collect. Report that bound with REQ-FIELD metrics.
-- **Non-discrimination review is manual.** The architecture supplies the query; the
-  periodic review is a human activity.
-- **8B model.** Rubric scores will trail a frontier model; the object of study is the
-  compliance architecture, not model quality (DEC-0007).
+- **Single learner, single tutor per session.** Concurrent multi-learner
+  supervision is out of scope.
+- **No authentication beyond a tutor identifier.** This prototype argues
+  oversight mechanics, not identity management.
+- **Drift gate is per-session.** REQ-GATES specifies monitoring behaviour
+  against an expected envelope; true cross-cohort drift detection needs a
+  longitudinal corpus this prototype does not collect. Report that bound with
+  REQ-FIELD metrics.
+- **Non-discrimination review is manual.** The architecture supplies the query;
+  the periodic review is a human activity.
+- **8B model.** Rubric scores will trail a frontier model; the object of study
+  is the compliance architecture, not model quality (DEC-0007).

@@ -19,6 +19,49 @@
     "python.testing.pytestArgs": [
       "tutor-core/tests",
       "tutor-api/tests"
+    ],
+    "[python]": {
+      "editor.defaultFormatter": "charliermarsh.ruff",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.fixAll.ruff": "explicit",
+        "source.organizeImports.ruff": "explicit"
+      }
+    },
+    "[javascript]": {
+      "editor.defaultFormatter": "biomejs.biome",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports.biome": "explicit"
+      }
+    },
+    "[javascriptreact]": {
+      "editor.defaultFormatter": "biomejs.biome",
+      "editor.formatOnSave": true
+    },
+    "[typescript]": {
+      "editor.defaultFormatter": "biomejs.biome",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports.biome": "explicit"
+      }
+    },
+    "[typescriptreact]": {
+      "editor.defaultFormatter": "biomejs.biome",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports.biome": "explicit"
+      }
+    },
+    "[css]": {
+      "editor.defaultFormatter": "biomejs.biome",
+      "editor.formatOnSave": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "charliermarsh.ruff",
+      "biomejs.biome"
     ]
   }
 }
