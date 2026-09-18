@@ -1,0 +1,24 @@
+{
+  "folders": [
+    {
+      "name": "root",
+      "path": "."
+    },
+    {
+      "name": "tutor-core",
+      "path": "tutor-core"
+    },
+    {
+      "name": "tutor-api",
+      "path": "tutor-api"
+    }
+  ],
+  "settings": {
+    "python.defaultInterpreterPath": "${workspaceFolder:root}/.venv/bin/python",
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+      "tutor-core/tests",
+      "tutor-api/tests"
+    ]
+  }
+}
