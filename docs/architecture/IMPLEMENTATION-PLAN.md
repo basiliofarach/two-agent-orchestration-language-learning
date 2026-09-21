@@ -24,8 +24,8 @@ added at once.
 ## Phase 0 — Scaffold
 
 uv workspace with `tutor-core` and `tutor-api` members; committed `uv.lock`.
-pnpm + Vite + React Router v8 app. `docker-compose.yml` for PostgreSQL 17 +
-pgvector. Ollama installed, model pulled and its SHA recorded.
+pnpm + Vite + React Router v8 app. `tutor-api/docker-compose.yml` for
+PostgreSQL 17 + pgvector. Ollama installed, model pulled and its SHA recorded.
 
 Enforcement wired now, before any code exists to violate it:
 

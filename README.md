@@ -23,23 +23,89 @@ Local preview (optional):
 uvx --from zensical==0.0.62 zensical serve
 ```
 
-## Checks
+## Where to run commands
 
-Ruff reviews Python (`tutor-core`, `tutor-api`). Biome reviews the dashboard
-once TypeScript files exist. The same config works with **prek** or
-**pre-commit**.
+**Never from this directory (the repository root).** Root holds docs and the
+workspace lockfile. It is not an operator cwd.
+
+| You want | Directory | Command |
+| --- | --- | --- |
+| Backend (sync, tests, Postgres, later the API) | `tutor-api/` | `make` |
+| Frontend dashboard (when it exists) | `app/` | `pnpm dev` |
+
+Cursor's multi-root workspace can open a terminal in `tutor-api`. Use that.
+
+## From a clean checkout
+
+Requires **uv 0.12.5**, Python 3.12, Docker, and (for the model smoke)
+[Ollama](https://ollama.com) **0.34.2**. Do not use Conda's `uv` 0.5.x.
 
 ```text
-prek install
-prek run --all-files
+cd tutor-api
+make sync
+make up
 ```
 
-`prek install` is enough if `prek` is on `PATH`. Otherwise:
+`make up` starts PostgreSQL 17 with `pgvector`, pinned by image digest in
+`config/runtime.toml` and `tutor-api/docker-compose.yml`. It binds
+**127.0.0.1 only**. Two roles exist after init: `tutor_owner` (migrations) and
+`tutor_app` (application).
+
+Copy `tutor-api/.env.example` to `tutor-api/.env` to override credentials or
+the host port. This project defaults to **5433** because `learner-postgres`
+already publishes 5432 on this machine.
+
+There is **no HTTP API process in this phase**. After the API ticket (Phase 7):
+
+```text
+cd tutor-api
+make sync
+uvx uv@0.12.5 run uvicorn tutor_api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+The dashboard (Phase 8, DEC-0008) will live in `app/`. When that tree exists:
+
+```text
+cd app
+pnpm install
+pnpm dev
+```
+
+That is Vite / React Router on port **5173**. It will talk to the API on
+**8000** through the BFF, not from the browser to FastAPI.
+
+Pull the generation model **by SHA**, never by tag (DEC-0007):
+
+```text
+cd tutor-api
+ollama pull sha256:$(make print-model-sha)
+make smoke-model
+```
+
+`make smoke-model` talks only to `127.0.0.1:11434`. Run it with the host's
+outbound network off to confirm there is no egress.
+
+## Checks
+
+Ruff reviews Python (`tutor-core`, `tutor-api`). import-linter enforces the
+hexagonal boundary. Biome reviews the dashboard once TypeScript files exist.
+The same hook config works with **prek** or **pre-commit**. CI runs those
+hooks and `pytest` (coverage gate in `pyproject.toml`).
+
+```text
+cd tutor-api
+prek install
+make check
+```
+
+`prek install` is enough if `prek` is on `PATH`. Otherwise, from `tutor-api/`:
 
 ```text
 uvx prek install
-uvx prek run --all-files
+make check
 ```
+
+The Ollama revision test skips when nothing is listening on port 11434.
 
 ## Read order
 

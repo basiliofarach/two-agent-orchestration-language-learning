@@ -6,6 +6,7 @@ exclude = [
     ".ruff_cache",
     ".mypy_cache",
     ".pytest_cache",
+    "tests/fixtures/rule_violations",
 ]
 
 [lint]
