@@ -69,3 +69,8 @@ needs; navigating the code requires following the wiring. Accepted deliberately
 add ceremony without benefit. Mitigation: a port is justified only if it has a
 second implementation (a stub counts) or enforces a scope boundary. Ports
 failing both tests get collapsed.
+
+See also
+[DEC-0011](0011-layer-roles-and-service-lifecycle.md) for authoring order,
+the class / repo / service / router mapping, and the application-service
+typestate chain. Those stage ABCs are not added to the port table above.

@@ -111,12 +111,13 @@ model.
 tutor-core/src/tutor_core/           # pure domain + application, no I/O
   domain/
     models/        turn.py · audit.py · retrieval.py · learner.py · safety.py · verdict.py
-    ports/         thirteen ABCs, one per file
+    ports/         thirteen ABCs, one per file (DEC-0001)
     gates/         registry.py + four gate classes
     policy/        policy_card.py — versioned, machine-readable
   application/
+    services/      service.py · conduct_turn.py · record_human_action.py
     agents/        retrieval_agent.py · generation_agent.py
-    turn/          conduct_turn.py · graph.py · nodes.py
+    turn/          graph.py · nodes.py
 
 tutor-api/src/tutor_api/
   container.py                 # wireup registration — the only wiring site
@@ -130,6 +131,35 @@ tutor-api/src/tutor_api/
 
 app/routes/                    # React Router v8 flat routes, DEC-0008
 ```
+
+### 3.1 Four roles (DEC-0011)
+
+| Role | Meaning | Package |
+| --- | --- | --- |
+| Class | Pydantic domain model | `domain/models/` |
+| ABC | Port; this *is* the interface | `domain/ports/` |
+| Repo | Adapter behind an I/O port | `tutor-api/.../adapters/` |
+| Service | Use case; typestate chain | `application/services/` |
+| Router | HTTP boundary; `Depends()` only here | `tutor-api/.../routers/` |
+
+Call direction is Router → Service → Port ← Adapter. A router does not import
+an adapter. A service does not instantiate one. Domain imports no framework.
+
+Authoring order, never reversed: ABC, then contract tests, then the concrete
+class, then the router if the unit is reached over HTTP.
+
+### 3.2 Service lifecycle (DEC-0011)
+
+`ApplicationService` in `application/services/service.py` is a **typestate
+chain**, not a domain port and not the gate chain. Each stage type exposes
+exactly one public method: `prepare` → `Prepared.execute` →
+`Executed.finalise`. Only `finalise` returns `TResult`. The router writes
+`service.prepare(body).execute().finalise()`.
+
+`ConductTurn`'s execute-handler delegates to the graph in
+`application/turn/`. Gate order is graph placement (DEC-0005). Do not put
+`prepare`, `execute`, and `finalise` on one class. Do not `dispose()` per
+request — wireup owns lifetimes (DEC-0003).
 
 ## 4. Ports
 

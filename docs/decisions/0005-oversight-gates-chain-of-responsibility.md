@@ -84,6 +84,12 @@ traversal. The deviation is forced by REQ-GATES: the handlers guard different
 stages, so they cannot all be invoked at one point. Stating the deviation is
 more defensible than claiming a pattern the code does not implement.
 
+See also
+[DEC-0011](0011-layer-roles-and-service-lifecycle.md): application use cases
+use a typestate chain (`prepare` → `execute` → `finalise` on different
+types). That is not this gate chain and must not become a second
+`chain.run(turn)`.
+
 ## Superseded reasoning
 
 An earlier revision of this record placed all four gates "between generation and

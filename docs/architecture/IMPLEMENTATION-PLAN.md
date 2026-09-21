@@ -40,13 +40,18 @@ model answers a smoke prompt, and CI fails on an untested commit.
 ## Phase 1 — Domain skeleton
 
 Every Pydantic model in `domain/models/` and every port in `domain/ports/` as an
-`abc.ABC`. No implementations. `tutor-core` imports nothing but stdlib and
-Pydantic.
+`abc.ABC`. Stage-handler ABCs and the typestate wrappers in
+`application/services/service.py` (DEC-0011) — `prepare` / `execute` /
+`finalise` on *different types*, no use-case body yet. No port
+implementations. `tutor-core` imports nothing but stdlib and Pydantic.
 
 *Done when:* models are unit tested for validation, `extra="forbid"` raising on
 undeclared fields, `frozen=True` raising on mutation **of audit and evidence
-records**, and `TurnState` accepting field assignment (DEC-0010). An
-import-linter check fails the build if `domain` imports any framework.
+records**, and `TurnState` accepting field assignment (DEC-0010).
+`ApplicationService` exposes only `prepare`; `Prepared` only `execute`;
+`Executed` only `finalise`. A handler ABC missing `run` cannot be
+instantiated. An import-linter check fails the build if `domain` imports any
+framework.
 
 *Why first:* everything downstream is written against these signatures, and
 DEC-0001 requires the abstraction before the implementation.
