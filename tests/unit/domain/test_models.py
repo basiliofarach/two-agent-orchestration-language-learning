@@ -1,7 +1,7 @@
 """Validation, immutability, and the REQ-AUDIT / DEC-0010 model contracts."""
 
 import ast
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import get_args
 
@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 from tests.support.frozen import FrozenModelChecks, ModelId
 from tests.support.samples import Samples
+from tests.support.timezones import OffsetlessTimezone
 
 from tutor_core.domain import models as model_package
 from tutor_core.domain import policy as policy_package
@@ -130,6 +131,37 @@ class TestTurnAuditRecord:
         with pytest.raises(ValidationError):
             TurnAuditRecord.model_validate(payload)
 
+    def test_offsetless_timezone_on_recorded_at_is_rejected(self) -> None:
+        payload = Samples().audit_record().model_dump()
+        payload["recorded_at"] = datetime(
+            2026, 9, 21, 12, 0, tzinfo=OffsetlessTimezone()
+        )
+        with pytest.raises(ValidationError):
+            TurnAuditRecord.model_validate(payload)
+
+    def test_offset_recorded_at_is_normalised_to_utc(self) -> None:
+        payload = Samples().audit_record().model_dump()
+        payload["recorded_at"] = datetime(
+            2026, 9, 21, 12, 0, tzinfo=timezone(timedelta(hours=2))
+        )
+        record = TurnAuditRecord.model_validate(payload)
+        assert record.recorded_at.tzinfo is UTC
+        assert record.recorded_at == datetime(2026, 9, 21, 10, 0, tzinfo=UTC)
+
+    def test_same_instant_in_two_offsets_serialises_identically(self) -> None:
+        payload = Samples().audit_record().model_dump()
+        east = {
+            **payload,
+            "recorded_at": datetime(
+                2026, 9, 21, 12, 0, tzinfo=timezone(timedelta(hours=2))
+            ),
+        }
+        utc = {**payload, "recorded_at": datetime(2026, 9, 21, 10, 0, tzinfo=UTC)}
+        assert (
+            TurnAuditRecord.model_validate(east).model_dump_json()
+            == TurnAuditRecord.model_validate(utc).model_dump_json()
+        )
+
 
 class TestHumanAction:
     def test_edit_requires_edited_output(self) -> None:
@@ -166,6 +198,23 @@ class TestHumanAction:
                 action="stop",
                 acted_at=datetime(2026, 9, 21, 12, 0),
             )
+
+    def test_offsetless_timezone_on_acted_at_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            HumanAction(
+                tutor_id="tutor-1",
+                action="stop",
+                acted_at=datetime(2026, 9, 21, 12, 0, tzinfo=OffsetlessTimezone()),
+            )
+
+    def test_offset_acted_at_is_normalised_to_utc(self) -> None:
+        action = HumanAction(
+            tutor_id="tutor-1",
+            action="stop",
+            acted_at=datetime(2026, 9, 21, 12, 0, tzinfo=timezone(timedelta(hours=2))),
+        )
+        assert action.acted_at == datetime(2026, 9, 21, 10, 0, tzinfo=UTC)
+        assert action.acted_at.tzinfo is UTC
 
 
 class TestTurnState:
