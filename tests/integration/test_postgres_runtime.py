@@ -52,6 +52,13 @@ class TestPostgresRuntime:
         ).read_text(encoding="utf-8")
         assert "CREATE ROLE" in init
         assert "POSTGRES_APP_USER" in init
+        assert "--set=app_user=" in init
+        assert "--set=app_password=" in init
+        assert ":'app_user'" in init
+        assert ":'app_password'" in init
+        assert ':"app_user"' in init
+        assert "${POSTGRES_APP_USER}" not in init
+        assert "${POSTGRES_APP_PASSWORD}" not in init
         compose = (root / "tutor-api" / "docker-compose.yml").read_text(
             encoding="utf-8"
         )
