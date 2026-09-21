@@ -141,6 +141,8 @@ produce identical ciphertexts and equality is not leaked.
 | `learner_id` | Already a pseudonymous UUID and a cross-table foreign key. Deterministic encryption would be required to preserve joins, and deterministic encryption leaks equality — strictly worse than the pseudonym. |
 | KB documents, `source_uri`, `version`, `review_status` | Not personal data. Public curated material with provenance. |
 | `policy_version`, `model_revision`, `recorded_at`, `turn_id` | Not personal data. Required in cleartext for the evidence pack and for replay selection. |
+| `protected_column_exemption.table_name`, `column_name`, `reason`, `decision_ref` | The registry itself. The reason must stay readable in SQL, or the evidence query cannot be answered. |
+| `alembic_version.version_num` | Alembic revision id. Not personal data. Required in cleartext so the migration runner can see which revision is applied. |
 
 Any addition to this table is a decision-record amendment, not a code review
 comment.
@@ -168,15 +170,19 @@ error, not a silent disclosure.
 
 ```sql
 CREATE TABLE protected_column_exemption (
+    schema_name  text NOT NULL DEFAULT 'public',
     table_name   text NOT NULL,
     column_name  text NOT NULL,
     reason       text NOT NULL CHECK (length(trim(reason)) > 0),
     decision_ref text NOT NULL,   -- e.g. 'DEC-0012'
-    PRIMARY KEY (table_name, column_name)
+    PRIMARY KEY (schema_name, table_name, column_name)
 );
 ```
 
-Seeded from the exemption table above. The evidence-pack question "which learner
+Seeded from the exemption table above. The key is **schema-qualified**: the
+scan covers every application schema, so a row authorising
+`public.turn_audit.record_hash` must not silently authorise
+`staging.turn_audit.record_hash`. The evidence-pack question "which learner
 data is stored unencrypted, and on whose authority?" is answered by selecting
 from this table.
 
@@ -190,25 +196,40 @@ LANGUAGE plpgsql AS $$
 DECLARE
     offending text;
 BEGIN
-    SELECT string_agg(format('%I.%I (%s)', c.relname, a.attname,
-                             format_type(a.atttypid, a.atttypmod)), ', ')
+    SELECT string_agg(
+               format('%I.%I.%I (%s)',
+                      n.nspname, c.relname, a.attname, t.typname),
+               ', '
+           )
       INTO offending
       FROM pg_attribute a
-      JOIN pg_class     c ON c.oid = a.attrelid
+      JOIN pg_class c ON c.oid = a.attrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_type t ON t.oid = a.atttypid
+      LEFT JOIN pg_type bt ON bt.oid = t.typbasetype
       LEFT JOIN protected_column_exemption e
-             ON e.table_name = c.relname AND e.column_name = a.attname
-     WHERE n.nspname = 'public'
-       AND c.relname IN ('turn_audit', 'gate_evaluation', 'learner_history')
+             ON e.schema_name = n.nspname
+            AND e.table_name = c.relname
+            AND e.column_name = a.attname
+     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND n.nspname NOT LIKE 'pg\_toast%'
+       AND n.nspname NOT LIKE 'pg\_temp%'
+       AND c.relkind = 'r'
        AND a.attnum > 0
        AND NOT a.attisdropped
-       AND format_type(a.atttypid, a.atttypmod)
-           IN ('text', 'character varying', 'json', 'jsonb')
+       -- by oid, not by name: a look-alike domain in another schema must not
+       -- shadow public.ciphertext now that every schema is scanned
+       AND a.atttypid <> 'public.ciphertext'::regtype
+       AND COALESCE(t.typelem, 0) <> 'public.ciphertext'::regtype
+       AND COALESCE(bt.typname, t.typname) IN (
+           'text', 'varchar', 'bpchar', 'json', 'jsonb', 'bytea',
+           '_text', '_varchar', '_bpchar', '_json', '_jsonb', '_bytea'
+       )
        AND e.column_name IS NULL;
 
     IF offending IS NOT NULL THEN
         RAISE EXCEPTION
-            'DEC-0012: plaintext column on a protected table: %', offending
+            'DEC-0012: plaintext column on a stored table: %', offending
             USING HINT = 'Use the ciphertext domain, or register an exemption '
                          'in protected_column_exemption with a reason.';
     END IF;
@@ -217,14 +238,57 @@ $$;
 
 CREATE EVENT TRIGGER dec0012_no_plaintext_columns
     ON ddl_command_end
-    WHEN TAG IN ('CREATE TABLE', 'ALTER TABLE')
+    WHEN TAG IN ('CREATE TABLE', 'ALTER TABLE',
+                 'CREATE TABLE AS', 'SELECT INTO')
     EXECUTE FUNCTION dec0012_reject_plaintext_columns();
 ```
 
+Three properties of that predicate are deliberate, and each was verified
+against a live PostgreSQL 17 rather than reasoned about.
+
+**Every schema, not only `public`.** A migration that issues `CREATE SCHEMA
+staging` must not gain a cleartext store by doing so. Restricting the scan to
+`public` left a permanent, data-bearing blind spot: a table in another schema
+was never examined, on any later DDL.
+
+**`CREATE TABLE AS` and `SELECT INTO` are DDL.** Their command tags are not
+`CREATE TABLE`, so a tag list naming only `CREATE TABLE` and `ALTER TABLE` let
+`CREATE TABLE note AS SELECT 'Oak Street'::text` through. Because the scan
+examines the whole catalogue, the leftover column was caught by the *next*
+migration instead — reported against a table the current migration never
+mentioned. Detecting it late and in the wrong place is close to not detecting
+it, so both tags are named.
+
+**The domain is matched by oid, not by name.** Once every schema is scanned,
+`CREATE DOMAIN impostor.ciphertext AS text` would satisfy a name-based
+exclusion and admit cleartext. `'public.ciphertext'::regtype` identifies the
+one real domain, and `typelem` covers its array type.
+
+**Documented limits.** A partitioned parent (`relkind = 'p'`) is not scanned,
+so its own declaration is unchecked; every data-bearing partition is
+`relkind = 'r'` and is checked, so no row can land in cleartext through one.
+Temporary tables live in `pg_temp_*` and are excluded: they are not at rest.
+`CREATE EVENT TRIGGER` requires superuser, so the guard assumes a self-hosted
+PostgreSQL where migrations run with that right; a managed instance that
+forbids event triggers cannot carry this control and would need the CI
+catalogue assertion as its only enforcement.
+
+The predicate is every ordinary table in every application schema, not a fixed
+name list. A migration that creates a new table is rejected unless each
+cleartext-shaped column is the `ciphertext` domain or an exemption registered
+against that schema.
+Before Alembic is introduced, `EncryptionAtRestSchema` installs the schema
+inside a caller-owned transaction; SQL migration scripts are not maintained in
+parallel. `tests/integration/test_encryption_at_rest.py` refuses Alembic
+revision files until that test has an Alembic `upgrade head` runner. Once
+Alembic exists, every test run must apply all revisions to a fresh database
+before auditing the live catalogue; revision files must never be skipped.
+
 This is the mechanism that makes the default hold over time. A developer adding
-`ALTER TABLE turn_audit ADD COLUMN tutor_note text` gets a migration failure
-naming this record, and has two options: use the domain, or write down why not.
-There is no third option and no silent one.
+`ALTER TABLE turn_audit ADD COLUMN tutor_note text`, or `CREATE TABLE
+session_note (body text)`, gets a migration failure naming this record, and
+has two options: use the domain, or write down why not. There is no third
+option and no silent one.
 
 **4. Grants unchanged.** The application role keeps `INSERT`/`SELECT` only on
 the audit table (DEC-0006). Encryption narrows what that role can *understand*;

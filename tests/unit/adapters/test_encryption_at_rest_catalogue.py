@@ -1,49 +1,54 @@
-"""The exemption set is the DEC-0012 list, and the SQL holds no key."""
+"""Unit checks for the DEC-0012 schema installer and PostgreSQL settings."""
 
+import inspect
 from pathlib import Path
 
-from tutor_api.adapters.persistence.encryption_at_rest import EncryptionAtRestSchema
+import pytest
+from pydantic import ValidationError
+
+from tutor_api.adapters.persistence.encryption_at_rest import (
+    ColumnExemption,
+    EncryptionAtRestSchema,
+)
 
 
-class TestEncryptionAtRestCatalogue:
-    def test_protected_tables_cover_learner_session_and_audit(self) -> None:
-        assert EncryptionAtRestSchema().protected_tables() == (
-            "turn_audit",
-            "gate_evaluation",
-            "learner",
-            "learner_history",
-            "learner_history_event",
-            "tutoring_session",
+class TestColumnExemption:
+    def test_requires_a_nonempty_reason_and_forbids_extra_data(self) -> None:
+        with pytest.raises(ValidationError):
+            ColumnExemption(table_name="learner", column_name="name", reason="")
+        with pytest.raises(ValidationError):
+            ColumnExemption(
+                table_name="learner",
+                column_name="name",
+                reason="fixture",
+                undeclared="not allowed",
+            )
+
+    def test_is_frozen(self) -> None:
+        exemption = ColumnExemption(
+            table_name="learner",
+            column_name="name",
+            reason="fixture",
         )
+        with pytest.raises(ValidationError):
+            exemption.reason = "changed"
 
-    def test_exemptions_are_the_decision_set(self) -> None:
-        pairs = {
-            (row.table_name, row.column_name)
-            for row in EncryptionAtRestSchema().exemptions()
-        }
-        assert pairs == {
-            ("kb_chunk", "embedding"),
-            ("turn_audit", "record_hash"),
-            ("turn_audit", "previous_record_hash"),
-            ("learner", "learner_id"),
-            ("learner_history", "learner_id"),
-            ("learner_history_event", "learner_id"),
-            ("kb_document", "source_uri"),
-            ("kb_document", "version"),
-            ("kb_document", "review_status"),
-            ("turn_audit", "policy_version"),
-            ("turn_audit", "model_revision"),
-            ("turn_audit", "recorded_at"),
-            ("turn_audit", "turn_id"),
-        }
-        for row in EncryptionAtRestSchema().exemptions():
-            assert row.decision_ref == "DEC-0012"
-            assert row.reason.strip()
 
-    def test_statements_do_not_call_pgcrypto(self) -> None:
-        sql = "\n".join(EncryptionAtRestSchema().statements()).lower()
-        assert "pgcrypto" not in sql
-        assert "pgp_sym_encrypt" not in sql
+class TestEncryptionAtRestSchema:
+    def test_exposes_only_install_as_a_public_method(self) -> None:
+        public = {
+            name
+            for name, member in inspect.getmembers(
+                EncryptionAtRestSchema, predicate=inspect.isfunction
+            )
+            if not name.startswith("_")
+        }
+        assert public == {"install"}
+
+    def test_schema_uses_no_database_side_cryptography(self) -> None:
+        source = inspect.getsource(EncryptionAtRestSchema).lower()
+        assert "create extension pgcrypto" not in source
+        assert "pgp_sym_encrypt" not in source
 
     def test_compose_does_not_log_statements_or_bind_parameters(self) -> None:
         root = Path(__file__).resolve().parents[3]
