@@ -23,6 +23,7 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.import_linter_cache/
 htmlcov/
 .coverage
 .coverage.*
@@ -34,8 +35,9 @@ build/
 .react-router/
 *.tsbuildinfo
 
-# Models — pinned by SHA in the ADR, never committed as weights
-models/
+# Models — pinned by SHA in the ADR, never committed as weights.
+# Anchored: tutor_core.domain.models is source, not weights.
+/models/
 *.gguf
 
 # OS / editor

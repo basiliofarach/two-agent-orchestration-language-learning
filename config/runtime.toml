@@ -1,0 +1,14 @@
+# Pinned runtime revisions. Hex SHAs only — never a model tag (DEC-0007).
+
+[postgres]
+# Multi-arch index digest of pgvector 0.8.6 on PostgreSQL 17.
+image = "pgvector/pgvector"
+version = "0.8.6-pg17"
+image_digest = "cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f"
+
+[model]
+# Ollama model-layer blob (weights) for Qwen3-8B.
+weights_sha = "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
+# Upstream Hugging Face commit for Qwen/Qwen3-8B.
+huggingface_commit = "b968826d9c46dd6066d109eabc6255188de91218"
+ollama_version = "0.34.2"

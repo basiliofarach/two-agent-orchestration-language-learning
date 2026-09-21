@@ -63,6 +63,15 @@ repos:
         args:
           - --config-file=mypy.ini
 
+  - repo: local
+    hooks:
+      - id: import-linter
+        name: import-linter
+        language: system
+        entry: uvx uv@0.12.5 run lint-imports
+        pass_filenames: false
+        files: '^(tutor-core/|tutor-api/|pyproject\.toml$)'
+
   - repo: https://github.com/biomejs/pre-commit
     rev: v2.5.14
     hooks:
