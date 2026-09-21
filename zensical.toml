@@ -30,6 +30,7 @@ nav = [
     { "DEC-0007 Local pinned model" = "decisions/0007-local-pinned-open-weight-model.md" },
     { "DEC-0008 React Router dashboard" = "decisions/0008-frontend-react-router-v8-shadcn.md" },
     { "DEC-0009 LangGraph state" = "decisions/0009-langgraph-state-wraps-frozen-turnstate.md" },
+    { "DEC-0010 Mutable TurnState" = "decisions/0010-mutable-turnstate-graph-wrapper.md" },
   ] },
 ]
 

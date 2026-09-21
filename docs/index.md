@@ -14,7 +14,7 @@ this tree.
 
 1. [Requirements](requirements.md) — what the code must prove (`REQ-*`)
 2. [Architecture](architecture/ARCHITECTURE.md) — how it is structured
-3. [Decisions](decisions/README.md) — why this stack (DEC-0001 … DEC-0009)
+3. [Decisions](decisions/README.md) — why this stack (DEC-0001 … DEC-0010)
 4. [Implementation plan](architecture/IMPLEMENTATION-PLAN.md) — build order
 
 Cite those identifiers from code, tests, and later decisions. Do not cite

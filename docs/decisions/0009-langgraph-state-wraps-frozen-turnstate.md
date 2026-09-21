@@ -1,6 +1,10 @@
 # 0009. LangGraph state is an application-layer wrapper over a frozen `TurnState`
 
-*Status:* Accepted · *Date:* 2026-09-18
+*Status:* Superseded by [DEC-0010](0010-mutable-turnstate-graph-wrapper.md)
+*Date:* 2026-09-18
+
+The graph-wrapper seam (application-layer container, domain imports no LangGraph
+type) is kept. The frozen-`TurnState` / `model_copy` clause is not.
 
 ## Context
 

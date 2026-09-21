@@ -325,9 +325,9 @@ but **against which rule version it was checked**.
 
 Pydantic v2 throughout; `dataclass` prohibited (DEC-0002). **Audit and evidence
 records** (`TurnAuditRecord`, `HumanAction`, `GateVerdict`) are frozen. Working
-turn state is not: `TurnState` is accumulated across the turn, and how that
-accumulation is represented is left to implementation. Immutability is required
-of the record written to the log, not of the in-flight object.
+turn state is not: `TurnState` is accumulated across the turn (DEC-0010).
+Immutability is required of the record written to the log, not of the in-flight
+object.
 
 ```mermaid
 classDiagram

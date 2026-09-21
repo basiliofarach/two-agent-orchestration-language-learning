@@ -20,13 +20,14 @@ supersede rather than edit, so each decision keeps a stable identifier.
 | [DEC-0006](0006-postgres-pgvector-single-store.md) | Postgres + pgvector, single store | Accepted |
 | [DEC-0007](0007-local-pinned-open-weight-model.md) | Local pinned Qwen3-8B behind a provider port | Accepted |
 | [DEC-0008](0008-frontend-react-router-v8-shadcn.md) | React Router v8 + fs-routes + shadcn/ui | Accepted |
-| [DEC-0009](0009-langgraph-state-wraps-frozen-turnstate.md) | LangGraph state wraps a frozen `TurnState` | Accepted |
+| [DEC-0009](0009-langgraph-state-wraps-frozen-turnstate.md) | LangGraph state wraps a frozen `TurnState` | Superseded by DEC-0010 |
+| [DEC-0010](0010-mutable-turnstate-graph-wrapper.md) | Working `TurnState` is mutable Pydantic; graph state wraps it | Accepted |
 
 ## Article coverage
 
 | AI Act article | Records |
 | --- | --- |
 | Art. 10 — Data governance | 0002, 0006, 0007 |
-| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009 |
+| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010 |
 | Art. 14 — Human oversight | 0004, 0005, 0008 |
 | Art. 15 — Accuracy and robustness | 0001, 0005, 0007 |

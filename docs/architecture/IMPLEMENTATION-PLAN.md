@@ -43,9 +43,10 @@ Every Pydantic model in `domain/models/` and every port in `domain/ports/` as an
 `abc.ABC`. No implementations. `tutor-core` imports nothing but stdlib and
 Pydantic.
 
-*Done when:* models are unit tested for validation, `frozen=True` raising on
-mutation, and `extra="forbid"` raising on undeclared fields. An import-linter
-check fails the build if `domain` imports any framework.
+*Done when:* models are unit tested for validation, `extra="forbid"` raising on
+undeclared fields, `frozen=True` raising on mutation **of audit and evidence
+records**, and `TurnState` accepting field assignment (DEC-0010). An
+import-linter check fails the build if `domain` imports any framework.
 
 *Why first:* everything downstream is written against these signatures, and
 DEC-0001 requires the abstraction before the implementation.
@@ -127,17 +128,17 @@ permission gate → retrieval → conflict gate → generation + checks
   → sensitivity gate → drift gate → tutor approval
 ```
 
-Graph state is an application-layer wrapper over a frozen `TurnState`; nodes
-replace rather than mutate (DEC-0009). Checkpointer configured; `interrupt` on
-`pause` and `stop`. Nodes stay thin — resolve port, delegate, return.
+Graph state is an application-layer wrapper over a mutable Pydantic
+`TurnState`; nodes accumulate fields on the live turn (DEC-0010). Gates still
+do not mutate the turn. Checkpointer configured; `interrupt` on `pause` and
+`stop`. Nodes stay thin — resolve port, delegate, return.
 
 *Done when:* an integration test drives a full turn with a stubbed model; **no
 graph path reaches retrieval without the permission gate, or generation without
 the conflict gate**; a non-pass verdict provably halts the pipeline rather than
-falling through to the next stage; successive `TurnState` instances are distinct
-objects and no node mutates its input; a recorded turn replays from the audit
-log and reproduces its output; checkpoint identifiers resolve to their log
-entries.
+falling through to the next stage; a `TurnAuditRecord` is a frozen snapshot
+distinct from the live turn; a recorded turn replays from the audit log and
+reproduces its output; checkpoint identifiers resolve to their log entries.
 
 *Milestone:* end-to-end backend. Everything before this is components; this is
 the prototype.
@@ -198,10 +199,10 @@ the backend is end-to-end at phase 6.
 **Frontend timing.** The dashboard can start any time after phase 2 against
 fixtures, but its audit viewer is not meaningful until real records exist.
 
-**Field testing** (REQ-FIELD) is gated on phase 8. Recruit the 5–8 tutors during
-phases 6–7 so the formative round starts as soon as the dashboard is usable —
-that recruitment lead time is the most common schedule slip in a project of this
-shape.
+**Field testing** (REQ-FIELD) is gated on phase 8 and tracked as FIELD-01.
+Recruit the 5–8 tutors during phases 6–7 so the formative round starts as soon
+as the dashboard is usable — that recruitment lead time is the most common
+schedule slip in a project of this shape.
 
 **Synthetic-to-validated metrics** (REQ-FIELD) spans phases 9 and field testing:
 record the synthetic baseline at phase 9 so any later movement is attributable

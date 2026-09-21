@@ -40,8 +40,9 @@ both less work and more defensible — the mechanism is citable.
 between nodes, adding friction against DEC-0001's port abstractions. Nodes stay
 thin: they resolve ports and delegate, holding no logic themselves. The specific
 clash between LangGraph's `TypedDict` state and the DEC-0002 prohibition is
-resolved in DEC-0009 — graph state is an application-layer wrapper over a frozen
-`TurnState`, and nodes replace rather than mutate.
+resolved in DEC-0009 as an application-layer wrapper; DEC-0010 supersedes the
+frozen-`TurnState` part of that wrapper — working turn state is a mutable
+Pydantic model, and nodes accumulate fields on it.
 
 **Rejected — CrewAI.** The deterministic-flow-wrapping-scoped-crew pattern is
 conceptually close, but its human-interrupt and replay primitives are weaker,
