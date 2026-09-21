@@ -78,7 +78,7 @@ Canonical drawing: [ARCHITECTURE.md
 | --- | --- |
 | Age-appropriate transparency | AI-generated disclosure on every output |
 | Safety and well-being | Content filter and tone constraint on the Content Agent; refusal for out-of-scope prompts; routing to the tutor when safety flags fire |
-| Data protection by design | Minimal history schema (REQ-HISTORY); real-time PII redaction at the input boundary; retention policy aligned with GDPR (`learner.retain_until`) |
+| Data protection by design | Minimal history schema (REQ-HISTORY); real-time PII redaction at the input boundary; retention policy aligned with GDPR (`learner.retain_until`); encryption at rest by default, plaintext columns enumerable from the schema with a recorded reason (GDPR Art. 32, DEC-0012) |
 | Non-discrimination | Periodic cohort review of retrieval and generation outcomes; bias controls in the curated knowledge base (REQ-KB) |
 
 ---

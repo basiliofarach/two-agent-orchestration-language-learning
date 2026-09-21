@@ -62,9 +62,20 @@ DEC-0001 requires the abstraction before the implementation.
 `gate_evaluation`, the `BEFORE UPDATE OR DELETE` trigger, and an application
 role granted `INSERT`/`SELECT` only. Hash chaining over records.
 
+`CipherPort` ships here, ahead of the first migration, so the schema is born
+encrypted rather than retrofitted (DEC-0012). The same migration creates the
+`ciphertext` domain, the `protected_column_exemption` registry seeded from
+DEC-0012, and the `ddl_command_end` event trigger that rejects a plaintext
+column on a protected table.
+
 *Done when:* integration tests prove `UPDATE` and `DELETE` raise at the database
 level, the chain detects a tampered or excised record, and a rolled-back
-transaction leaves no partial audit row.
+transaction leaves no partial audit row. For DEC-0012: reading `turn_audit`
+directly as the application role returns ciphertext for every encrypted column;
+`ALTER TABLE turn_audit ADD COLUMN note text` raises from the event trigger;
+the same statement succeeds once the column is registered as an exemption; a
+turn replays byte-identically across a key rotation; and the hash chain still
+detects tampering with encryption enabled.
 
 *Why second:* it is the Article 12 evidence, and every later phase writes to it.
 

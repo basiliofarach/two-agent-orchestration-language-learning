@@ -46,6 +46,7 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `AuditSinkPort` | Append one immutable turn record | Append-only; no update/delete | REQ-AUDIT |
 | `PolicyArtifactPort` | Supply the versioned machine-readable policy | Read-only; version logged per verdict | REQ-POLICY |
 | `ClockPort` | Current time | Injected for deterministic replay | — |
+| `CipherPort` | Encrypt / decrypt bytes at the persistence boundary | Bytes only; no domain types; holds no store | REQ-MINOR, DEC-0012 |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
 takes an explicit field allowlist at construction. `LanguageModelPort` is handed
@@ -69,6 +70,11 @@ needs; navigating the code requires following the wiring. Accepted deliberately
 add ceremony without benefit. Mitigation: a port is justified only if it has a
 second implementation (a stub counts) or enforces a scope boundary. Ports
 failing both tests get collapsed.
+
+`CipherPort` was added to the table above by
+[DEC-0012](0012-encryption-at-rest-by-default.md). The table is a registry, so
+it is kept current as ports are introduced; the decision this record makes is
+unchanged.
 
 See also
 [DEC-0011](0011-layer-roles-and-service-lifecycle.md) for authoring order,

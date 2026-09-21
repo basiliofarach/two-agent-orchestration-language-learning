@@ -23,12 +23,13 @@ supersede rather than edit, so each decision keeps a stable identifier.
 | [DEC-0009](0009-langgraph-state-wraps-frozen-turnstate.md) | LangGraph state wraps a frozen `TurnState` | Superseded by DEC-0010 |
 | [DEC-0010](0010-mutable-turnstate-graph-wrapper.md) | Working `TurnState` is mutable Pydantic; graph state wraps it | Accepted |
 | [DEC-0011](0011-layer-roles-and-service-lifecycle.md) | Layer roles; application-service typestate chain | Accepted |
+| [DEC-0012](0012-encryption-at-rest-by-default.md) | Encryption at rest by default; plaintext is the exception | Accepted |
 
 ## Article coverage
 
 | AI Act article | Records |
 | --- | --- |
-| Art. 10 — Data governance | 0002, 0006, 0007 |
-| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010 |
+| Art. 10 — Data governance | 0002, 0006, 0007, 0012 |
+| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010, 0012 |
 | Art. 14 — Human oversight | 0004, 0005, 0008 |
 | Art. 15 — Accuracy and robustness | 0001, 0005, 0007, 0011 |
