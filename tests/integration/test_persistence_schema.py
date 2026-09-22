@@ -1,14 +1,11 @@
 """BE-05 and BE-06 schema, applied by Alembic to a fresh database."""
 
-import os
 from pathlib import Path
 
 import psycopg
 import pytest
 from alembic import command
 from alembic.config import Config
-from testcontainers.postgres import PostgresContainer
-from tests.support.runtime_pin import RuntimePin
 
 from tutor_api.adapters.persistence.database import DatabaseEngine
 from tutor_api.adapters.persistence.schema import ApplicationRole
@@ -19,31 +16,24 @@ from tutor_api.adapters.persistence.unit_of_work import (
 from tutor_api.settings import ApplicationSettings
 from tutor_core.domain.ports.unit_of_work import TransactionalWork
 
-_ROLE_NAME = ApplicationSettings().postgres_app_user
+# Resolved with the environment excluded, not at whatever the shell happens to
+# hold. This runs at import, before conftest's isolation fixture, so reading
+# the ambient value here would disagree with the role the migration creates
+# during the test — the migration runs after the fixture has cleared it.
+_ROLE_NAME = ApplicationSettings(_env_file=None).postgres_app_user
 
 
 class PostgresUrl:
-    def sync(self, postgres: PostgresContainer) -> str:
-        raw = postgres.get_connection_url()
-        for prefix in (
-            "postgresql+psycopg2://",
-            "postgresql+psycopg://",
-            "postgresql+asyncpg://",
-            "postgresql://",
-        ):
-            if raw.startswith(prefix):
-                return "postgresql+psycopg://" + raw[len(prefix) :]
-        return raw
+    """The driver flavours one database is reached by."""
 
-    def async_url(self, postgres: PostgresContainer) -> str:
-        return self.sync(postgres).replace(
-            "postgresql+psycopg://",
-            "postgresql+asyncpg://",
-            1,
-        )
+    def __init__(self, plain: str) -> None:
+        self._plain = plain
 
-    def plain(self, postgres: PostgresContainer) -> str:
-        return self.sync(postgres).replace("postgresql+psycopg://", "postgresql://", 1)
+    def sync(self) -> str:
+        return self._plain.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    def async_url(self) -> str:
+        return self._plain.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 class AlembicRunner:
@@ -78,15 +68,9 @@ class ConflictingWrites(TransactionalWork):
 
 
 class TestPersistenceSchema:
-    def setup_method(self) -> None:
-        os.environ["TESTCONTAINERS_RYUK_DISABLED"] = "true"
-
-    def test_migrate_forward_back_and_forward(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            runner = AlembicRunner(PostgresUrl().sync(postgres))
+    def test_migrate_forward_back_and_forward(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            runner = AlembicRunner(PostgresUrl(fresh_database).sync())
             runner.upgrade()
             assert self._tables(connection) >= {"learner", "turn_audit"}
             runner.downgrade()
@@ -95,12 +79,9 @@ class TestPersistenceSchema:
             runner.upgrade()
             assert self._tables(connection) >= {"learner", "turn_audit", "kb_chunk"}
 
-    def test_mismatched_embedding_dimension_raises(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_mismatched_embedding_dimension_raises(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -129,12 +110,9 @@ class TestPersistenceSchema:
                         (self._envelope(),),
                     )
 
-    def test_learner_without_retain_until_raises(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_learner_without_retain_until_raises(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(
                     """
@@ -148,12 +126,9 @@ class TestPersistenceSchema:
                     (self._envelope(), self._envelope()),
                 )
 
-    def test_session_requires_an_existing_learner(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_session_requires_an_existing_learner(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(
                     """
@@ -169,71 +144,77 @@ class TestPersistenceSchema:
                     (self._envelope(),),
                 )
 
-    async def test_two_writes_roll_back_together(self) -> None:
-        with PostgresContainer(image=RuntimePin().postgres_image()) as postgres:
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
-            with psycopg.connect(PostgresUrl().plain(postgres)) as connection:
-                connection.execute("CREATE TABLE uow_probe (id integer PRIMARY KEY)")
-                connection.commit()
-            engine = DatabaseEngine(PostgresUrl().async_url(postgres))
-            try:
-                committed = await engine.connect()
-                await SqlAlchemyUnitOfWork(committed).run(OneWrite(committed))
-                enlisted = await engine.connect()
-                with pytest.raises(Exception, match="unique"):
-                    await SqlAlchemyUnitOfWork(enlisted).run(
-                        ConflictingWrites(enlisted)
-                    )
-                with psycopg.connect(PostgresUrl().plain(postgres)) as connection:
-                    count = connection.execute("SELECT count(*) FROM uow_probe")
-                    row = count.fetchone()
-                assert row is not None
-                assert row[0] == 1
-            finally:
-                await engine.dispose()
+    async def test_two_writes_roll_back_together(self, fresh_database: str) -> None:
+        AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+        with psycopg.connect(fresh_database) as connection:
+            connection.execute("CREATE TABLE uow_probe (id integer PRIMARY KEY)")
+            connection.commit()
+        engine = DatabaseEngine(PostgresUrl(fresh_database).async_url())
+        try:
+            committed = await engine.connect()
+            await SqlAlchemyUnitOfWork(committed).run(OneWrite(committed))
+            enlisted = await engine.connect()
+            with pytest.raises(Exception, match="unique"):
+                await SqlAlchemyUnitOfWork(enlisted).run(ConflictingWrites(enlisted))
+            with psycopg.connect(fresh_database) as connection:
+                count = connection.execute("SELECT count(*) FROM uow_probe")
+                row = count.fetchone()
+            assert row is not None
+            assert row[0] == 1
+        finally:
+            await engine.dispose()
 
-    def test_update_against_turn_audit_raises_at_database_level(self) -> None:
-        self._assert_owner_mutation_raises("UPDATE turn_audit SET refused = true")
-
-    def test_delete_against_turn_audit_raises_at_database_level(self) -> None:
-        self._assert_owner_mutation_raises("DELETE FROM turn_audit")
-
-    def test_update_against_gate_evaluation_raises_at_database_level(self) -> None:
+    def test_update_against_turn_audit_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
         self._assert_owner_mutation_raises(
-            "UPDATE gate_evaluation SET decision = 'stop'"
+            "UPDATE turn_audit SET refused = true", fresh_database
         )
 
-    def test_delete_against_gate_evaluation_raises_at_database_level(self) -> None:
-        self._assert_owner_mutation_raises("DELETE FROM gate_evaluation")
+    def test_delete_against_turn_audit_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
+        self._assert_owner_mutation_raises("DELETE FROM turn_audit", fresh_database)
 
-    def test_application_role_has_no_update_or_delete_grant(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_update_against_gate_evaluation_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
+        self._assert_owner_mutation_raises(
+            "UPDATE gate_evaluation SET decision = 'stop'", fresh_database
+        )
+
+    def test_delete_against_gate_evaluation_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
+        self._assert_owner_mutation_raises(
+            "DELETE FROM gate_evaluation", fresh_database
+        )
+
+    def test_application_role_has_no_update_or_delete_grant(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             self._insert_audit_row(connection)
             connection.commit()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(f"SET ROLE {ApplicationRole(_ROLE_NAME).identifier()}")
                 cursor.execute("UPDATE turn_audit SET refused = true")
 
-    def test_truncate_of_audit_table_is_refused_for_application_role(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_truncate_of_audit_table_is_refused_for_application_role(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(f"SET ROLE {ApplicationRole(_ROLE_NAME).identifier()}")
                 cursor.execute("TRUNCATE turn_audit")
 
-    def test_gate_evaluation_rejects_unknown_decision(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_gate_evaluation_rejects_unknown_decision(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             self._insert_audit_row(connection)
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(
@@ -253,12 +234,11 @@ class TestPersistenceSchema:
                     """
                 )
 
-    def test_gate_evaluation_requires_reason_for_not_evaluated(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_gate_evaluation_requires_reason_for_not_evaluated(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             self._insert_audit_row(connection)
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
                 cursor.execute(
@@ -298,12 +278,11 @@ class TestPersistenceSchema:
                     (self._envelope(),),
                 )
 
-    def test_turn_audit_requires_existing_policy_version(self) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def test_turn_audit_requires_existing_policy_version(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with (
                 connection.cursor() as cursor,
                 pytest.raises(psycopg.Error, match="foreign key"),
@@ -328,12 +307,11 @@ class TestPersistenceSchema:
                     (self._envelope(),) * 9,
                 )
 
-    def _assert_owner_mutation_raises(self, statement: str) -> None:
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().plain(postgres)) as connection,
-        ):
-            AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
+    def _assert_owner_mutation_raises(
+        self, statement: str, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             self._insert_audit_row(connection)
             self._insert_gate_row(connection)
             with (

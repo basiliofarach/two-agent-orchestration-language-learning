@@ -2,30 +2,15 @@
 
 from __future__ import annotations
 
-import os
-
 import psycopg
-from testcontainers.postgres import PostgresContainer
 from tests.support.repository import RepositoryPaths
 from tests.support.runtime_pin import RuntimePin
 
 
 class TestPostgresRuntime:
-    def setup_method(self) -> None:
-        os.environ["TESTCONTAINERS_RYUK_DISABLED"] = "true"
-
-    def _psycopg_url(self, postgres: PostgresContainer) -> str:
-        raw = postgres.get_connection_url()
-        return raw.replace("postgresql+psycopg2://", "postgresql://").replace(
-            "postgresql+psycopg://",
-            "postgresql://",
-        )
-
-    def test_vector_extension_can_be_created(self) -> None:
-        image = RuntimePin().postgres_image()
+    def test_vector_extension_can_be_created(self, fresh_database: str) -> None:
         with (
-            PostgresContainer(image=image) as postgres,
-            psycopg.connect(self._psycopg_url(postgres)) as connection,
+            psycopg.connect(fresh_database) as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
