@@ -1,5 +1,6 @@
 """The audit row and the work it describes commit, or roll back, together."""
 
+import asyncio
 from pathlib import Path
 from uuid import UUID
 
@@ -11,7 +12,10 @@ from tests.support.samples import Samples
 from tests.support.sealed_turn import SealedTurn
 
 from tutor_api.adapters.persistence.aes_gcm_envelope import AesGcmEnvelope
-from tutor_api.adapters.persistence.audit_sink import PostgresAuditSink
+from tutor_api.adapters.persistence.audit_sink import (
+    AuditAppendRejected,
+    PostgresAuditSink,
+)
 from tutor_api.adapters.persistence.database import DatabaseEngine
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_core.domain.audit.chain import ChainVerifier
@@ -146,6 +150,27 @@ class AppendTurn(TransactionalWork):
         await self._sink.append(self._record)
 
 
+class HeldAppend(TransactionalWork):
+    """Append, then wait, so the session lock stays held until release."""
+
+    def __init__(
+        self,
+        sink: AuditSinkPort,
+        record: TurnAuditRecord,
+        started: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        self._sink = sink
+        self._record = record
+        self._started = started
+        self._release = release
+
+    async def run(self, connection: TransactionConnection) -> None:
+        await self._sink.append(self._record)
+        self._started.set()
+        await self._release.wait()
+
+
 class EnlistedSink:
     """Append through the sink on the connection the unit of work commits."""
 
@@ -272,3 +297,107 @@ class TestAuditSinkTransaction:
             (1, first.record_hash, second.record_hash, None),
         ]
         assert ChainVerifier(hasher).find_break((first, second)) is None
+
+    async def test_a_second_append_waits_until_the_session_lock_releases(
+        self, fresh_database: str
+    ) -> None:
+        Catalogue().install(fresh_database, with_probe=False)
+        cipher = self._cipher()
+        hasher = AuditRecordHash()
+        sealer = SealedTurn(hasher)
+        first = sealer.at(Samples().stopped_audit_record(), AuditRecordHash.GENESIS)
+        rival_record = sealer.at(
+            Samples()
+            .stopped_audit_record()
+            .model_copy(
+                update={"turn_id": _SECOND_TURN, "turn_index": 0},
+            ),
+            AuditRecordHash.GENESIS,
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+        holder = asyncio.create_task(
+            self._hold(fresh_database, cipher, hasher, first, started, release)
+        )
+        rival: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            rival = asyncio.create_task(
+                self._append(fresh_database, cipher, hasher, rival_record)
+            )
+            await asyncio.wait_for(
+                self._session_lock_is_contended(fresh_database), timeout=5
+            )
+            release.set()
+            await holder
+            with pytest.raises(AuditAppendRejected, match="previous record hash"):
+                await rival
+        finally:
+            release.set()
+            if not holder.done():
+                await holder
+            if rival is not None and not rival.done():
+                rival.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await rival
+        with (
+            psycopg.connect(fresh_database) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("SELECT turn_id FROM turn_audit")
+            assert cursor.fetchall() == [(first.turn_id,)]
+
+    async def _hold(
+        self,
+        url: str,
+        cipher: CipherPort,
+        hasher: AuditRecordHash,
+        record: TurnAuditRecord,
+        started: asyncio.Event,
+        release: asyncio.Event,
+    ) -> None:
+        engine = DatabaseEngine(PostgresUrl(url).async_url())
+        connection = await engine.connect()
+        sink = PostgresAuditSink(connection, cipher, hasher)
+        try:
+            await SqlAlchemyUnitOfWork(connection).run(
+                HeldAppend(sink, record, started, release)
+            )
+        finally:
+            await engine.dispose()
+
+    async def _session_lock_is_contended(self, url: str) -> None:
+        """Wait until one session holds the chain lock and another is queued."""
+        while True:
+            with (
+                psycopg.connect(url) as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(
+                    """
+                    SELECT
+                        count(*) FILTER (WHERE granted),
+                        count(*) FILTER (WHERE NOT granted)
+                    FROM pg_locks
+                    WHERE locktype = 'advisory'
+                    """
+                )
+                row = cursor.fetchone()
+            assert row is not None
+            granted, waiting = row
+            if granted >= 1 and waiting >= 1:
+                return
+            await asyncio.sleep(0.05)
+
+    async def _append(
+        self,
+        url: str,
+        cipher: CipherPort,
+        hasher: AuditRecordHash,
+        record: TurnAuditRecord,
+    ) -> None:
+        enlisted = EnlistedSink(url, cipher, hasher)
+        try:
+            await enlisted.run(AppendTurn, record)
+        finally:
+            await enlisted.dispose()

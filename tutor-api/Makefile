@@ -28,7 +28,7 @@ print-model-sha:
 	@PYTHONPATH="$(REPO)" $(UV) --directory "$(REPO)" run python -c "from tests.support.runtime_pin import RuntimePin; print(RuntimePin().weights_sha())"
 
 lint-imports:
-	$(UV) --directory "$(REPO)" run lint-imports
+	PYTHONPATH="$(REPO)/tutor-core/src:$(REPO)/tutor-api/src" $(UV) --directory "$(REPO)" run lint-imports
 
 # Alembic runs these two on each generated script via [post_write_hooks].
 # This target is the catch-up pass for scripts written before the hooks

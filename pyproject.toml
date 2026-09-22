@@ -33,7 +33,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+# The src roots are explicit so the suite does not depend on the editable
+# .pth files, which Python skips once macOS flags them hidden (gh-113659).
+pythonpath = [".", "tutor-core/src", "tutor-api/src"]
 testpaths = ["tests", "tutor-core/tests", "tutor-api/tests"]
 addopts = [
     "--cov=tutor_core",

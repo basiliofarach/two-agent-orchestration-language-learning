@@ -33,6 +33,9 @@ class BoundSink:
 
     def __init__(self, rows: tuple[tuple[object, ...], ...] = ()) -> None:
         self.connection = RecordingConnection()
+        # The session lock is the first fetch. It must not consume the
+        # predecessor row the test queued.
+        self.connection.rows.append(("held",))
         self.connection.rows.extend(rows)
         self.hasher = AuditRecordHash()
         self.cipher = ReversibleCipher()
@@ -173,6 +176,21 @@ class TestPostgresAuditSink:
         )
         with pytest.raises(AuditAppendRejected, match="turn index does not"):
             await bound.sink.append(record)
+
+    async def test_append_locks_the_session_before_reading_the_predecessor(
+        self,
+    ) -> None:
+        bound = BoundSink()
+        record = bound.seal(Samples().stopped_audit_record(), AuditRecordHash.GENESIS)
+        await bound.sink.append(record)
+        lock, predecessor = bound.connection.fetches
+        assert "pg_advisory_xact_lock" in lock[0]
+        assert lock[1] == {
+            "namespace": PostgresAuditSink._CHAIN_LOCK_NAMESPACE,
+            "session_id": str(record.session_id),
+        }
+        assert "FROM turn_audit" in predecessor[0]
+        assert predecessor[1] == {"session_id": record.session_id}
 
     async def test_a_later_record_appends_when_the_link_holds(self) -> None:
         hasher = AuditRecordHash()

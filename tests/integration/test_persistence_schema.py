@@ -268,6 +268,31 @@ class TestPersistenceSchema:
                     (self._envelope(),),
                 )
 
+    def test_one_session_cannot_store_two_rows_at_the_same_turn_index(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="turn_audit_session_turn"),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO turn_audit (
+                        turn_id, session_id, turn_index, learner_prompt_redacted,
+                        redacted_categories, policy_version, previous_record_hash,
+                        record_hash, recorded_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000022',
+                        '00000000-0000-4000-8000-000000000012',
+                        0, %s, %s, 'v1', 'a', 'c', '2026-01-01T00:00:00Z'
+                    )
+                    """,
+                    (self._envelope(), self._envelope()),
+                )
+
     def test_a_citation_requires_an_existing_chunk(self, fresh_database: str) -> None:
         with psycopg.connect(fresh_database) as connection:
             AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()

@@ -3,7 +3,11 @@
 import re
 from pathlib import Path
 
-from tutor_api.adapters.persistence.schema import ApplicationRole, AuditSchema
+from tutor_api.adapters.persistence.schema import (
+    ApplicationRole,
+    AuditSchema,
+    AuditSchemaUpgrade,
+)
 
 
 class AuditMigrationText:
@@ -29,7 +33,15 @@ class TestAuditMigrationsDoNotMutate:
     def test_audit_schema_statements_issue_no_update_or_delete(self) -> None:
         schema = AuditSchema(ApplicationRole("tutor_app"))
         source = "\n".join(schema.statements())
+        assert "UNIQUE (session_id, turn_index)" in source
         assert AuditMigrationText().mutations(source) == ()
+
+    def test_audit_upgrade_issues_no_update_or_delete(self) -> None:
+        upgrade = AuditSchemaUpgrade(ApplicationRole("tutor_app"))
+        scanner = AuditMigrationText()
+        assert scanner.mutations("\n".join(upgrade.statements())) == ()
+        assert scanner.mutations("\n".join(upgrade.downgrade_statements())) == ()
+        assert "INSERT INTO turn_citation" in "\n".join(upgrade.statements())
 
     def test_scanner_flags_a_mutation(self) -> None:
         found = AuditMigrationText().mutations(

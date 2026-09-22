@@ -22,6 +22,11 @@ class PostgresAuditSink(AuditSinkPort):
     before any insert, and a later failure on that same connection rolls
     the insert back with the work it describes.
 
+    Appends for one session take a transaction advisory lock before the
+    predecessor read. The lock releases when that transaction commits or
+    rolls back, so a second append waits and then links to the row the
+    first one wrote. ``turn_audit_session_turn`` is the uniqueness backstop.
+
     ``recorded_at`` is taken from the record. This class does not read a
     clock.
     """
@@ -49,6 +54,17 @@ class PostgresAuditSink(AuditSinkPort):
         VALUES (:turn_id, :chunk_id, :ordinal)
         """
 
+    # First key of pg_advisory_xact_lock. The second is hashtext(session_id).
+    # Another subsystem that takes a transaction advisory lock must use a
+    # different first key, or it queues behind an audit append.
+    _CHAIN_LOCK_NAMESPACE = 4812
+
+    _LOCK_SESSION = """
+        SELECT pg_advisory_xact_lock(
+            :namespace, hashtext(CAST(:session_id AS text))
+        )
+        """
+
     _PREDECESSOR = """
         SELECT record_hash, turn_index
         FROM turn_audit
@@ -70,6 +86,7 @@ class PostgresAuditSink(AuditSinkPort):
     async def append(self, record: TurnAuditRecord) -> None:
         """Append ``record`` and one citation row per retrieved chunk."""
         self._require_digest(record)
+        await self._lock_session(record)
         await self._require_predecessor(record)
         await self._connection.execute(self._TURN, self._turn_parameters(record))
         for ordinal, chunk_id in enumerate(record.retrieved_context_ids):
@@ -86,6 +103,15 @@ class PostgresAuditSink(AuditSinkPort):
         if record.record_hash != self._hasher.digest(record):
             msg = "record hash does not match the canonical digest"
             raise AuditAppendRejected(msg)
+
+    async def _lock_session(self, record: TurnAuditRecord) -> None:
+        await self._connection.fetch_one(
+            self._LOCK_SESSION,
+            {
+                "namespace": self._CHAIN_LOCK_NAMESPACE,
+                "session_id": str(record.session_id),
+            },
+        )
 
     async def _require_predecessor(self, record: TurnAuditRecord) -> None:
         row = await self._connection.fetch_one(
