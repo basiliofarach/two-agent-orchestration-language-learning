@@ -260,6 +260,23 @@ class TestAuditSchemaUpgrade:
         with pytest.raises(Exception, match="not a kb_chunk"):
             runner.upgrade("head")
 
+    def test_a_registry_seeded_before_human_action_still_reaches_head(
+        self, fresh_database: str
+    ) -> None:
+        runner = AlembicRunner(PostgresUrl(fresh_database).sync())
+        catalogue = LegacyCatalogue()
+        runner.upgrade("d97b5bda2b1c")
+        self._drop_human_action_exemptions(fresh_database)
+        catalogue.install(fresh_database)
+        catalogue.insert_cited_turn(fresh_database)
+        runner.stamp(_STAMPED)
+        runner.upgrade("head")
+        assert self._regclass(fresh_database, "human_action") == "human_action"
+        assert self._action_exemption(fresh_database) == (
+            "Non-personal control data. Stays cleartext so "
+            "approve/edit/override/stop is a database constraint (DEC-0012)."
+        )
+
     def test_a_legacy_action_blob_refuses_the_upgrade(
         self, fresh_database: str
     ) -> None:
@@ -379,6 +396,29 @@ class TestAuditSchemaUpgrade:
                 """
             )
             return cursor.fetchone() is not None
+
+    def _drop_human_action_exemptions(self, url: str) -> None:
+        with psycopg.connect(url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM protected_column_exemption
+                WHERE schema_name = 'public' AND table_name = 'human_action'
+                """
+            )
+
+    def _action_exemption(self, url: str) -> str:
+        with psycopg.connect(url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT reason FROM protected_column_exemption
+                WHERE schema_name = 'public'
+                  AND table_name = 'human_action'
+                  AND column_name = 'action'
+                """
+            )
+            row = cursor.fetchone()
+        assert row is not None
+        return str(row[0])
 
     def _regclass(self, url: str, name: str) -> str | None:
         with psycopg.connect(url) as connection, connection.cursor() as cursor:

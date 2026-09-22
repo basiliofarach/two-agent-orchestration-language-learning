@@ -409,6 +409,20 @@ class AuditSchemaUpgrade:
                     ALTER TABLE turn_audit DROP COLUMN human_action;
                 END IF;
 
+                -- The base migration seeds this row only when it runs.
+                -- A catalogue stamped before human_action existed does not
+                -- have it, and the DEC-0012 trigger rejects the CREATE.
+                INSERT INTO protected_column_exemption (
+                    schema_name, table_name, column_name, reason, decision_ref
+                ) VALUES (
+                    'public', 'human_action', 'action',
+                    'Non-personal control data. Stays cleartext so '
+                    'approve/edit/override/stop is a database constraint '
+                    '(DEC-0012).',
+                    'DEC-0012'
+                )
+                ON CONFLICT (schema_name, table_name, column_name) DO NOTHING;
+
                 IF to_regclass('public.human_action') IS NULL THEN
                     CREATE TABLE human_action (
                         id uuid PRIMARY KEY,

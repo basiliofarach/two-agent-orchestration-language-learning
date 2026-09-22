@@ -41,7 +41,10 @@ class TestAuditMigrationsDoNotMutate:
         scanner = AuditMigrationText()
         assert scanner.mutations("\n".join(upgrade.statements())) == ()
         assert scanner.mutations("\n".join(upgrade.downgrade_statements())) == ()
-        assert "INSERT INTO turn_citation" in "\n".join(upgrade.statements())
+        source = "\n".join(upgrade.statements())
+        assert "INSERT INTO turn_citation" in source
+        assert "INSERT INTO protected_column_exemption" in source
+        assert "'human_action', 'action'" in source
 
     def test_scanner_flags_a_mutation(self) -> None:
         found = AuditMigrationText().mutations(
