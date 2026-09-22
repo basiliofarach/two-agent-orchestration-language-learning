@@ -2,6 +2,11 @@
 
 *Status:* Accepted · *Date:* 2026-09-18
 
+*Amended:* 2026-09-22 — `TransactionConnection` added. It was an
+adapter-side ABC; `TransactionalWork.run` now receives it, and a domain
+signature cannot name an infrastructure type. The port set is otherwise
+unchanged.
+
 ## Context
 
 The prototype must produce *evidence* that Articles 10, 12, 14 and 15 are
@@ -47,6 +52,8 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `PolicyArtifactPort` | Supply the versioned machine-readable policy | Read-only; version logged per verdict | REQ-POLICY |
 | `ClockPort` | Current time | Injected for deterministic replay | — |
 | `CipherPort` | Encrypt / decrypt bytes at the persistence boundary | Bytes only; no domain types; holds no store | REQ-MINOR, DEC-0012 |
+| `UnitOfWorkPort` | One transaction for a turn's writes | Adapters enlist; they do not open a connection | REQ-AUDIT, DEC-0006 |
+| `TransactionConnection` | Commit, rollback, close, execute on the enlisted transaction | No connect, no engine, no cursor; a holder cannot open a second transaction | REQ-AUDIT, DEC-0006 |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
 takes an explicit field allowlist at construction. `LanguageModelPort` is handed

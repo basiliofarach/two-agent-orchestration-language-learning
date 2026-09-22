@@ -6,7 +6,8 @@ REPO := $(abspath ..)
 # The environment lives at $(REPO)/.venv — the one tutor.code-workspace,
 # prek and CI all resolve. Do not relocate it per-member.
 
-.PHONY: help sync test check up down smoke-model lint-imports print-model-sha
+.PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
+	lint-migrations
 
 help:
 	@echo "Backend commands (cwd must be tutor-api):"
@@ -15,6 +16,7 @@ help:
 	@echo "  make down          stop Postgres"
 	@echo "  make test          pytest (coverage gate in the workspace)"
 	@echo "  make check         prek hooks + pytest"
+	@echo "  make lint-migrations  ruff --fix + format over alembic/versions"
 	@echo "  make smoke-model   local Ollama completion (SHA-pinned)"
 	@echo "HTTP serve is not in this phase. After the API ticket:"
 	@echo "  $(UV) run uvicorn tutor_api.main:app --reload --host 127.0.0.1 --port 8000"
@@ -27,6 +29,13 @@ print-model-sha:
 
 lint-imports:
 	$(UV) --directory "$(REPO)" run lint-imports
+
+# Alembic runs these two on each generated script via [post_write_hooks].
+# This target is the catch-up pass for scripts written before the hooks
+# existed, or edited by hand after generation.
+lint-migrations:
+	$(UV) --directory "$(REPO)" run ruff check --fix "$(CURDIR)/alembic/versions"
+	$(UV) --directory "$(REPO)" run ruff format "$(CURDIR)/alembic/versions"
 
 test: sync
 	$(UV) --directory "$(REPO)" run pytest

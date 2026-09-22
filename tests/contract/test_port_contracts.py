@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -40,6 +41,11 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.unit_of_work import (
+    TransactionalWork,
+    TransactionConnection,
+    UnitOfWorkPort,
+)
 
 
 class PiiRedactionPortContract:
@@ -447,6 +453,50 @@ class TestStubPolicyArtifactPort(PolicyArtifactPortContract):
         return _Policy()
 
 
+class _CompletedWork(TransactionalWork):
+    def __init__(self) -> None:
+        self.ran = False
+
+    async def run(self, connection: TransactionConnection) -> None:
+        self.ran = True
+
+
+class _MemoryConnection(TransactionConnection):
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    async def execute(
+        self,
+        statement: str,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
+        return None
+
+
+class _MemoryUnitOfWork(UnitOfWorkPort):
+    async def run(self, work: TransactionalWork) -> None:
+        await work.run(_MemoryConnection())
+
+
+class UnitOfWorkPortContract:
+    """Every ``UnitOfWorkPort`` runs the enlisted work."""
+
+    def port(self) -> UnitOfWorkPort:
+        msg = "subclass must supply a UnitOfWorkPort"
+        raise NotImplementedError(msg)
+
+    async def test_run_executes_the_enlisted_work(self) -> None:
+        work = _CompletedWork()
+        await self.port().run(work)
+        assert work.ran
+
+
 class TestStubCipherPort(CipherPortContract):
     def port(self) -> CipherPort:
         return _Cipher()
@@ -455,3 +505,8 @@ class TestStubCipherPort(CipherPortContract):
 class TestStubClockPort(ClockPortContract):
     def port(self) -> ClockPort:
         return _Clock()
+
+
+class TestStubUnitOfWorkPort(UnitOfWorkPortContract):
+    def port(self) -> UnitOfWorkPort:
+        return _MemoryUnitOfWork()

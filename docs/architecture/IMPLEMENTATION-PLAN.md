@@ -161,11 +161,12 @@ the prototype.
 
 ## Phase 7 — API
 
-FastAPI routers for sessions and audit. `container.py` wireup registration.
-`Depends()` only in router signatures.
+FastAPI routers for sessions and audit. `container.py` provider registration
+(DEC-0013). `Depends()` only in router signatures, through `Provide(T)`.
 
-*Done when:* the container resolves and startup lifetime validation passes — the
-test that catches a singleton holding request-scoped learner state.
+*Done when:* the container resolves and `LifetimeValidation` passes at startup —
+the test that catches a singleton holding request-scoped learner state, and
+raises `ScopeLeak` before the application serves traffic.
 
 ## Phase 8 — Tutor dashboard
 

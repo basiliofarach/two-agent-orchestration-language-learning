@@ -1,37 +1,18 @@
 """A plaintext column on a stored table fails in the database (DEC-0012)."""
 
-import os
-from pathlib import Path
 from uuid import UUID
 
 import psycopg
 import pytest
-from testcontainers.postgres import PostgresContainer
-from tests.support.runtime_pin import RuntimePin
 
 from tutor_api.adapters.persistence.aes_gcm_envelope import AesGcmEnvelope
 from tutor_api.adapters.persistence.encryption_at_rest import EncryptionAtRestSchema
 
 
-class PostgresUrl:
-    def from_container(self, postgres: PostgresContainer) -> str:
-        raw = postgres.get_connection_url()
-        return raw.replace("postgresql+psycopg2://", "postgresql://").replace(
-            "postgresql+psycopg://",
-            "postgresql://",
-        )
-
-
 class TestEncryptionAtRestSchema:
-    def setup_method(self) -> None:
-        os.environ["TESTCONTAINERS_RYUK_DISABLED"] = "true"
-
-    def test_install_uses_the_callers_transaction(self) -> None:
+    def test_install_uses_the_callers_transaction(self, fresh_database: str) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.rollback()
             with connection.cursor() as cursor:
@@ -39,13 +20,12 @@ class TestEncryptionAtRestSchema:
                 installed_type = cursor.fetchone()[0]
         assert installed_type is None
 
-    def test_plaintext_is_rejected_and_ciphertext_round_trips(self) -> None:
+    def test_plaintext_is_rejected_and_ciphertext_round_trips(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
         cipher = AesGcmEnvelope(key=bytes(range(32)), key_id=UUID(int=1))
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -92,12 +72,11 @@ class TestEncryptionAtRestSchema:
         assert b"Where is the library?" not in stored
         assert cipher.decrypt(stored) == b"Where is the library?"
 
-    def test_alter_plaintext_fails_until_an_exemption_is_registered(self) -> None:
+    def test_alter_plaintext_fails_until_an_exemption_is_registered(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with connection.cursor() as cursor:
@@ -128,12 +107,9 @@ class TestEncryptionAtRestSchema:
                 )
             connection.rollback()
 
-    def test_seeded_exemptions_are_readable(self) -> None:
+    def test_seeded_exemptions_are_readable(self, fresh_database: str) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with connection.cursor() as cursor:
@@ -159,6 +135,10 @@ class TestEncryptionAtRestSchema:
             ("protected_column_exemption", "reason"),
             ("protected_column_exemption", "schema_name"),
             ("protected_column_exemption", "table_name"),
+            ("gate_evaluation", "decision"),
+            ("gate_evaluation", "gate_name"),
+            ("gate_evaluation", "policy_rule_id"),
+            ("policy_version", "version"),
             ("turn_audit", "model_revision"),
             ("turn_audit", "policy_version"),
             ("turn_audit", "previous_record_hash"),
@@ -167,12 +147,11 @@ class TestEncryptionAtRestSchema:
             ("turn_audit", "turn_id"),
         }
 
-    def test_audit_reports_plaintext_created_before_the_guard(self) -> None:
+    def test_audit_reports_plaintext_created_before_the_guard(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("CREATE TABLE legacy_note (body text)")
             schema.install(connection)
@@ -203,12 +182,9 @@ class TestEncryptionAtRestSchema:
                 found = tuple(cursor.fetchall())
         assert found == (("legacy_note", "body"),)
 
-    def test_new_table_is_ciphertext_or_an_exemption(self) -> None:
+    def test_new_table_is_ciphertext_or_an_exemption(self, fresh_database: str) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -225,12 +201,11 @@ class TestEncryptionAtRestSchema:
             ):
                 cursor.execute("CREATE TABLE other_note (body text)")
 
-    def test_domain_and_array_cannot_disguise_plaintext(self) -> None:
+    def test_domain_and_array_cannot_disguise_plaintext(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -248,12 +223,11 @@ class TestEncryptionAtRestSchema:
             ):
                 cursor.execute("CREATE TABLE note_list (items text[])")
 
-    def test_a_table_in_another_schema_cannot_hold_plaintext(self) -> None:
+    def test_a_table_in_another_schema_cannot_hold_plaintext(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -270,12 +244,11 @@ class TestEncryptionAtRestSchema:
                 )
             connection.rollback()
 
-    def test_a_public_exemption_does_not_exempt_another_schema(self) -> None:
+    def test_a_public_exemption_does_not_exempt_another_schema(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -288,12 +261,11 @@ class TestEncryptionAtRestSchema:
                 )
             connection.rollback()
 
-    def test_a_lookalike_ciphertext_domain_cannot_shadow_the_real_one(self) -> None:
+    def test_a_lookalike_ciphertext_domain_cannot_shadow_the_real_one(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -307,12 +279,11 @@ class TestEncryptionAtRestSchema:
                 )
             connection.rollback()
 
-    def test_create_table_as_is_rejected_when_it_creates_the_column(self) -> None:
+    def test_create_table_as_is_rejected_when_it_creates_the_column(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -327,12 +298,11 @@ class TestEncryptionAtRestSchema:
                 cursor.execute("SELECT to_regclass('public.ctas_note')")
                 assert cursor.fetchone()[0] is None
 
-    def test_select_into_is_rejected_when_it_creates_the_column(self) -> None:
+    def test_select_into_is_rejected_when_it_creates_the_column(
+        self, fresh_database: str
+    ) -> None:
         schema = EncryptionAtRestSchema()
-        with (
-            PostgresContainer(image=RuntimePin().postgres_image()) as postgres,
-            psycopg.connect(PostgresUrl().from_container(postgres)) as connection,
-        ):
+        with psycopg.connect(fresh_database) as connection:
             schema.install(connection)
             connection.commit()
             with (
@@ -344,20 +314,3 @@ class TestEncryptionAtRestSchema:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT to_regclass('public.into_note')")
                 assert cursor.fetchone()[0] is None
-
-    def test_alembic_revisions_cannot_arrive_without_a_test_runner(self) -> None:
-        api_root = Path(__file__).resolve().parents[2] / "tutor-api"
-        revisions = tuple(
-            path
-            for root in (
-                api_root / "migrations" / "versions",
-                api_root / "alembic" / "versions",
-            )
-            if root.is_dir()
-            for path in sorted(root.glob("*.py"))
-            if path.name != "__init__.py"
-        )
-        assert revisions == (), (
-            "Alembic revisions exist but the integration test does not apply them: "
-            f"{revisions}"
-        )

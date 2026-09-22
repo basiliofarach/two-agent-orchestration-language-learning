@@ -158,7 +158,7 @@ That is the shape this record replaces.
 (`service.prepare().execute()` on one class) does not remove the other
 methods. The next stage must be a *different type*.
 
-**Per-call `dispose()`.** Object lifetimes are wireup scopes (DEC-0003).
+**Per-call `dispose()`.** Object lifetimes are container lifetimes (DEC-0013).
 A service does not open or close the database, the model client, or the
 clock per request. Resource cleanup is not a use-case stage.
 

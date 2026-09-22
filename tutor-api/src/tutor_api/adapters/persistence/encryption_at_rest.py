@@ -165,6 +165,26 @@ class EncryptionAtRestSchema:
                 column_name="version_num",
                 reason=revision,
             ),
+            ColumnExemption(
+                table_name="policy_version",
+                column_name="version",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="gate_evaluation",
+                column_name="gate_name",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="gate_evaluation",
+                column_name="decision",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="gate_evaluation",
+                column_name="policy_rule_id",
+                reason=not_personal,
+            ),
         )
 
     def _statements(self) -> tuple[str, ...]:
