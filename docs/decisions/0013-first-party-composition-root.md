@@ -47,6 +47,12 @@ signature, and a first-party composition root below it.
   reads the container from `request.app.state`, which is per-application
   instance state — several applications exist in one process during the test
   run and share nothing.
+- A reusable dependency may expose that boundary as the transparent assignment
+  `SomeDependency = Annotated[SomeType, Depends(Provide(SomeType))]`; the handler
+  then annotates its parameter with `SomeDependency`. A PEP 695 `type` alias is
+  not equivalent here: FastAPI does not unwrap its `Annotated` metadata and
+  treats the parameter as request data. Integration tests inspect the route's
+  dependency graph so this cannot silently regress.
 - `container.py` names every concrete class, and nothing else does.
 
 ## Consequences
@@ -87,5 +93,5 @@ lose its mechanical backing and become a review convention.
 **Rejected — `@lru_cache def get_settings()`.** The idiom most FastAPI projects
 use. It is a module-level function holding behaviour (rule 2) and a
 module-level singleton (rule 3), and its cache is process-global, so two
-applications in one test run would share configuration. `DatabaseSettingsProvider`
+applications in one test run would share configuration. `SettingsProvider`
 gives the same read-once behaviour scoped to a container instance.

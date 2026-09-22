@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tutor_api.adapters.persistence.database_url import MigrationDatabaseUrl
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 _ENV_FILE = """POSTGRES_USER=tutor_owner
 POSTGRES_PASSWORD=tutor_owner
@@ -21,13 +21,20 @@ class EnvFile:
     def __init__(self, root: Path) -> None:
         self._root = root
 
-    def settings(self, body: str = _ENV_FILE, **overrides: object) -> DatabaseSettings:
+    def settings(
+        self,
+        body: str = _ENV_FILE,
+        **overrides: object,
+    ) -> ApplicationSettings:
         path = self._root / ".env"
         path.write_text(body, encoding="utf-8")
-        return DatabaseSettings(_env_file=path, **overrides)
+        return ApplicationSettings(_env_file=path, **overrides)
 
-    def absent(self, **overrides: object) -> DatabaseSettings:
-        return DatabaseSettings(_env_file=self._root / "absent.env", **overrides)
+    def absent(self, **overrides: object) -> ApplicationSettings:
+        return ApplicationSettings(
+            _env_file=self._root / "absent.env",
+            **overrides,
+        )
 
 
 class TestUrlFromParts:

@@ -2,7 +2,7 @@
 
 from urllib.parse import quote
 
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 
 class MigrationDatabaseUrl:
@@ -10,7 +10,7 @@ class MigrationDatabaseUrl:
 
     ``DATABASE_URL`` wins outright; otherwise the URL is composed from the
     ``POSTGRES_*`` parts. Reading and precedence belong to
-    :class:`~tutor_api.settings.DatabaseSettings`, so an exported variable
+    :class:`~tutor_api.settings.ApplicationSettings`, so an exported variable
     beats ``tutor-api/.env`` without this class knowing how either is loaded.
 
     No credentials live in ``alembic.ini``. A URL committed there drifts from
@@ -32,7 +32,7 @@ class MigrationDatabaseUrl:
         "postgres",
     )
 
-    def __init__(self, settings: DatabaseSettings) -> None:
+    def __init__(self, settings: ApplicationSettings) -> None:
         self._settings = settings
 
     def value(self) -> str:

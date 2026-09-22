@@ -6,10 +6,10 @@ from alembic import context
 
 from tutor_api.adapters.persistence.database_url import MigrationDatabaseUrl
 from tutor_api.adapters.persistence.migration_environment import MigrationEnvironment
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-MigrationEnvironment(MigrationDatabaseUrl(DatabaseSettings())).run()
+MigrationEnvironment(MigrationDatabaseUrl(ApplicationSettings())).run()

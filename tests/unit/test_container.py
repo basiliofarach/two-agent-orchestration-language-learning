@@ -3,35 +3,35 @@
 import pytest
 from pydantic import ValidationError
 
-from tutor_api.container import ApplicationContainer, DatabaseSettingsProvider
+from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.lifetime import Lifetime
 from tutor_api.routers.health import HealthStatus
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 
-class TestDatabaseSettingsProvider:
+class TestSettingsProvider:
     def test_provides_the_settings_type(self) -> None:
-        assert DatabaseSettingsProvider().provides() is DatabaseSettings
+        assert SettingsProvider().provides() is ApplicationSettings
 
     def test_is_a_singleton_because_configuration_is_process_wide(self) -> None:
-        assert DatabaseSettingsProvider().lifetime() is Lifetime.SINGLETON
+        assert SettingsProvider().lifetime() is Lifetime.SINGLETON
 
     def test_requires_nothing(self) -> None:
-        assert DatabaseSettingsProvider().requires() == ()
+        assert SettingsProvider().requires() == ()
 
     def test_creates_settings(self) -> None:
-        assert isinstance(DatabaseSettingsProvider().create({}), DatabaseSettings)
+        assert isinstance(SettingsProvider().create({}), ApplicationSettings)
 
 
 class TestApplicationContainer:
     def test_resolves_database_settings(self) -> None:
         container = ApplicationContainer().build()
-        assert isinstance(container.resolve(DatabaseSettings), DatabaseSettings)
+        assert isinstance(container.resolve(ApplicationSettings), ApplicationSettings)
 
     def test_settings_are_read_once(self) -> None:
         container = ApplicationContainer().build()
-        assert container.resolve(DatabaseSettings) is container.resolve(
-            DatabaseSettings
+        assert container.resolve(ApplicationSettings) is container.resolve(
+            ApplicationSettings
         )
 
     def test_build_validates_the_graph(self) -> None:

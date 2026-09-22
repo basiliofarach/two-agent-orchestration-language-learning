@@ -16,10 +16,10 @@ from tutor_api.adapters.persistence.unit_of_work import (
     SqlAlchemyUnitOfWork,
     TransactionConnection,
 )
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 from tutor_core.domain.ports.unit_of_work import TransactionalWork
 
-_ROLE_NAME = DatabaseSettings().postgres_app_user
+_ROLE_NAME = ApplicationSettings().postgres_app_user
 
 
 class PostgresUrl:

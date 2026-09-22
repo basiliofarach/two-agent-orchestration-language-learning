@@ -11,7 +11,7 @@ class ApplicationRole:
     overrode that variable had the audit privileges granted to a NOLOGIN
     placeholder this migration created, while the login the application
     actually uses received none — a silent loss of the REQ-AUDIT control.
-    :class:`~tutor_api.settings.DatabaseSettings` resolves the name from the
+    :class:`~tutor_api.settings.ApplicationSettings` resolves the name from the
     same variable Compose reads.
 
     The name reaches SQL interpolated, so it is checked against the identifier

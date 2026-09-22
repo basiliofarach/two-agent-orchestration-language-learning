@@ -3,14 +3,13 @@
 import pytest
 
 from tutor_api.adapters.persistence.schema import ApplicationRole, AuditSchema
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 
 class TestApplicationRole:
     def test_settings_default_is_tutor_app(self) -> None:
-        assert DatabaseSettings(postgres_app_user="tutor_app").postgres_app_user == (
-            "tutor_app"
-        )
+        settings = ApplicationSettings(postgres_app_user="tutor_app")
+        assert settings.postgres_app_user == "tutor_app"
 
     def test_quotes_the_name_for_both_sql_positions(self) -> None:
         role = ApplicationRole("audit_writer")

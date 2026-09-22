@@ -1,9 +1,11 @@
 """The seam between the container and a FastAPI route signature."""
 
+from typing import cast
+
 from fastapi import Request
 
 
-class Provide:
+class Provide[TDependency]:
     """A ``Depends()`` callable that resolves one type from the application.
 
     The container is read from ``request.app.state``, which is per-application
@@ -16,9 +18,10 @@ class Provide:
     passes further down is constructor-injected (DEC-0013).
     """
 
-    def __init__(self, requested: type) -> None:
+    def __init__(self, requested: type[TDependency]) -> None:
         self._requested = requested
 
-    def __call__(self, request: Request) -> object:
+    def __call__(self, request: Request) -> TDependency:
         """Resolve the requested type from the running application's graph."""
-        return request.app.state.container.resolve(self._requested)
+        resolved = request.app.state.container.resolve(self._requested)
+        return cast(TDependency, resolved)

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from tutor_api.adapters.persistence.database_url import MigrationDatabaseUrl
 from tutor_api.adapters.persistence.migration_environment import MigrationEnvironment
-from tutor_api.settings import DatabaseSettings
+from tutor_api.settings import ApplicationSettings
 
 
 class RecordingConfig:
@@ -23,7 +23,7 @@ class RecordingConfig:
 
 
 def _url(tmp_path: Path) -> MigrationDatabaseUrl:
-    settings = DatabaseSettings(
+    settings = ApplicationSettings(
         _env_file=tmp_path / "absent.env",
         postgres_user="u",
         postgres_password="p",

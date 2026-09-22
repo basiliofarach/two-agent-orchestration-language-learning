@@ -1,17 +1,9 @@
 """Liveness, and a statement that configuration resolved through the graph."""
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from tutor_api.di.dependency import Provide
-from tutor_api.settings import DatabaseSettings
-
-# The annotated alias is the whole DI surface a handler sees: it asks for the
-# type, and the container answers. `Provide` holds a type and nothing else, so
-# this module-level name is a constant, not state.
-Settings = Annotated[DatabaseSettings, Depends(Provide(DatabaseSettings))]
+from tutor_api.settings import Settings
 
 
 class HealthStatus(BaseModel):
@@ -27,7 +19,7 @@ class HealthRouter:
     """Class-based router: routes are bound methods, so no module-level
     function holds behaviour (rule 2).
 
-    ``DatabaseSettings`` arrives at the handler signature and nowhere else.
+    ``Settings`` arrives at the handler signature and nowhere else.
     The handler never constructs it and never reads the environment: the
     container resolves it below the router and the signature is the seam
     (rule 3, DEC-0013).
