@@ -51,20 +51,14 @@ class AlembicRunner:
 
 
 class OneWrite(TransactionalWork):
-    def __init__(self, connection: TransactionConnection) -> None:
-        self._connection = connection
-
-    async def run(self) -> None:
-        await self._connection.execute("INSERT INTO uow_probe (id) VALUES (7)")
+    async def run(self, connection: TransactionConnection) -> None:
+        await connection.execute("INSERT INTO uow_probe (id) VALUES (7)")
 
 
 class ConflictingWrites(TransactionalWork):
-    def __init__(self, connection: TransactionConnection) -> None:
-        self._connection = connection
-
-    async def run(self) -> None:
-        await self._connection.execute("INSERT INTO uow_probe (id) VALUES (1)")
-        await self._connection.execute("INSERT INTO uow_probe (id) VALUES (1)")
+    async def run(self, connection: TransactionConnection) -> None:
+        await connection.execute("INSERT INTO uow_probe (id) VALUES (1)")
+        await connection.execute("INSERT INTO uow_probe (id) VALUES (1)")
 
 
 class TestPersistenceSchema:
@@ -152,10 +146,10 @@ class TestPersistenceSchema:
         engine = DatabaseEngine(PostgresUrl(fresh_database).async_url())
         try:
             committed = await engine.connect()
-            await SqlAlchemyUnitOfWork(committed).run(OneWrite(committed))
+            await SqlAlchemyUnitOfWork(committed).run(OneWrite())
             enlisted = await engine.connect()
             with pytest.raises(Exception, match="unique"):
-                await SqlAlchemyUnitOfWork(enlisted).run(ConflictingWrites(enlisted))
+                await SqlAlchemyUnitOfWork(enlisted).run(ConflictingWrites())
             with psycopg.connect(fresh_database) as connection:
                 count = connection.execute("SELECT count(*) FROM uow_probe")
                 row = count.fetchone()

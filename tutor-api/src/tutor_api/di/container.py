@@ -1,5 +1,7 @@
 """Resolve the object graph, and refuse to start one that can leak."""
 
+from threading import RLock
+
 from tutor_api.di.lifetime import Lifetime, ScopeLeak, UnregisteredDependency
 from tutor_api.di.provider import Provider
 
@@ -43,6 +45,13 @@ class Container:
     def __init__(self, providers: tuple[Provider, ...]) -> None:
         self._providers = {provider.provides(): provider for provider in providers}
         self._singletons: dict[type, object] = {}
+        # `Provide.__call__` is synchronous, so FastAPI runs it in a worker
+        # thread and two first requests can resolve concurrently. Without this
+        # the check-build-store below is a race: both threads miss the cache,
+        # both construct, and one instance is discarded — which for a
+        # singleton holding an engine or a pool would leak it. Re-entrant
+        # because `resolve` recurses through `requires()`.
+        self._lock = RLock()
 
     def validate(self) -> None:
         """Check every registration before the application serves traffic."""
@@ -55,14 +64,15 @@ class Container:
         instance, never at module level, so two applications in one process
         (the test suite runs several) share nothing.
         """
-        if requested in self._singletons:
-            return self._singletons[requested]
-        provider = self._providers.get(requested)
-        if provider is None:
-            raise UnregisteredDependency(Container, requested)
-        created = provider.create(
-            {required: self.resolve(required) for required in provider.requires()}
-        )
-        if provider.lifetime() is Lifetime.SINGLETON:
-            self._singletons[requested] = created
-        return created
+        with self._lock:
+            if requested in self._singletons:
+                return self._singletons[requested]
+            provider = self._providers.get(requested)
+            if provider is None:
+                raise UnregisteredDependency(Container, requested)
+            created = provider.create(
+                {required: self.resolve(required) for required in provider.requires()}
+            )
+            if provider.lifetime() is Lifetime.SINGLETON:
+                self._singletons[requested] = created
+            return created

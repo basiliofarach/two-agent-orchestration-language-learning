@@ -49,7 +49,9 @@ class TestPortSurface:
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        assert len(classes) == 16
+        # 15 modules, 17 classes: unit_of_work.py declares the port, the
+        # work that enlists in it, and the connection that work is given.
+        assert len(classes) == 17
         for cls in classes:
             assert issubclass(cls, ABC)
             assert cls.__abstractmethods__

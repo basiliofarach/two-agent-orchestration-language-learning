@@ -14,7 +14,11 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
-from tutor_core.domain.ports.unit_of_work import TransactionalWork, UnitOfWorkPort
+from tutor_core.domain.ports.unit_of_work import (
+    TransactionalWork,
+    TransactionConnection,
+    UnitOfWorkPort,
+)
 
 __all__ = [
     "AuditSinkPort",
@@ -31,6 +35,7 @@ __all__ = [
     "PromptTemplatePort",
     "SafetyClassifierPort",
     "SourceSupportPort",
+    "TransactionConnection",
     "TransactionalWork",
     "UnitOfWorkPort",
 ]

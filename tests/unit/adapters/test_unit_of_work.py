@@ -4,11 +4,11 @@ from collections.abc import Mapping
 
 import pytest
 
-from tutor_api.adapters.persistence.unit_of_work import (
-    SqlAlchemyUnitOfWork,
+from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tutor_core.domain.ports.unit_of_work import (
+    TransactionalWork,
     TransactionConnection,
 )
-from tutor_core.domain.ports.unit_of_work import TransactionalWork
 
 
 class RecordingConnection(TransactionConnection):
@@ -38,25 +38,22 @@ class RecordingConnection(TransactionConnection):
 
 
 class SucceedingWork(TransactionalWork):
-    def __init__(self, connection: RecordingConnection) -> None:
-        self._connection = connection
-
-    async def run(self) -> None:
-        await self._connection.execute(
+    async def run(self, connection: TransactionConnection) -> None:
+        await connection.execute(
             "INSERT INTO example (id) VALUES (:id)",
             {"id": 1},
         )
 
 
 class FailingWork(TransactionalWork):
-    async def run(self) -> None:
+    async def run(self, connection: TransactionConnection) -> None:
         raise RuntimeError("second write failed")
 
 
 class TestSqlAlchemyUnitOfWork:
     async def test_commit_on_success_and_close(self) -> None:
         connection = RecordingConnection()
-        await SqlAlchemyUnitOfWork(connection).run(SucceedingWork(connection))
+        await SqlAlchemyUnitOfWork(connection).run(SucceedingWork())
         assert connection.committed
         assert not connection.rolled_back
         assert connection.closed
@@ -82,3 +79,28 @@ class TestBoundParameters:
         assert connection.statements == ["INSERT INTO example (name) VALUES (:name)"]
         assert "DROP TABLE" not in connection.statements[0]
         assert connection.parameters == [{"name": "Robert'); DROP TABLE example;--"}]
+
+
+class EnlistmentProbe(TransactionalWork):
+    """Records which connection it was handed."""
+
+    def __init__(self) -> None:
+        self.received: TransactionConnection | None = None
+
+    async def run(self, connection: TransactionConnection) -> None:
+        self.received = connection
+
+
+class TestEnlistment:
+    async def test_work_runs_on_the_committed_connection(self) -> None:
+        """The work cannot be writing to a connection nobody commits.
+
+        Before the connection was a parameter, work built against one
+        connection could be handed to a unit of work that commits another:
+        the first connection's writes were neither committed nor closed.
+        """
+        committed = RecordingConnection()
+        probe = EnlistmentProbe()
+        await SqlAlchemyUnitOfWork(committed).run(probe)
+        assert probe.received is committed
+        assert committed.committed
