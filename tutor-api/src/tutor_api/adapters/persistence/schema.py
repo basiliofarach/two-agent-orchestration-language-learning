@@ -125,7 +125,13 @@ class BaseSchema:
 
 
 class AuditSchema:
-    """Append-only ``turn_audit`` and ``gate_evaluation`` (BE-06, DEC-0006)."""
+    """Append-only turn, gate, citation, and tutor-action tables (DEC-0006).
+
+    ``turn_audit`` is inserted once. Generation columns are null when the
+    model did not run, and they are null together. ``gate_evaluation`` and
+    ``turn_citation`` reference that row and commit with it. ``human_action``
+    is a later insert; the turn row is never updated to record it.
+    """
 
     def __init__(self, role: ApplicationRole) -> None:
         self._role = role
@@ -152,21 +158,53 @@ class AuditSchema:
                 turn_index integer NOT NULL,
                 learner_prompt_redacted ciphertext NOT NULL,
                 redacted_categories ciphertext NOT NULL,
-                retrieved_context_ids uuid[] NOT NULL,
-                model_revision text NOT NULL,
-                template_version ciphertext NOT NULL,
-                decoding_params ciphertext NOT NULL,
-                output_before_checks ciphertext NOT NULL,
-                output_after_checks ciphertext NOT NULL,
-                ai_disclosure ciphertext NOT NULL,
-                refused boolean NOT NULL,
-                safety_flags ciphertext NOT NULL,
-                source_support ciphertext NOT NULL,
-                human_action ciphertext,
+                model_revision text,
+                template_version ciphertext,
+                decoding_params ciphertext,
+                output_before_checks ciphertext,
+                output_after_checks ciphertext,
+                ai_disclosure ciphertext,
+                refused boolean,
+                safety_flags ciphertext,
+                source_support ciphertext,
                 policy_version text NOT NULL REFERENCES policy_version (version),
                 previous_record_hash text NOT NULL,
                 record_hash text NOT NULL,
-                recorded_at timestamptz NOT NULL
+                recorded_at timestamptz NOT NULL,
+                CONSTRAINT turn_audit_generation_together CHECK (
+                    (
+                        model_revision IS NULL
+                        AND template_version IS NULL
+                        AND decoding_params IS NULL
+                        AND output_before_checks IS NULL
+                        AND output_after_checks IS NULL
+                        AND ai_disclosure IS NULL
+                        AND refused IS NULL
+                        AND safety_flags IS NULL
+                        AND source_support IS NULL
+                    )
+                    OR
+                    (
+                        model_revision IS NOT NULL
+                        AND template_version IS NOT NULL
+                        AND decoding_params IS NOT NULL
+                        AND output_before_checks IS NOT NULL
+                        AND output_after_checks IS NOT NULL
+                        AND ai_disclosure IS NOT NULL
+                        AND refused IS NOT NULL
+                        AND safety_flags IS NOT NULL
+                        AND source_support IS NOT NULL
+                    )
+                )
+            )
+            """,
+            """
+            CREATE TABLE turn_citation (
+                turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
+                chunk_id uuid NOT NULL REFERENCES kb_chunk (id),
+                ordinal integer NOT NULL,
+                PRIMARY KEY (turn_id, ordinal),
+                UNIQUE (turn_id, chunk_id)
             )
             """,
             """
@@ -183,6 +221,22 @@ class AuditSchema:
                 ),
                 CONSTRAINT gate_evaluation_not_evaluated_reason CHECK (
                     decision <> 'not_evaluated' OR reason IS NOT NULL
+                )
+            )
+            """,
+            """
+            CREATE TABLE human_action (
+                id uuid PRIMARY KEY,
+                turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
+                tutor_id ciphertext NOT NULL,
+                action text NOT NULL,
+                edited_output ciphertext,
+                acted_at timestamptz NOT NULL,
+                CONSTRAINT human_action_kind CHECK (
+                    action IN ('approve', 'edit', 'override', 'stop')
+                ),
+                CONSTRAINT human_action_edit_has_output CHECK (
+                    action <> 'edit' OR edited_output IS NOT NULL
                 )
             )
             """,
@@ -206,19 +260,38 @@ class AuditSchema:
                 BEFORE UPDATE OR DELETE ON gate_evaluation
                 FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation()
             """,
-            f"REVOKE ALL ON TABLE turn_audit FROM PUBLIC, {role}",
-            f"REVOKE ALL ON TABLE gate_evaluation FROM PUBLIC, {role}",
-            f"GRANT INSERT, SELECT ON TABLE turn_audit TO {role}",
-            f"GRANT INSERT, SELECT ON TABLE gate_evaluation TO {role}",
-            f"REVOKE UPDATE, DELETE, TRUNCATE ON TABLE turn_audit FROM {role}",
-            f"REVOKE UPDATE, DELETE, TRUNCATE ON TABLE gate_evaluation FROM {role}",
+            """
+            CREATE TRIGGER turn_citation_append_only
+                BEFORE UPDATE OR DELETE ON turn_citation
+                FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation()
+            """,
+            """
+            CREATE TRIGGER human_action_append_only
+                BEFORE UPDATE OR DELETE ON human_action
+                FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation()
+            """,
+            *self._privileges(role, "turn_audit"),
+            *self._privileges(role, "gate_evaluation"),
+            *self._privileges(role, "turn_citation"),
+            *self._privileges(role, "human_action"),
+        )
+
+    def _privileges(self, role: str, table: str) -> tuple[str, ...]:
+        return (
+            f"REVOKE ALL ON TABLE {table} FROM PUBLIC, {role}",
+            f"GRANT INSERT, SELECT ON TABLE {table} TO {role}",
+            f"REVOKE UPDATE, DELETE, TRUNCATE ON TABLE {table} FROM {role}",
         )
 
     def downgrade_statements(self) -> tuple[str, ...]:
         return (
+            "DROP TRIGGER IF EXISTS human_action_append_only ON human_action",
+            "DROP TRIGGER IF EXISTS turn_citation_append_only ON turn_citation",
             "DROP TRIGGER IF EXISTS gate_evaluation_append_only ON gate_evaluation",
             "DROP TRIGGER IF EXISTS turn_audit_append_only ON turn_audit",
             "DROP FUNCTION IF EXISTS reject_audit_mutation()",
+            "DROP TABLE IF EXISTS human_action",
+            "DROP TABLE IF EXISTS turn_citation",
             "DROP TABLE IF EXISTS gate_evaluation",
             "DROP TABLE IF EXISTS turn_audit",
         )

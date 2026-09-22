@@ -163,10 +163,37 @@ class TestTurnAuditRecord:
         )
 
 
+class TestTurnAuditRecordStops:
+    def test_a_permission_stop_has_no_generation_fields(self) -> None:
+        record = Samples().stopped_audit_record()
+        assert record.model_revision is None
+        assert record.decoding_params is None
+        assert record.output_before_checks is None
+        assert record.output_after_checks is None
+        assert record.safety_flags is None
+        assert record.retrieved_context_ids == ()
+
+    def test_absent_generation_fields_stay_in_the_record(self) -> None:
+        dumped = Samples().stopped_audit_record().model_dump(mode="json")
+        generated = Samples().audit_record().model_dump(mode="json")
+        assert dumped["model_revision"] is None
+        assert dumped["output_before_checks"] is None
+        assert dumped["output_after_checks"] is None
+        assert generated["model_revision"] is not None
+        assert dumped.keys() == generated.keys()
+
+    def test_a_stop_path_cannot_invent_a_model_revision(self) -> None:
+        payload = Samples().stopped_audit_record().model_dump()
+        payload["model_revision"] = "a" * 40
+        with pytest.raises(ValidationError, match="no model revision and no outputs"):
+            TurnAuditRecord.model_validate(payload)
+
+
 class TestHumanAction:
     def test_edit_requires_edited_output(self) -> None:
         with pytest.raises(ValidationError):
             HumanAction(
+                turn_id=Samples().human_action().turn_id,
                 tutor_id="tutor-1",
                 action="edit",
                 edited_output=None,
@@ -176,6 +203,7 @@ class TestHumanAction:
     def test_blank_edit_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             HumanAction(
+                turn_id=Samples().human_action().turn_id,
                 tutor_id="tutor-1",
                 action="edit",
                 edited_output="  ",
@@ -184,6 +212,7 @@ class TestHumanAction:
 
     def test_edit_keeps_the_tutor_text(self) -> None:
         action = HumanAction(
+            turn_id=Samples().human_action().turn_id,
             tutor_id="tutor-1",
             action="edit",
             edited_output="Hola.",
@@ -194,6 +223,7 @@ class TestHumanAction:
     def test_naive_acted_at_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             HumanAction(
+                turn_id=Samples().human_action().turn_id,
                 tutor_id="tutor-1",
                 action="stop",
                 acted_at=datetime(2026, 9, 21, 12, 0),
@@ -202,6 +232,7 @@ class TestHumanAction:
     def test_offsetless_timezone_on_acted_at_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             HumanAction(
+                turn_id=Samples().human_action().turn_id,
                 tutor_id="tutor-1",
                 action="stop",
                 acted_at=datetime(2026, 9, 21, 12, 0, tzinfo=OffsetlessTimezone()),
@@ -209,6 +240,7 @@ class TestHumanAction:
 
     def test_offset_acted_at_is_normalised_to_utc(self) -> None:
         action = HumanAction(
+            turn_id=Samples().human_action().turn_id,
             tutor_id="tutor-1",
             action="stop",
             acted_at=datetime(2026, 9, 21, 12, 0, tzinfo=timezone(timedelta(hours=2))),

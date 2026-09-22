@@ -443,15 +443,16 @@ classDiagram
         +str output_before_checks
         +str output_after_checks
         +tuple~SafetyFlag~ safety_flags
-        +HumanAction human_action
         +str policy_version
         +str previous_record_hash
         +str record_hash
         +datetime recorded_at
     }
+    note for TurnAuditRecord "Generation fields are null together when the<br/>model did not run. That absence stays in<br/>the hashed record."
 
     class HumanAction {
         <<frozen>>
+        +UUID turn_id
         +str tutor_id
         +Literal action
         +str edited_output
@@ -463,7 +464,7 @@ classDiagram
     TurnState *-- GeneratedUnit
     RetrievalResult *-- SourceRef
     GeneratedUnit *-- SourceSupportReport
-    TurnAuditRecord *-- HumanAction
+    TurnAuditRecord "1" --> "0..1" HumanAction : appended after
 ```
 
 Frozen audit types use `ConfigDict(frozen=True, extra="forbid")`. Sequence
@@ -477,8 +478,9 @@ Two details that follow REQ-AUDIT:
   Data protection is achieved as REQ-MINOR prescribes — **real-time PII
   redaction at the input boundary** — so what is logged is the redacted prompt,
   with the categories redacted recorded alongside it.
-- **Output before *and* after checks.** Both are stored;
-  `human_action.edited_output` captures a third state when the tutor edits.
+- **Output before *and* after checks.** Both are stored when the model ran,
+  and both are null when it did not. `human_action.edited_output` captures a
+  third state when the tutor edits, on its own append-only row.
 
 ## 6. Oversight gate chain
 
@@ -561,7 +563,9 @@ erDiagram
     learner ||--o{ tutoring_session : "studies in"
     tutoring_session ||--o{ turn_audit : "contains"
     turn_audit ||--o{ gate_evaluation : "evaluated by"
-    turn_audit }o--o{ kb_chunk : "cites"
+    turn_audit ||--o{ turn_citation : "cites"
+    turn_citation }o--|| kb_chunk : "points at"
+    turn_audit ||--o{ human_action : "followed by"
     policy_version ||--o{ turn_audit : "governs"
 
     kb_document {
@@ -601,12 +605,11 @@ erDiagram
         text stop_reason
     }
     turn_audit {
-        uuid id PK
+        uuid turn_id PK
         uuid session_id FK
         int turn_index
         text learner_prompt_redacted
         jsonb redacted_categories
-        uuid_array retrieved_context_ids
         text model_revision
         text template_version
         jsonb decoding_params
@@ -616,11 +619,22 @@ erDiagram
         bool refused
         jsonb safety_flags
         jsonb source_support
-        text human_action
         text policy_version FK
         text previous_record_hash
         text record_hash
         timestamptz recorded_at
+    }
+    turn_citation {
+        uuid turn_id FK
+        uuid chunk_id FK
+        int ordinal
+    }
+    human_action {
+        uuid id PK
+        uuid turn_id FK
+        text action
+        text edited_output
+        timestamptz acted_at
     }
     gate_evaluation {
         uuid id PK
@@ -645,10 +659,16 @@ erDiagram
 retrievable until reviewed. `learner.retain_until` carries the REQ-MINOR GDPR
 retention policy, enforced by a scheduled job in `tutor-api/retention/`.
 
-`turn_audit` and `gate_evaluation` are append-only, enforced twice — a `BEFORE
-UPDATE OR DELETE` trigger, and an application role granted only `INSERT` and
-`SELECT` (DEC-0006). `record_hash` chains each record to its predecessor, giving
-the hash-chained execution path of REQ-AUDIT that an auditor can walk.
+`turn_audit`, `gate_evaluation`, `turn_citation`, and `human_action` are
+append-only, enforced twice — a `BEFORE UPDATE OR DELETE` trigger, and an
+application role granted only `INSERT` and `SELECT` (DEC-0006). The turn row
+is inserted once. Its generation columns are null together when the model did
+not run, and that absence is part of the record `record_hash` covers. Gate
+rows and citation rows reference the turn and commit with it. A cited chunk
+is a foreign key in `turn_citation`, which is the stored form of
+`retrieved_context_ids`. A tutor action is a later insert into `human_action`;
+the turn row is not updated to hold it. `record_hash` chains each turn record
+to its predecessor.
 
 ## 8. Runtime view
 
@@ -722,16 +742,14 @@ sequenceDiagram
     R-->>UC: RedactedText + categories
 
     UC->>G1: evaluate scope and permissions
-    G1->>A: append gate_evaluation + policy_rule_id
-    G1-->>UC: pass
+    G1-->>UC: verdict
     Note over UC,G1: a stop here halts the turn —<br/>retrieval never runs
 
     UC->>DRA: retrieve
     DRA-->>UC: RetrievalResult + SourceRefs
 
     UC->>G2: evaluate retrieval result
-    G2->>A: append gate_evaluation
-    G2-->>UC: pass
+    G2-->>UC: verdict
     Note over UC,G2: a pause here halts before<br/>the model is ever invoked
 
     UC->>CGA: generate from retrieved context
@@ -741,16 +759,16 @@ sequenceDiagram
     Note over UC,CK: AI-generated disclosure attached —<br/>refusal if prompt is out of scope
 
     UC->>G34: evaluate output and behaviour
-    G34->>A: append one row per gate
     G34-->>UC: verdicts
 
-    UC->>A: append TurnAuditRecord
-    Note over UC,A: redaction, retrieval, generation, checks<br/>and audit commit in one transaction
+    UC->>A: insert turn_audit, then gate rows and citations
+    Note over UC,A: one transaction. Generation columns are null<br/>when the model did not run. A permission stop<br/>stores one stop and three not_evaluated rows.
 
     UC->>D: draft + context + flags + unsupported spans + gate timeline
     D->>T: approve / edit / override / stop
     T-->>D: decision
-    D->>A: append HumanAction
+    D->>A: insert human_action
+    Note over D,A: a new row. turn_audit is not updated.
     D-->>T: final material released to learner
 ```
 
@@ -768,8 +786,10 @@ sequenceDiagram
 5. **Every output carries an AI-generated disclosure** (REQ-COMP, REQ-MINOR).
 6. **Nothing reaches the learner without a tutor decision.** `pass` only means
    no gate objected; approval is still required.
-7. **Every transition appends a record** in the same transaction as the work it
-   describes. A turn is fully logged or it did not happen.
+7. **The turn row, its gate rows, and its citations commit together.** Generation
+   columns are null when the model did not run, and that absence is part of the
+   hashed record. A tutor action is a later insert into `human_action`. A turn
+   is fully logged or it did not happen.
 8. `stop` terminates the session and **preserves state**.
 
 ## 9. Compliance mapping

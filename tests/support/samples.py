@@ -135,6 +135,7 @@ class Samples:
 
     def human_action(self) -> HumanAction:
         return HumanAction(
+            turn_id=UUID("00000000-0000-4000-8000-000000000003"),
             tutor_id="tutor-1",
             action="approve",
             edited_output=None,
@@ -153,7 +154,18 @@ class Samples:
             output_before_checks="Hola means hello.",
             output_after_checks="Hola means hello.",
             safety_flags=(self.safety_flag(),),
-            human_action=self.human_action(),
+            policy_version="policy-1",
+            previous_record_hash="c" * 64,
+            record_hash="d" * 64,
+            recorded_at=self.when(),
+        )
+
+    def stopped_audit_record(self) -> TurnAuditRecord:
+        return TurnAuditRecord(
+            turn_id=UUID("00000000-0000-4000-8000-000000000003"),
+            learner_prompt_redacted="Where is the library?",
+            redacted_categories=(),
+            retrieved_context_ids=(),
             policy_version="policy-1",
             previous_record_hash="c" * 64,
             record_hash="d" * 64,

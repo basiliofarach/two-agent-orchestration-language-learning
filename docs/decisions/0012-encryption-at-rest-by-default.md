@@ -128,7 +128,7 @@ produce identical ciphertexts and equality is not leaked.
 | `turn_audit` | `learner_prompt_redacted` | Learner text, retained not digested (DEC-0002) |
 | `turn_audit` | `output_before_checks` | Content addressed to an identified minor |
 | `turn_audit` | `output_after_checks` | As above |
-| `turn_audit` | `human_action.edited_output` | As above, plus tutor attribution |
+| `human_action` | `edited_output` | As above, plus tutor attribution. The action is its own row, so this text is not written by updating `turn_audit`. |
 | `learner_history` | `proficiency_level` | Assessment of a named minor |
 | `learner_history` | item outcomes | Per-learner performance record |
 
@@ -143,6 +143,8 @@ produce identical ciphertexts and equality is not leaked.
 | `policy_version`, `model_revision`, `recorded_at`, `turn_id` | Not personal data. Required in cleartext for the evidence pack and for replay selection. |
 | `policy_version.version` | Primary key of that same non-personal identifier, and the foreign-key target for `turn_audit.policy_version`. |
 | `gate_evaluation.gate_name`, `decision`, `policy_rule_id` | Non-personal control data. `decision` stays cleartext so the pass/pause/stop/`not_evaluated` check is a database constraint. `reason` is ciphertext because it can quote the learner. |
+| `human_action.id`, `turn_id`, `action`, `acted_at` | `action` stays cleartext so approve/edit/override/stop is a database constraint. `edited_output` and `tutor_id` are ciphertext. `id`, `turn_id`, and `acted_at` are the same kind of non-personal record key as `turn_id` and `recorded_at`. |
+| `turn_citation.turn_id`, `chunk_id` | Join keys between a turn and a vetted chunk. A citation is a relationship, not learner text. |
 | `protected_column_exemption.table_name`, `column_name`, `reason`, `decision_ref` | The registry itself. The reason must stay readable in SQL, or the evidence query cannot be answered. |
 | `alembic_version.version_num` | Alembic revision id. Not personal data. Required in cleartext so the migration runner can see which revision is applied. |
 

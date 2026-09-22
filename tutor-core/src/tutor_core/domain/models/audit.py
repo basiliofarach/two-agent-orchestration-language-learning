@@ -1,4 +1,4 @@
-"""Append-only turn record and the tutor action attached to it (REQ-AUDIT)."""
+"""Append-only turn record and the tutor action appended after it (REQ-AUDIT)."""
 
 from typing import Literal, Self
 from uuid import UUID
@@ -12,10 +12,15 @@ TutorAction = Literal["approve", "edit", "override", "stop"]
 
 
 class HumanAction(BaseModel):
-    """What the tutor did. ``edited_output`` is the third text state on an edit."""
+    """What the tutor did, appended after the turn row.
+
+    ``edited_output`` is the third text state on an edit. The row references
+    ``turn_id``; it is not written by updating ``turn_audit``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    turn_id: UUID
     tutor_id: str = Field(min_length=1)
     action: TutorAction
     edited_output: str | None = None
@@ -37,6 +42,11 @@ class TurnAuditRecord(BaseModel):
 
     ``learner_prompt_redacted`` stores the redacted prompt itself, not a
     digest. ``recorded_at`` is supplied by the caller from ``ClockPort``.
+
+    Generation fields are absent together when the model did not run. That
+    absence is stored as ``None`` and stays in the record a later hash
+    covers; a stop does not invent a revision or an output. The tutor action
+    is a separate :class:`HumanAction` append.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -45,13 +55,28 @@ class TurnAuditRecord(BaseModel):
     learner_prompt_redacted: str
     redacted_categories: tuple[str, ...]
     retrieved_context_ids: tuple[str, ...]
-    model_revision: str = Field(min_length=1)
-    decoding_params: DecodingParams
-    output_before_checks: str
-    output_after_checks: str
-    safety_flags: tuple[SafetyFlag, ...]
-    human_action: HumanAction | None
+    model_revision: str | None = Field(default=None, min_length=1)
+    decoding_params: DecodingParams | None = None
+    output_before_checks: str | None = None
+    output_after_checks: str | None = None
+    safety_flags: tuple[SafetyFlag, ...] | None = None
     policy_version: str = Field(min_length=1)
     previous_record_hash: str = Field(min_length=1)
     record_hash: str = Field(min_length=1)
     recorded_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def generation_fields_agree(self) -> Self:
+        fields = (
+            self.model_revision,
+            self.decoding_params,
+            self.output_before_checks,
+            self.output_after_checks,
+            self.safety_flags,
+        )
+        if any(field is not None for field in fields) and not all(
+            field is not None for field in fields
+        ):
+            msg = "a turn the model never ran carries no model revision and no outputs"
+            raise ValueError(msg)
+        return self

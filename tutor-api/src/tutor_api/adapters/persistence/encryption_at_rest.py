@@ -185,6 +185,46 @@ class EncryptionAtRestSchema:
                 column_name="policy_rule_id",
                 reason=not_personal,
             ),
+            ColumnExemption(
+                table_name="human_action",
+                column_name="id",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="human_action",
+                column_name="turn_id",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="human_action",
+                column_name="action",
+                reason=(
+                    "Non-personal control data. Stays cleartext so "
+                    "approve/edit/override/stop is a database constraint "
+                    "(DEC-0012)."
+                ),
+            ),
+            ColumnExemption(
+                table_name="human_action",
+                column_name="acted_at",
+                reason=not_personal,
+            ),
+            ColumnExemption(
+                table_name="turn_citation",
+                column_name="turn_id",
+                reason=(
+                    "Join key between a turn and a vetted chunk. "
+                    "Not learner text (DEC-0012)."
+                ),
+            ),
+            ColumnExemption(
+                table_name="turn_citation",
+                column_name="chunk_id",
+                reason=(
+                    "Join key between a turn and a vetted chunk. "
+                    "Not learner text (DEC-0012)."
+                ),
+            ),
         )
 
     def _statements(self) -> tuple[str, ...]:

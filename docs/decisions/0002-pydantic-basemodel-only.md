@@ -29,11 +29,10 @@ class TurnAuditRecord(BaseModel):
     learner_prompt_redacted: str      # PII-redacted prompt (REQ-AUDIT)
     redacted_categories: tuple[str, ...]
     retrieved_context_ids: tuple[str, ...]
-    model_revision: str               # pinned SHA — see DEC-0007
-    output_before_checks: str         # REQ-AUDIT: before and after the checks
-    output_after_checks: str
-    safety_flags: tuple[SafetyFlag, ...]
-    human_action: HumanAction | None
+    model_revision: str | None        # pinned SHA when the model ran; null on a stop
+    output_before_checks: str | None  # null with the revision when the model did not run
+    output_after_checks: str | None
+    safety_flags: tuple[SafetyFlag, ...] | None
     policy_version: str               # REQ-POLICY
     previous_record_hash: str         # hash chain
     recorded_at: datetime
