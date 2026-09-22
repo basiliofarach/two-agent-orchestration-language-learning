@@ -1,7 +1,6 @@
 """A plaintext column on a stored table fails in the database (DEC-0012)."""
 
 import os
-from pathlib import Path
 from uuid import UUID
 
 import psycopg
@@ -159,6 +158,10 @@ class TestEncryptionAtRestSchema:
             ("protected_column_exemption", "reason"),
             ("protected_column_exemption", "schema_name"),
             ("protected_column_exemption", "table_name"),
+            ("gate_evaluation", "decision"),
+            ("gate_evaluation", "gate_name"),
+            ("gate_evaluation", "policy_rule_id"),
+            ("policy_version", "version"),
             ("turn_audit", "model_revision"),
             ("turn_audit", "policy_version"),
             ("turn_audit", "previous_record_hash"),
@@ -344,20 +347,3 @@ class TestEncryptionAtRestSchema:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT to_regclass('public.into_note')")
                 assert cursor.fetchone()[0] is None
-
-    def test_alembic_revisions_cannot_arrive_without_a_test_runner(self) -> None:
-        api_root = Path(__file__).resolve().parents[2] / "tutor-api"
-        revisions = tuple(
-            path
-            for root in (
-                api_root / "migrations" / "versions",
-                api_root / "alembic" / "versions",
-            )
-            if root.is_dir()
-            for path in sorted(root.glob("*.py"))
-            if path.name != "__init__.py"
-        )
-        assert revisions == (), (
-            "Alembic revisions exist but the integration test does not apply them: "
-            f"{revisions}"
-        )

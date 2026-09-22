@@ -40,6 +40,7 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.unit_of_work import TransactionalWork, UnitOfWorkPort
 
 
 class PiiRedactionPortContract:
@@ -447,6 +448,27 @@ class TestStubPolicyArtifactPort(PolicyArtifactPortContract):
         return _Policy()
 
 
+class _CompletedWork(TransactionalWork):
+    async def run(self) -> None:
+        return None
+
+
+class _MemoryUnitOfWork(UnitOfWorkPort):
+    async def run(self, work: TransactionalWork) -> None:
+        await work.run()
+
+
+class UnitOfWorkPortContract:
+    """Every ``UnitOfWorkPort`` runs the enlisted work."""
+
+    def port(self) -> UnitOfWorkPort:
+        msg = "subclass must supply a UnitOfWorkPort"
+        raise NotImplementedError(msg)
+
+    async def test_run_executes_the_enlisted_work(self) -> None:
+        await self.port().run(_CompletedWork())
+
+
 class TestStubCipherPort(CipherPortContract):
     def port(self) -> CipherPort:
         return _Cipher()
@@ -455,3 +477,8 @@ class TestStubCipherPort(CipherPortContract):
 class TestStubClockPort(ClockPortContract):
     def port(self) -> ClockPort:
         return _Clock()
+
+
+class TestStubUnitOfWorkPort(UnitOfWorkPortContract):
+    def port(self) -> UnitOfWorkPort:
+        return _MemoryUnitOfWork()

@@ -141,6 +141,8 @@ produce identical ciphertexts and equality is not leaked.
 | `learner_id` | Already a pseudonymous UUID and a cross-table foreign key. Deterministic encryption would be required to preserve joins, and deterministic encryption leaks equality — strictly worse than the pseudonym. |
 | KB documents, `source_uri`, `version`, `review_status` | Not personal data. Public curated material with provenance. |
 | `policy_version`, `model_revision`, `recorded_at`, `turn_id` | Not personal data. Required in cleartext for the evidence pack and for replay selection. |
+| `policy_version.version` | Primary key of that same non-personal identifier, and the foreign-key target for `turn_audit.policy_version`. |
+| `gate_evaluation.gate_name`, `decision`, `policy_rule_id` | Non-personal control data. `decision` stays cleartext so the pass/pause/stop/`not_evaluated` check is a database constraint. `reason` is ciphertext because it can quote the learner. |
 | `protected_column_exemption.table_name`, `column_name`, `reason`, `decision_ref` | The registry itself. The reason must stay readable in SQL, or the evidence query cannot be answered. |
 | `alembic_version.version_num` | Alembic revision id. Not personal data. Required in cleartext so the migration runner can see which revision is applied. |
 

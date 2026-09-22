@@ -1,4 +1,4 @@
-"""Fourteen capability ports as ABCs (DEC-0001)."""
+"""Capability ports as ABCs (DEC-0001)."""
 
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
@@ -14,6 +14,7 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.unit_of_work import TransactionalWork, UnitOfWorkPort
 
 __all__ = [
     "AuditSinkPort",
@@ -30,4 +31,6 @@ __all__ = [
     "PromptTemplatePort",
     "SafetyClassifierPort",
     "SourceSupportPort",
+    "TransactionalWork",
+    "UnitOfWorkPort",
 ]

@@ -19,6 +19,8 @@ from tutor_core.domain.ports import (
     PromptTemplatePort,
     SafetyClassifierPort,
     SourceSupportPort,
+    TransactionalWork,
+    UnitOfWorkPort,
 )
 
 
@@ -28,7 +30,7 @@ class _ImplementedMethod:
 
 
 class PortCatalogue:
-    """The fourteen ports, plus partial and complete in-test stubs."""
+    """The ports, plus partial and complete in-test stubs."""
 
     def types(self) -> tuple[type[ABC], ...]:
         return (
@@ -46,6 +48,8 @@ class PortCatalogue:
             PolicyArtifactPort,
             ClockPort,
             CipherPort,
+            UnitOfWorkPort,
+            TransactionalWork,
         )
 
     def partial(self, port: type[ABC]) -> type[ABC]:

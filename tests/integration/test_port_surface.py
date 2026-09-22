@@ -1,4 +1,4 @@
-"""The ports package is fourteen ABCs, and the audit sink cannot mutate."""
+"""The ports package is abstract, and the audit sink cannot mutate."""
 
 import importlib
 import inspect
@@ -43,13 +43,13 @@ class PublicClasses:
 
 
 class TestPortSurface:
-    def test_fourteen_port_modules_are_abstract(self) -> None:
+    def test_port_modules_are_abstract(self) -> None:
         modules = PortModules().load()
-        assert len(modules) == 14
+        assert len(modules) == 15
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        assert len(classes) == 14
+        assert len(classes) == 16
         for cls in classes:
             assert issubclass(cls, ABC)
             assert cls.__abstractmethods__
