@@ -7,6 +7,8 @@ the database fails here rather than silently depending on one.
 
 import configparser
 import re
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -42,6 +44,12 @@ class RevisionTree:
         parser.read(self._source / "alembic.ini", encoding="utf-8")
         parser.set("alembic", "script_location", str(script))
         parser.set("alembic", "sqlalchemy.url", _CLOSED_PORT)
+        # The shipped executable is ``%(here)s``-relative and ``here`` becomes
+        # this temporary directory. Re-anchor it on the running interpreter so
+        # the real post-write hooks run rather than being silently skipped.
+        ruff = Path(sys.executable).parent / "ruff"
+        for hook in parser.get("post_write_hooks", "hooks").split(","):
+            parser.set("post_write_hooks", f"{hook.strip()}.executable", str(ruff))
         buffer = self._root / "rendered.ini"
         with buffer.open("w", encoding="utf-8") as handle:
             parser.write(handle)
@@ -65,7 +73,7 @@ class TestRevisionFileNames:
         assert slug == "add_note"
         stamped = datetime.strptime(stamp, "%Y%m%d%H%M").replace(tzinfo=UTC)
         assert abs(stamped - datetime.now(UTC)) < timedelta(minutes=5)
-        assert f"revision: str = '{identifier}'" in written.read_text(encoding="utf-8")
+        assert f'revision = "{identifier}"' in written.read_text(encoding="utf-8")
 
     def test_the_stamp_is_not_the_revision_id(self, tmp_path: Path) -> None:
         command.revision(RevisionTree(tmp_path).configure(), message="add note")
@@ -94,3 +102,39 @@ class TestShippedRevisions:
         assert names
         for name in names:
             assert _FILENAME.match(name) is not None, name
+
+
+class TestGeneratedRevisionsAreLinted:
+    """Post-write hooks run ruff, so a new script is never born unlinted."""
+
+    def test_a_generated_revision_passes_check_and_format(self, tmp_path: Path) -> None:
+        command.revision(RevisionTree(tmp_path).configure(), message="add note")
+        written = next((tmp_path / "alembic" / "versions").glob("*.py"))
+        ruff = str(Path(sys.executable).parent / "ruff")
+        source = written.read_text(encoding="utf-8")
+        assert "Union[" not in source
+        assert "'" not in source.split('"""')[-1]
+        for options in (["check"], ["format", "--check"]):
+            result = subprocess.run(  # noqa: S603
+                [ruff, *options, str(written)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_every_shipped_revision_passes_check_and_format(self) -> None:
+        versions = (
+            Path(__file__).resolve().parents[2] / "tutor-api" / "alembic" / "versions"
+        )
+        ruff = str(Path(sys.executable).parent / "ruff")
+        scripts = [str(path) for path in sorted(versions.glob("*.py"))]
+        assert scripts
+        for options in (["check"], ["format", "--check"]):
+            result = subprocess.run(  # noqa: S603
+                [ruff, *options, *scripts],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
