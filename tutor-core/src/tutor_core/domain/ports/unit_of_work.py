@@ -47,6 +47,20 @@ class TransactionConnection(ABC):
         """
         raise NotImplementedError  # pragma: no cover
 
+    @abstractmethod
+    async def fetch_one(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[object, ...] | None:
+        """Return one row, or ``None`` when the statement matches nothing.
+
+        Values are bound, never interpolated into ``statement``. An enlisted
+        adapter reads the predecessor hash through this method, so it does
+        not open a second connection to continue the chain.
+        """
+        raise NotImplementedError  # pragma: no cover
+
 
 class TransactionalWork(ABC):
     """Work that enlists in a unit of work.

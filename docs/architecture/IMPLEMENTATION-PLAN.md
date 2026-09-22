@@ -58,9 +58,17 @@ DEC-0001 requires the abstraction before the implementation.
 
 ## Phase 2 — Audit spine
 
+The turn row is written once. Generation columns are null when the model did
+not run, and gate rows and citations commit with that row. A tutor action is
+a later insert. The sequence is
+[ARCHITECTURE.md §8](ARCHITECTURE.md#8-runtime-view).
+
 `AuditSinkPort` + `PostgresAuditSink`. Migrations for `turn_audit` and
 `gate_evaluation`, the `BEFORE UPDATE OR DELETE` trigger, and an application
-role granted `INSERT`/`SELECT` only. Hash chaining over records.
+role granted `INSERT`/`SELECT` only. Hash chaining over records. The first
+record in a session chains to a documented genesis value, and a verifier
+names the record that was edited or removed. `recorded_at` comes from
+`ClockPort`.
 
 `CipherPort` ships here, ahead of the first migration, so the schema is born
 encrypted rather than retrofitted (DEC-0012). The same migration creates the
@@ -160,6 +168,11 @@ reproduces its output; checkpoint identifiers resolve to their log entries.
 the prototype.
 
 ## Phase 7 — API
+
+Before this phase registers a provider that holds one learner's data, startup
+validation rejects cycles and duplicate registrations, and one request reuses
+a single request-scoped instance. The direct singleton-to-request check
+already exists ([DEC-0013](../decisions/0013-first-party-composition-root.md)).
 
 FastAPI routers for sessions and audit. `container.py` provider registration
 (DEC-0013). `Depends()` only in router signatures, through `Provide(T)`.

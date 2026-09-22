@@ -14,6 +14,11 @@ class AuditSinkPort(ABC):
     """
 
     @abstractmethod
-    def append(self, record: TurnAuditRecord) -> None:
-        """Append ``record``. There is no method that changes a written row."""
+    async def append(self, record: TurnAuditRecord) -> None:
+        """Append ``record`` on the enlisted transaction.
+
+        There is no method that changes a written row. The adapter writes on
+        the connection it was given, so this row commits or rolls back with
+        the work it describes.
+        """
         raise NotImplementedError  # pragma: no cover

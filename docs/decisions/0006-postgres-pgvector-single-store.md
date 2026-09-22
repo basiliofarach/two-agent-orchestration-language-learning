@@ -32,7 +32,9 @@ edited the log?" has a schema-level answer.
 ## Consequences
 
 **Positive.** Referential integrity between a log entry and its cited sources is
-a foreign key, not a convention. One service to run, back up, and document.
+a foreign key, not a convention. A cited chunk is a row in `turn_citation`
+(`turn_id`, `chunk_id`) referencing `turn_audit` and `kb_chunk`. One service
+to run, back up, and document.
 `pgvector` handles corpora of this size (thousands of documents) without
 difficulty.
 

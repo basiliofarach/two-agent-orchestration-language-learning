@@ -65,10 +65,14 @@ repos:
 
   - repo: local
     hooks:
+      # Source roots are passed explicitly, not left to the editable
+      # installs: macOS sets UF_HIDDEN on files in .venv, and Python
+      # >=3.12.7 skips hidden .pth files (gh-113659), so tutor_core
+      # silently drops off sys.path.
       - id: import-linter
         name: import-linter
         language: system
-        entry: uvx uv@0.12.5 run lint-imports
+        entry: env PYTHONPATH=tutor-core/src:tutor-api/src uvx uv@0.12.5 run lint-imports
         pass_filenames: false
         files: '^(tutor-core/|tutor-api/|pyproject\.toml$)'
 

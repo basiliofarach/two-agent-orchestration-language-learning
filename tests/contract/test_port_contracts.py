@@ -195,10 +195,10 @@ class AuditSinkPortContract:
         msg = "subclass must supply an AuditSinkPort"
         raise NotImplementedError(msg)
 
-    def test_append_accepts_a_record(self) -> None:
+    async def test_append_accepts_a_record(self) -> None:
         record = Samples().audit_record()
         assert isinstance(record, TurnAuditRecord)
-        assert self.port().append(record) is None
+        assert await self.port().append(record) is None
 
 
 class PolicyArtifactPortContract:
@@ -337,7 +337,7 @@ class _Audit(AuditSinkPort):
     def __init__(self) -> None:
         self.records: list[TurnAuditRecord] = []
 
-    def append(self, record: TurnAuditRecord) -> None:
+    async def append(self, record: TurnAuditRecord) -> None:
         self.records.append(record)
 
 
@@ -476,6 +476,13 @@ class _MemoryConnection(TransactionConnection):
         statement: str,
         parameters: Mapping[str, object] | None = None,
     ) -> None:
+        return None
+
+    async def fetch_one(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[object, ...] | None:
         return None
 
 

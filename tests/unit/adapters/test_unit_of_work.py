@@ -18,6 +18,8 @@ class RecordingConnection(TransactionConnection):
         self.closed = False
         self.statements: list[str] = []
         self.parameters: list[Mapping[str, object]] = []
+        self.rows: list[tuple[object, ...]] = []
+        self.fetches: list[tuple[str, Mapping[str, object]]] = []
 
     async def commit(self) -> None:
         self.committed = True
@@ -35,6 +37,16 @@ class RecordingConnection(TransactionConnection):
     ) -> None:
         self.statements.append(statement)
         self.parameters.append(dict(parameters or {}))
+
+    async def fetch_one(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[object, ...] | None:
+        self.fetches.append((statement, dict(parameters)))
+        if not self.rows:
+            return None
+        return self.rows.pop(0)
 
 
 class SucceedingWork(TransactionalWork):

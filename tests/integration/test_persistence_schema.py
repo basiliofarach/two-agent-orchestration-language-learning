@@ -184,6 +184,189 @@ class TestPersistenceSchema:
             "DELETE FROM gate_evaluation", fresh_database
         )
 
+    def test_permission_stop_stores_null_generation_and_a_later_tutor_action(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            self._insert_permission_stop_gates(connection)
+            self._insert_tutor_edit(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT model_revision, output_before_checks, output_after_checks
+                    FROM turn_audit
+                    """
+                )
+                generation = cursor.fetchone()
+                cursor.execute("SELECT count(*) FROM turn_citation")
+                citations = cursor.fetchone()
+                cursor.execute(
+                    """
+                    SELECT gate_name, decision
+                    FROM gate_evaluation
+                    ORDER BY gate_name
+                    """
+                )
+                gates = cursor.fetchall()
+                cursor.execute("SELECT action FROM human_action")
+                action = cursor.fetchone()
+        assert generation == (None, None, None)
+        assert citations is not None
+        assert citations[0] == 0
+        assert gates == [
+            ("conflict_and_ambiguity", "not_evaluated"),
+            ("context_and_permission", "stop"),
+            ("drift_and_anomaly", "not_evaluated"),
+            ("sensitivity_and_high_stakes", "not_evaluated"),
+        ]
+        assert action == ("edit",)
+
+    def test_a_revision_without_outputs_is_rejected(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="turn_audit_generation_together"),
+            ):
+                self._insert_learner_and_session(cursor)
+                self._insert_policy(cursor)
+                cursor.execute(
+                    """
+                    INSERT INTO turn_audit (
+                        turn_id, session_id, turn_index, learner_prompt_redacted,
+                        redacted_categories, model_revision, policy_version,
+                        previous_record_hash, record_hash, recorded_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000021',
+                        '00000000-0000-4000-8000-000000000012',
+                        0, %s, %s, 'sha', 'v1', 'a', 'b', '2026-01-01T00:00:00Z'
+                    )
+                    """,
+                    (self._envelope(), self._envelope()),
+                )
+
+    def test_an_edit_without_output_is_rejected(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="human_action_edit_has_output"),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO human_action (
+                        id, turn_id, tutor_id, action, edited_output, acted_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000051',
+                        '00000000-0000-4000-8000-000000000021',
+                        %s, 'edit', NULL, '2026-01-01T00:00:00Z'
+                    )
+                    """,
+                    (self._envelope(),),
+                )
+
+    def test_one_session_cannot_store_two_rows_at_the_same_turn_index(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="turn_audit_session_turn"),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO turn_audit (
+                        turn_id, session_id, turn_index, learner_prompt_redacted,
+                        redacted_categories, policy_version, previous_record_hash,
+                        record_hash, recorded_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000022',
+                        '00000000-0000-4000-8000-000000000012',
+                        0, %s, %s, 'v1', 'a', 'c', '2026-01-01T00:00:00Z'
+                    )
+                    """,
+                    (self._envelope(), self._envelope()),
+                )
+
+    def test_a_citation_requires_an_existing_chunk(self, fresh_database: str) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="foreign key"),
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO turn_citation (turn_id, chunk_id, ordinal)
+                    VALUES (
+                        '00000000-0000-4000-8000-000000000021',
+                        '00000000-0000-4000-8000-000000000099',
+                        0
+                    )
+                    """
+                )
+            connection.rollback()
+            self._insert_stopped_turn(connection)
+            self._insert_chunk(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO turn_citation (turn_id, chunk_id, ordinal)
+                    VALUES (
+                        '00000000-0000-4000-8000-000000000021',
+                        '00000000-0000-4000-8000-000000000061',
+                        0
+                    )
+                    """
+                )
+                cursor.execute("SELECT chunk_id FROM turn_citation")
+                cited = cursor.fetchone()
+        assert cited is not None
+        assert str(cited[0]) == "00000000-0000-4000-8000-000000000061"
+
+    def test_update_against_human_action_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            self._insert_tutor_edit(connection)
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="append-only"),
+            ):
+                cursor.execute("UPDATE human_action SET action = 'stop'")
+
+    def test_delete_against_turn_citation_raises_at_database_level(
+        self, fresh_database: str
+    ) -> None:
+        with psycopg.connect(fresh_database) as connection:
+            AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
+            self._insert_stopped_turn(connection)
+            self._insert_chunk(connection)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO turn_citation (turn_id, chunk_id, ordinal)
+                    VALUES (
+                        '00000000-0000-4000-8000-000000000021',
+                        '00000000-0000-4000-8000-000000000061',
+                        0
+                    )
+                    """
+                )
+            with (
+                connection.cursor() as cursor,
+                pytest.raises(psycopg.Error, match="append-only"),
+            ):
+                cursor.execute("DELETE FROM turn_citation")
+
     def test_application_role_has_no_update_or_delete_grant(
         self, fresh_database: str
     ) -> None:
@@ -286,15 +469,15 @@ class TestPersistenceSchema:
                     """
                     INSERT INTO turn_audit (
                         turn_id, session_id, turn_index, learner_prompt_redacted,
-                        redacted_categories, retrieved_context_ids, model_revision,
-                        template_version, decoding_params, output_before_checks,
-                        output_after_checks, ai_disclosure, refused, safety_flags,
-                        source_support, policy_version, previous_record_hash,
-                        record_hash, recorded_at
+                        redacted_categories, model_revision, template_version,
+                        decoding_params, output_before_checks, output_after_checks,
+                        ai_disclosure, refused, safety_flags, source_support,
+                        policy_version, previous_record_hash, record_hash,
+                        recorded_at
                     ) VALUES (
                         '00000000-0000-4000-8000-000000000021',
                         '00000000-0000-4000-8000-000000000012',
-                        0, %s, %s, '{}', 'sha', %s, %s, %s, %s, %s, false, %s, %s,
+                        0, %s, %s, 'sha', %s, %s, %s, %s, %s, false, %s, %s,
                         'missing-policy', 'a', 'b', '2026-01-01T00:00:00Z'
                     )
                     """,
@@ -317,29 +500,19 @@ class TestPersistenceSchema:
     def _insert_audit_row(self, connection: psycopg.Connection) -> None:
         with connection.cursor() as cursor:
             self._insert_learner_and_session(cursor)
-            cursor.execute(
-                """
-                INSERT INTO policy_version (
-                    version, allowed_actions, denied_actions, escalation_rules,
-                    article_mappings, effective_from
-                ) VALUES ('v1', %s, %s, %s, %s, '2026-01-01T00:00:00Z')
-                ON CONFLICT (version) DO NOTHING
-                """,
-                (self._envelope(),) * 4,
-            )
+            self._insert_policy(cursor)
             cursor.execute(
                 """
                 INSERT INTO turn_audit (
                     turn_id, session_id, turn_index, learner_prompt_redacted,
-                    redacted_categories, retrieved_context_ids, model_revision,
-                    template_version, decoding_params, output_before_checks,
-                    output_after_checks, ai_disclosure, refused, safety_flags,
-                    source_support, policy_version, previous_record_hash,
-                    record_hash, recorded_at
+                    redacted_categories, model_revision, template_version,
+                    decoding_params, output_before_checks, output_after_checks,
+                    ai_disclosure, refused, safety_flags, source_support,
+                    policy_version, previous_record_hash, record_hash, recorded_at
                 ) VALUES (
                     '00000000-0000-4000-8000-000000000021',
                     '00000000-0000-4000-8000-000000000012',
-                    0, %s, %s, '{}', 'sha', %s, %s, %s, %s, %s, false, %s, %s,
+                    0, %s, %s, 'sha', %s, %s, %s, %s, %s, false, %s, %s,
                     'v1', 'a', 'b', '2026-01-01T00:00:00Z'
                 )
                 ON CONFLICT (turn_id) DO NOTHING
@@ -366,6 +539,127 @@ class TestPersistenceSchema:
                 ON CONFLICT (id) DO NOTHING
                 """,
                 (self._envelope(),),
+            )
+
+    def _insert_policy(self, cursor: psycopg.Cursor) -> None:
+        cursor.execute(
+            """
+            INSERT INTO policy_version (
+                version, allowed_actions, denied_actions, escalation_rules,
+                article_mappings, effective_from
+            ) VALUES ('v1', %s, %s, %s, %s, '2026-01-01T00:00:00Z')
+            ON CONFLICT (version) DO NOTHING
+            """,
+            (self._envelope(),) * 4,
+        )
+
+    def _insert_stopped_turn(self, connection: psycopg.Connection) -> None:
+        with connection.cursor() as cursor:
+            self._insert_learner_and_session(cursor)
+            self._insert_policy(cursor)
+            cursor.execute(
+                """
+                INSERT INTO turn_audit (
+                    turn_id, session_id, turn_index, learner_prompt_redacted,
+                    redacted_categories, policy_version, previous_record_hash,
+                    record_hash, recorded_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000021',
+                    '00000000-0000-4000-8000-000000000012',
+                    0, %s, %s, 'v1', 'a', 'b', '2026-01-01T00:00:00Z'
+                )
+                ON CONFLICT (turn_id) DO NOTHING
+                """,
+                (self._envelope(), self._envelope()),
+            )
+
+    def _insert_permission_stop_gates(self, connection: psycopg.Connection) -> None:
+        rows = (
+            (
+                "00000000-0000-4000-8000-000000000071",
+                "context_and_permission",
+                "stop",
+            ),
+            (
+                "00000000-0000-4000-8000-000000000072",
+                "conflict_and_ambiguity",
+                "not_evaluated",
+            ),
+            (
+                "00000000-0000-4000-8000-000000000073",
+                "sensitivity_and_high_stakes",
+                "not_evaluated",
+            ),
+            (
+                "00000000-0000-4000-8000-000000000074",
+                "drift_and_anomaly",
+                "not_evaluated",
+            ),
+        )
+        with connection.cursor() as cursor:
+            for row_id, gate_name, decision in rows:
+                cursor.execute(
+                    """
+                    INSERT INTO gate_evaluation (
+                        id, turn_id, gate_name, decision, reason,
+                        policy_rule_id, evaluated_at
+                    ) VALUES (
+                        %s,
+                        '00000000-0000-4000-8000-000000000021',
+                        %s,
+                        %s,
+                        %s,
+                        'perm-1',
+                        '2026-01-01T00:00:00Z'
+                    )
+                    """,
+                    (row_id, gate_name, decision, self._envelope()),
+                )
+
+    def _insert_tutor_edit(self, connection: psycopg.Connection) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO human_action (
+                    id, turn_id, tutor_id, action, edited_output, acted_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000051',
+                    '00000000-0000-4000-8000-000000000021',
+                    %s, 'edit', %s, '2026-01-01T00:00:00Z'
+                )
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (self._envelope(), self._envelope()),
+            )
+
+    def _insert_chunk(self, connection: psycopg.Connection) -> None:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO kb_document (id, source_uri, version, review_status)
+                VALUES (
+                    '00000000-0000-4000-8000-000000000060',
+                    'kb://library',
+                    '1',
+                    'approved'
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+            )
+            cursor.execute(
+                """
+                INSERT INTO kb_chunk (
+                    id, document_id, ordinal, content, embedding
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000061',
+                    '00000000-0000-4000-8000-000000000060',
+                    0,
+                    %s,
+                    %s
+                )
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (self._envelope(), "[" + ",".join(["0"] * 768) + "]"),
             )
 
     def _insert_learner_and_session(self, cursor: psycopg.Cursor) -> None:

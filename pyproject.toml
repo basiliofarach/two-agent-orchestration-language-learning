@@ -33,7 +33,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+# The src roots are explicit so the suite does not depend on the editable
+# .pth files, which Python skips once macOS flags them hidden (gh-113659).
+pythonpath = [".", "tutor-core/src", "tutor-api/src"]
 testpaths = ["tests", "tutor-core/tests", "tutor-api/tests"]
 addopts = [
     "--cov=tutor_core",
@@ -54,6 +56,10 @@ filterwarnings = [
 
 [tool.coverage.run]
 branch = true
+# SQLAlchemy resumes an awaited statement on a greenlet. Lines after that
+# resume are invisible unless the greenlet tracer is on. ``thread`` stays
+# so the FastAPI tests keep the default tracer.
+concurrency = ["greenlet", "thread"]
 source = ["tutor_core", "tutor_api"]
 omit = ["*/tests/*", "*/fixtures/*"]
 
