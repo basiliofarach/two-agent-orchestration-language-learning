@@ -38,10 +38,45 @@ class UnconfiguredSettingsProvider(Provider):
         )
 
 
+class ConfiguredSettingsProvider(Provider):
+    """Registers settings with a known database target.
+
+    A test states its own configuration. Reading the developer's
+    ``tutor-api/.env`` would make the result depend on whether that file
+    exists and on the directory pytest was started from: ``env_file=".env"``
+    is resolved against the working directory, so it is found from
+    ``tutor-api/`` and not from the repository root, which is where the suite
+    actually runs.
+    """
+
+    def provides(self) -> type:
+        return ApplicationSettings
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ApplicationSettings(
+            _env_file=None,
+            postgres_user="tutor_owner",
+            postgres_password="never-in-a-response",
+            postgres_db="tutor",
+        )
+
+
+def _client(provider: Provider) -> TestClient:
+    container = Container((provider,))
+    container.validate()
+    return TestClient(Application(container).asgi())
+
+
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """A client over the real graph, exactly as main.py composes it."""
-    with TestClient(Application(ApplicationContainer().build()).asgi()) as started:
+    """A client over a graph whose configuration the test states itself."""
+    with _client(ConfiguredSettingsProvider()) as started:
         yield started
 
 
@@ -57,19 +92,26 @@ class TestHealthRouter:
         A handler that built its own ``Settings`` — or read the
         environment — would ignore this and still answer ``True``.
         """
-        container = Container((UnconfiguredSettingsProvider(),))
-        container.validate()
-        with TestClient(Application(container).asgi()) as started:
+        with _client(UnconfiguredSettingsProvider()) as started:
             body = started.get("/health").json()
         assert body == {"status": "ok", "database_configured": False}
+
+    def test_the_real_container_wires_the_route(self) -> None:
+        """The graph ``main.py`` composes must serve the route.
+
+        Only the shape is asserted. Whether a database is configured depends
+        on the directory the suite runs from, and is not this test's subject.
+        """
+        with TestClient(Application(ApplicationContainer().build()).asgi()) as started:
+            body = started.get("/health").json()
+        assert body["status"] == "ok"
+        assert isinstance(body["database_configured"], bool)
 
     def test_response_carries_no_credentials(self, client: TestClient) -> None:
         """A password reaching a health endpoint is a disclosure."""
         body = client.get("/health").text
-        settings = ApplicationSettings()
-        for secret in (settings.postgres_password, settings.postgres_user):
-            if secret:
-                assert secret not in body
+        assert "never-in-a-response" not in body
+        assert "tutor_owner" not in body
 
 
 class TestApplicationWiring:
@@ -102,11 +144,9 @@ class TestApplicationWiring:
 
     def test_two_applications_do_not_share_a_container(self) -> None:
         """Per-app state: the unconfigured graph must not affect the real one."""
-        leaking = Container((UnconfiguredSettingsProvider(),))
-        leaking.validate()
         with (
-            TestClient(Application(leaking).asgi()) as first,
-            TestClient(Application(ApplicationContainer().build()).asgi()) as second,
+            _client(UnconfiguredSettingsProvider()) as first,
+            _client(ConfiguredSettingsProvider()) as second,
         ):
             assert first.get("/health").json()["database_configured"] is False
             assert second.get("/health").json()["database_configured"] is True
