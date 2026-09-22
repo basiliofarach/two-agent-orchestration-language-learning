@@ -1,0 +1,154 @@
+/* Site styling for the compliance-evidence documentation.
+   Restraint is the brief: this is a reference document, not a product page.
+   No lifts, no shadows, no animation. Everything is expressed in Material's
+   CSS variables so both the light and dark schemes follow the palette —
+   a literal colour would break one of the two. */
+
+/* --------------------------------------------------------------- Lead ---
+   The opening paragraph states the page's claim. A thin rule sets it off
+   without turning it into a banner. */
+.md-typeset .lead {
+  color: var(--md-default-fg-color--light);
+  border-left: 2px solid var(--md-default-fg-color--lighter);
+  padding-left: 0.9rem;
+  margin: 1rem 0 1.8rem;
+}
+
+/* -------------------------------------------------------------- Index ---
+   The document index on the home page is a `def_list` definition list, so the
+   page needs no wrapper element and stays free of inline HTML. Terms sit in a
+   fixed left column against their description, which reads as a reference
+   index rather than a set of tiles. */
+.md-typeset dl {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  margin: 1.2rem 0 1.8rem;
+}
+
+.md-typeset dl > dt {
+  font-weight: 700;
+  padding: 0.7rem 0;
+  margin: 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+
+/* Material sets `[dir=ltr] .md-typeset dd { margin-left: 1.875em }`, which
+   outspecifies a plain `.md-typeset dl > dd`. Mirroring its `[dir]` prefix is
+   what lets the reset land; without it the indent survives and breaks the row
+   rule into two segments. The gutter is padding on the description instead, so
+   the border spans the whole column and the two rules meet. */
+[dir="ltr"] .md-typeset dl > dd,
+[dir="rtl"] .md-typeset dl > dd {
+  margin: 0;
+  padding: 0.7rem 0 0.7rem 1.2rem;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.74rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+
+/* Below the content breakpoint the two columns would crush the description,
+   so the pair stacks and the rule moves to the term alone. */
+@media screen and (max-width: 45em) {
+  .md-typeset dl {
+    grid-template-columns: 1fr;
+  }
+
+  [dir="ltr"] .md-typeset dl > dd,
+  [dir="rtl"] .md-typeset dl > dd {
+    padding: 0.2rem 0 0.7rem;
+    border-top: 0;
+  }
+}
+
+/* ------------------------------------------------------------- Tables ---
+   The record and coverage tables are read as reference. Identifiers and
+   column headings should not wrap. */
+.md-typeset table:not([class]) th {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.md-typeset table:not([class]) td:first-child {
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ Mermaid ---
+   Diagrams are a primary artefact of the architecture; centre them in the
+   content column. */
+.md-typeset .mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1.4rem 0;
+}
+
+/* ------------------------------------------------------------ Sidebar ---
+   Zensical 0.0.62 implements neither `navigation.expand` nor
+   `navigation.indexes`: a section renders collapsed behind a checkbox, so the
+   sidebar reads as four flat lines with its sub-pages hidden. Setting those
+   features in zensical.toml changes nothing — verified against the build.
+
+   These rules open every section in the desktop sidebar and give the tree the
+   separation a reference document needs. Scoped to `.md-nav__item--nested` so
+   the inline table of contents (which is not a nested item) is untouched, and
+   to the desktop breakpoint so the mobile drawer below 76.25em still slides
+   and collapses as designed. */
+@media screen and (min-width: 76.25em) {
+  .md-nav--primary .md-nav__item--nested > .md-nav__toggle ~ .md-nav {
+    grid-template-rows: minmax(0.4rem, 1fr);
+    visibility: visible;
+    opacity: 1;
+    transition: none;
+  }
+
+  /* The chevron no longer toggles anything at this width. */
+  .md-nav--primary .md-nav__item--nested > .md-nav__link > .md-nav__icon {
+    display: none;
+  }
+
+  /* A section heading is structure, not a destination. */
+  .md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__link {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--md-default-fg-color--light);
+    cursor: default;
+    margin: 0 0 0.25rem;
+  }
+
+  /* Air and a hairline so the four groups read as four groups. */
+  .md-nav--primary > .md-nav__list > .md-nav__item--section {
+    margin-top: 1rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--md-default-fg-color--lightest);
+  }
+
+  /* Children hang off a rule, so depth is visible without counting indents. */
+  .md-nav--primary
+    > .md-nav__list
+    > .md-nav__item--section
+    > .md-nav
+    > .md-nav__list {
+    border-left: 1px solid var(--md-default-fg-color--lightest);
+    margin-left: 0.1rem;
+    padding-left: 0.6rem;
+  }
+
+  /* Record titles are long. Wrapping is more use than an ellipsis here. */
+  .md-nav--primary .md-nav__link .md-ellipsis {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.35;
+  }
+
+  .md-nav--primary .md-nav__item .md-nav__link {
+    padding: 0.2rem 0;
+  }
+
+  /* The page being read. */
+  .md-nav--primary .md-nav__link--active {
+    font-weight: 700;
+    color: var(--md-typeset-a-color);
+  }
+}

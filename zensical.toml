@@ -1,6 +1,11 @@
 # Documentation site (Zensical, MIT). Markdown in docs/ remains the source of truth.
-# After the repo is on GitHub, set site_url to https://<user>.github.io/<repo>/
-# and repo_url to the repository URL so search, sitemap, and edit links work.
+#
+# site_url and repo_url are set here rather than injected by the Pages workflow.
+# Zensical resolves `!ENV` only when the config is YAML; zensical.toml is read
+# with a plain tomli.load, and `zensical build` has no --site-url override, so
+# CI injection would mean a sed step patching this file. Both values are
+# constants, and setting them here means the repository link is present in
+# `zensical serve` too, not only in the deployed site.
 
 [project]
 site_name = "Supervised two-agent language-learning tutor"
@@ -8,19 +13,25 @@ site_description = "Compliance-evidence prototype for EU AI Act Articles 10, 12,
 site_author = "Basilio Farach"
 docs_dir = "docs"
 site_dir = "site"
-# site_url = "https://<user>.github.io/<repo>/"
-# repo_url = "https://github.com/<user>/<repo>"
-# edit_uri = "edit/main/docs/"
+site_url = "https://basiliofarach.github.io/two-agent-orchestration-language-learning/"
+repo_url = "https://github.com/basiliofarach/two-agent-orchestration-language-learning"
+# The owner/repo slug is too long for the header and renders truncated; the
+# link target carries the full path. Zensical would derive "GitHub" from the
+# host anyway — this is explicit so it does not look accidental.
+repo_name = "GitHub"
+# Explicit: Zensical's built-in default for a github.com host is
+# `edit/master/docs`, and this repository's default branch is `main`.
+edit_uri = "edit/main/docs/"
 
 nav = [
   { "Home" = "index.md" },
   { "Requirements" = "requirements.md" },
   { "Architecture" = [
-    { "Architecture" = "architecture/ARCHITECTURE.md" },
+    { "Overview" = "architecture/ARCHITECTURE.md" },
     { "Implementation plan" = "architecture/IMPLEMENTATION-PLAN.md" },
   ] },
   { "Decisions" = [
-    { "Index" = "decisions/README.md" },
+    { "All records" = "decisions/README.md" },
     { "DEC-0001 Interface-first OOP" = "decisions/0001-interface-first-oop-di-capability-scoping.md" },
     { "DEC-0002 Pydantic only" = "decisions/0002-pydantic-basemodel-only.md" },
     { "DEC-0003 uv FastAPI wireup" = "decisions/0003-python-toolchain-uv-fastapi-wireup.md" },
@@ -32,20 +43,29 @@ nav = [
     { "DEC-0009 LangGraph state" = "decisions/0009-langgraph-state-wraps-frozen-turnstate.md" },
     { "DEC-0010 Mutable TurnState" = "decisions/0010-mutable-turnstate-graph-wrapper.md" },
     { "DEC-0011 Layer roles and service chain" = "decisions/0011-layer-roles-and-service-lifecycle.md" },
+    { "DEC-0012 Encryption at rest" = "decisions/0012-encryption-at-rest-by-default.md" },
   ] },
 ]
+
+copyright = "Basilio Farach — compliance-evidence prototype, not a production system."
+extra_css = ["assets/extra.css"]
 
 [project.theme]
 language = "en"
 features = [
+  "content.action.edit",
   "content.code.copy",
+  "content.tooltips",
   "navigation.footer",
-  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.progress",
   "navigation.path",
   "navigation.sections",
   "navigation.top",
   "navigation.tracking",
   "search.highlight",
+  "search.share",
+  "search.suggest",
   "toc.follow",
 ]
 

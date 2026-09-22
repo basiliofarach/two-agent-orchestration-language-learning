@@ -107,11 +107,17 @@ model.
 
 ## 3. Module structure
 
+This is the **target** layout, not an inventory of the current tree. Much of it
+is still an empty package. The phase in which each part is created is given in
+[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) — read build order there, not
+here, so this section does not have to be edited on every ticket.
+
 ```text
 tutor-core/src/tutor_core/           # pure domain + application, no I/O
   domain/
-    models/        turn.py · audit.py · retrieval.py · learner.py · safety.py · verdict.py
-    ports/         thirteen ABCs, one per file (DEC-0001)
+    models/        turn.py · audit.py · retrieval.py · learner.py · safety.py
+                   verdict.py · timestamps.py — AwareDatetime (DEC-0010)
+    ports/         fifteen ABCs, one per file (DEC-0001)
     gates/         registry.py + four gate classes
     policy/        policy_card.py — versioned, machine-readable
   application/
@@ -119,18 +125,28 @@ tutor-core/src/tutor_core/           # pure domain + application, no I/O
     agents/        retrieval_agent.py · generation_agent.py
     turn/          graph.py · nodes.py
 
-tutor-api/src/tutor_api/
-  container.py                 # wireup registration — the only wiring site
-  routers/                     sessions.py · audit.py · evidence.py
-  adapters/
-    persistence/               audit_sink.py · knowledge_base.py · learner_history.py
-    llm/                       ollama_model.py · local_embedding.py
-    checks/                    grammar.py · safety.py · source_support.py · pii_redaction.py
-    system_clock.py
-  retention/                   scheduled GDPR retention enforcement
+tutor-api/
+  alembic.ini                  # revision naming, post-write ruff hooks
+  alembic/versions/            # <UTC stamp>_<hash>_<slug>.py
+  src/tutor_api/
+    container.py               # wireup registration — the only wiring site
+    routers/                   sessions.py · audit.py · evidence.py
+    adapters/
+      persistence/             schema.py · database.py · unit_of_work.py
+                               encryption_at_rest.py · aes_gcm_envelope.py (DEC-0012)
+                               migration_environment.py · migration_session.py
+                               audit_sink.py · knowledge_base.py · learner_history.py
+      llm/                     ollama_model.py · local_embedding.py
+      checks/                  grammar.py · safety.py · source_support.py · pii_redaction.py
+      system_clock.py
+    retention/                 scheduled GDPR retention enforcement
 
 app/routes/                    # React Router v8 flat routes, DEC-0008
 ```
+
+The port count is authoritative in [DEC-0001](../decisions/0001-interface-first-oop-di-capability-scoping.md),
+which lists every one with its justification. If the two disagree, that record
+wins and this section is stale.
 
 ### 3.1 Four roles (DEC-0011)
 
@@ -163,7 +179,7 @@ request — wireup owns lifetimes (DEC-0003).
 
 ## 4. Ports
 
-Thirteen `abc.ABC` interfaces in `domain/ports/`, each defined before its
+Fifteen `abc.ABC` interfaces in `domain/ports/`, each defined before its
 implementation (DEC-0001).
 
 ### 4.1 Input boundary and retrieval
