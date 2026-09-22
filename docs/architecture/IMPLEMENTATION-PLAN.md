@@ -65,7 +65,10 @@ a later insert. The sequence is
 
 `AuditSinkPort` + `PostgresAuditSink`. Migrations for `turn_audit` and
 `gate_evaluation`, the `BEFORE UPDATE OR DELETE` trigger, and an application
-role granted `INSERT`/`SELECT` only. Hash chaining over records.
+role granted `INSERT`/`SELECT` only. Hash chaining over records. The first
+record in a session chains to a documented genesis value, and a verifier
+names the record that was edited or removed. `recorded_at` comes from
+`ClockPort`.
 
 `CipherPort` ships here, ahead of the first migration, so the schema is born
 encrypted rather than retrofitted (DEC-0012). The same migration creates the

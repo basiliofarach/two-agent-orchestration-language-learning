@@ -54,6 +54,10 @@ filterwarnings = [
 
 [tool.coverage.run]
 branch = true
+# SQLAlchemy resumes an awaited statement on a greenlet. Lines after that
+# resume are invisible unless the greenlet tracer is on. ``thread`` stays
+# so the FastAPI tests keep the default tracer.
+concurrency = ["greenlet", "thread"]
 source = ["tutor_core", "tutor_api"]
 omit = ["*/tests/*", "*/fixtures/*"]
 

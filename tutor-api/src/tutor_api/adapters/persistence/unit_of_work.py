@@ -34,6 +34,17 @@ class SqlAlchemyConnection(TransactionConnection):
     ) -> None:
         await self._connection.execute(text(statement), dict(parameters or {}))
 
+    async def fetch_one(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[object, ...] | None:
+        result = await self._connection.execute(text(statement), dict(parameters))
+        row = result.first()
+        if row is None:
+            return None
+        return tuple(row)
+
 
 class SqlAlchemyUnitOfWork(UnitOfWorkPort):
     """Run enlisted work and close the connection either way."""

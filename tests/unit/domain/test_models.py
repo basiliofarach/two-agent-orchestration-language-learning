@@ -166,11 +166,17 @@ class TestTurnAuditRecord:
 class TestTurnAuditRecordStops:
     def test_a_permission_stop_has_no_generation_fields(self) -> None:
         record = Samples().stopped_audit_record()
+        assert record.session_id == Samples().turn().session_id
+        assert record.turn_index == 0
         assert record.model_revision is None
+        assert record.template_version is None
         assert record.decoding_params is None
         assert record.output_before_checks is None
         assert record.output_after_checks is None
+        assert record.ai_disclosure is None
+        assert record.refused is None
         assert record.safety_flags is None
+        assert record.source_support is None
         assert record.retrieved_context_ids == ()
 
     def test_absent_generation_fields_stay_in_the_record(self) -> None:

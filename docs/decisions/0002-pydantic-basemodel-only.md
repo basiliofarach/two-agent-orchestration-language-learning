@@ -26,6 +26,8 @@ class TurnAuditRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     turn_id: UUID
+    session_id: UUID
+    turn_index: int
     learner_prompt_redacted: str      # PII-redacted prompt (REQ-AUDIT)
     redacted_categories: tuple[str, ...]
     retrieved_context_ids: tuple[str, ...]

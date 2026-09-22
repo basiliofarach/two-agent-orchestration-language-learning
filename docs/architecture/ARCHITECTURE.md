@@ -335,6 +335,8 @@ classDiagram
 
     class PostgresAuditSink {
         -connection
+        -cipher
+        -hasher
         +append(record) None
     }
     class VersionedPolicyCard {
@@ -436,6 +438,8 @@ classDiagram
     class TurnAuditRecord {
         <<frozen>>
         +UUID turn_id
+        +UUID session_id
+        +int turn_index
         +str learner_prompt_redacted
         +tuple~str~ retrieved_context_ids
         +str model_revision
@@ -668,7 +672,10 @@ rows and citation rows reference the turn and commit with it. A cited chunk
 is a foreign key in `turn_citation`, which is the stored form of
 `retrieved_context_ids`. A tutor action is a later insert into `human_action`;
 the turn row is not updated to hold it. `record_hash` chains each turn record
-to its predecessor.
+to its predecessor. The first record in a session chains to a documented
+genesis value. A later record's `previous_record_hash` is its predecessor's
+`record_hash`. `ChainVerifier` names the record that was edited or whose
+predecessor is missing.
 
 ## 8. Runtime view
 
