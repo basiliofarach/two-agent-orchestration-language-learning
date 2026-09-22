@@ -1,11 +1,40 @@
 """Non-audit tables (BE-05) and the append-only audit tables (BE-06)."""
 
+import re
+
 
 class ApplicationRole:
-    """The role granted insert and select on the audit tables."""
+    """The role granted insert and select on the audit tables.
 
-    def name(self) -> str:
-        return "tutor_app"
+    Injected, not fixed. ``docker/postgres/init/01-roles.sh`` creates the login
+    from ``POSTGRES_APP_USER``; with the name hard-coded, a deployment that
+    overrode that variable had the audit privileges granted to a NOLOGIN
+    placeholder this migration created, while the login the application
+    actually uses received none — a silent loss of the REQ-AUDIT control.
+    :class:`~tutor_api.settings.DatabaseSettings` resolves the name from the
+    same variable Compose reads.
+
+    The name reaches SQL interpolated, so it is checked against the identifier
+    grammar and quoted. ``01-roles.sh`` creates it with ``:"app_user"`` — a
+    quoted identifier — so quoting here keeps the two spellings identical for
+    a name that is not already lower case.
+    """
+
+    _GRAMMAR = re.compile(r"\A[A-Za-z_][A-Za-z0-9_$]{0,62}\Z")
+
+    def __init__(self, name: str) -> None:
+        if not self._GRAMMAR.match(name):
+            msg = f"POSTGRES_APP_USER is not a usable role name: {name!r}"
+            raise ValueError(msg)
+        self._name = name
+
+    def identifier(self) -> str:
+        """The role as a quoted SQL identifier, for GRANT and CREATE ROLE."""
+        return f'"{self._name}"'
+
+    def literal(self) -> str:
+        """The role as a quoted SQL string, for the ``pg_roles`` lookup."""
+        return f"'{self._name}'"
 
 
 class BaseSchema:
@@ -98,13 +127,19 @@ class BaseSchema:
 class AuditSchema:
     """Append-only ``turn_audit`` and ``gate_evaluation`` (BE-06, DEC-0006)."""
 
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
     def statements(self) -> tuple[str, ...]:
-        role = ApplicationRole().name()
+        role = self._role.identifier()
+        rolname = self._role.literal()
         return (
             f"""
             DO $role$
             BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = {rolname}
+                ) THEN
                     CREATE ROLE {role} NOLOGIN;
                 END IF;
             END

@@ -1,5 +1,7 @@
 """Unit of work commits, rolls back, and always closes the connection."""
 
+from collections.abc import Mapping
+
 import pytest
 
 from tutor_api.adapters.persistence.unit_of_work import (
@@ -15,6 +17,7 @@ class RecordingConnection(TransactionConnection):
         self.rolled_back = False
         self.closed = False
         self.statements: list[str] = []
+        self.parameters: list[Mapping[str, object]] = []
 
     async def commit(self) -> None:
         self.committed = True
@@ -25,8 +28,13 @@ class RecordingConnection(TransactionConnection):
     async def close(self) -> None:
         self.closed = True
 
-    async def execute(self, statement: str) -> None:
+    async def execute(
+        self,
+        statement: str,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
         self.statements.append(statement)
+        self.parameters.append(dict(parameters or {}))
 
 
 class SucceedingWork(TransactionalWork):
@@ -34,7 +42,10 @@ class SucceedingWork(TransactionalWork):
         self._connection = connection
 
     async def run(self) -> None:
-        await self._connection.execute("INSERT INTO example (id) VALUES (1)")
+        await self._connection.execute(
+            "INSERT INTO example (id) VALUES (:id)",
+            {"id": 1},
+        )
 
 
 class FailingWork(TransactionalWork):
@@ -49,7 +60,8 @@ class TestSqlAlchemyUnitOfWork:
         assert connection.committed
         assert not connection.rolled_back
         assert connection.closed
-        assert connection.statements == ["INSERT INTO example (id) VALUES (1)"]
+        assert connection.statements == ["INSERT INTO example (id) VALUES (:id)"]
+        assert connection.parameters == [{"id": 1}]
 
     async def test_rollback_on_failure_and_close(self) -> None:
         connection = RecordingConnection()
@@ -58,3 +70,15 @@ class TestSqlAlchemyUnitOfWork:
         assert not connection.committed
         assert connection.rolled_back
         assert connection.closed
+
+
+class TestBoundParameters:
+    async def test_values_are_bound_not_interpolated(self) -> None:
+        connection = RecordingConnection()
+        await connection.execute(
+            "INSERT INTO example (name) VALUES (:name)",
+            {"name": "Robert'); DROP TABLE example;--"},
+        )
+        assert connection.statements == ["INSERT INTO example (name) VALUES (:name)"]
+        assert "DROP TABLE" not in connection.statements[0]
+        assert connection.parameters == [{"name": "Robert'); DROP TABLE example;--"}]

@@ -21,6 +21,7 @@ tutor-api = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28",
     "import-linter>=2.3",
     "mypy>=1.15",
     "psycopg[binary]>=3.2",
@@ -46,6 +47,9 @@ markers = [
 ]
 filterwarnings = [
     "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
+    # Starlette 1.6 prefers httpx2 for its TestClient; httpx is still correct.
+    "ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]
@@ -86,7 +90,6 @@ forbidden_modules = [
     "httpx",
     "psycopg",
     "ollama",
-    "wireup",
     "testcontainers",
 ]
 

@@ -7,7 +7,9 @@ dependencies = [
     "alembic>=1.14",
     "asyncpg>=0.30",
     "cryptography>=44",
+    "fastapi>=0.115",
     "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.8",
     "sqlalchemy[asyncio]>=2.0",
     "tutor-core",
 ]

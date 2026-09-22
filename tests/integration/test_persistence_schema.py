@@ -11,11 +11,15 @@ from testcontainers.postgres import PostgresContainer
 from tests.support.runtime_pin import RuntimePin
 
 from tutor_api.adapters.persistence.database import DatabaseEngine
+from tutor_api.adapters.persistence.schema import ApplicationRole
 from tutor_api.adapters.persistence.unit_of_work import (
     SqlAlchemyUnitOfWork,
     TransactionConnection,
 )
+from tutor_api.settings import DatabaseSettings
 from tutor_core.domain.ports.unit_of_work import TransactionalWork
+
+_ROLE_NAME = DatabaseSettings().postgres_app_user
 
 
 class PostgresUrl:
@@ -211,7 +215,7 @@ class TestPersistenceSchema:
             self._insert_audit_row(connection)
             connection.commit()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
-                cursor.execute("SET ROLE tutor_app")
+                cursor.execute(f"SET ROLE {ApplicationRole(_ROLE_NAME).identifier()}")
                 cursor.execute("UPDATE turn_audit SET refused = true")
 
     def test_truncate_of_audit_table_is_refused_for_application_role(self) -> None:
@@ -221,7 +225,7 @@ class TestPersistenceSchema:
         ):
             AlembicRunner(PostgresUrl().sync(postgres)).upgrade()
             with connection.cursor() as cursor, pytest.raises(psycopg.Error):
-                cursor.execute("SET ROLE tutor_app")
+                cursor.execute(f"SET ROLE {ApplicationRole(_ROLE_NAME).identifier()}")
                 cursor.execute("TRUNCATE turn_audit")
 
     def test_gate_evaluation_rejects_unknown_decision(self) -> None:

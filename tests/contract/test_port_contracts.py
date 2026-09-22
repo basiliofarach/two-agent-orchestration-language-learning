@@ -449,8 +449,11 @@ class TestStubPolicyArtifactPort(PolicyArtifactPortContract):
 
 
 class _CompletedWork(TransactionalWork):
+    def __init__(self) -> None:
+        self.ran = False
+
     async def run(self) -> None:
-        return None
+        self.ran = True
 
 
 class _MemoryUnitOfWork(UnitOfWorkPort):
@@ -466,7 +469,9 @@ class UnitOfWorkPortContract:
         raise NotImplementedError(msg)
 
     async def test_run_executes_the_enlisted_work(self) -> None:
-        await self.port().run(_CompletedWork())
+        work = _CompletedWork()
+        await self.port().run(work)
+        assert work.ran
 
 
 class TestStubCipherPort(CipherPortContract):

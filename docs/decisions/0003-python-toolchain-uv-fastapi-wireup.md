@@ -1,6 +1,12 @@
 # 0003. Python toolchain: uv, FastAPI, wireup
 
-*Status:* Accepted · *Date:* 2026-09-18
+*Status:* Accepted · *Date:* 2026-09-18 · *Partially superseded:* 2026-09-22
+
+The wireup clause is superseded by
+[DEC-0013](0013-first-party-composition-root.md). The uv and FastAPI
+clauses stand, as does the rule that the router signature is the injection
+boundary. The scope-leakage control described below is kept — DEC-0013
+reimplements it in this repository rather than withdrawing it.
 
 ## Context
 

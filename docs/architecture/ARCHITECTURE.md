@@ -129,7 +129,8 @@ tutor-api/
   alembic.ini                  # revision naming, post-write ruff hooks
   alembic/versions/            # <UTC stamp>_<hash>_<slug>.py
   src/tutor_api/
-    container.py               # wireup registration — the only wiring site
+    container.py               # provider registration — the only wiring site
+    di/                        provider.py · container.py · dependency.py (DEC-0013)
     routers/                   sessions.py · audit.py · evidence.py
     adapters/
       persistence/             schema.py · database.py · unit_of_work.py
@@ -175,7 +176,7 @@ exactly one public method: `prepare` → `Prepared.execute` →
 `ConductTurn`'s execute-handler delegates to the graph in
 `application/turn/`. Gate order is graph placement (DEC-0005). Do not put
 `prepare`, `execute`, and `finalise` on one class. Do not `dispose()` per
-request — wireup owns lifetimes (DEC-0003).
+request — the container owns lifetimes (DEC-0013).
 
 ## 4. Ports
 
@@ -815,10 +816,12 @@ flowchart LR
 **Time.** `ClockPort` injected everywhere; no `datetime.now()` in domain or
 application code. Replay determinism depends on it.
 
-**Composition.** `container.py` is the only site naming concrete classes. wireup
-validates lifetimes at startup, so a singleton retaining request-scoped learner
-state fails the boot rather than leaking one minor's history into another's
-session.
+**Composition.** `container.py` is the only site naming concrete classes.
+`LifetimeValidation` checks the registration graph at startup, so a singleton
+retaining request-scoped learner state fails the boot rather than leaking one
+minor's history into another's session. The check is first-party (DEC-0013):
+FastAPI's `Depends()` resolves per call and cannot see how long the object on
+the other side lives.
 
 **Retention.** `learner.retain_until` plus a scheduled purge, per REQ-MINOR's
 GDPR retention requirement. Purges are themselves logged.

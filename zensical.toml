@@ -44,6 +44,7 @@ nav = [
     { "DEC-0010 Mutable TurnState" = "decisions/0010-mutable-turnstate-graph-wrapper.md" },
     { "DEC-0011 Layer roles and service chain" = "decisions/0011-layer-roles-and-service-lifecycle.md" },
     { "DEC-0012 Encryption at rest" = "decisions/0012-encryption-at-rest-by-default.md" },
+    { "DEC-0013 First-party composition root" = "decisions/0013-first-party-composition-root.md" },
   ] },
 ]
 

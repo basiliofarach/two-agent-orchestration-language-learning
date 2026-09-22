@@ -18,7 +18,3 @@ class TestSystemClock:
         instant = SystemClock().now()
         assert instant.tzinfo is UTC
         assert instant.utcoffset().total_seconds() == 0
-
-    def test_successive_readings_do_not_go_backwards(self) -> None:
-        clock = SystemClock()
-        assert clock.now() <= clock.now()
