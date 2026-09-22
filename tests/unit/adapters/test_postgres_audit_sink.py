@@ -87,13 +87,8 @@ class TestPostgresAuditSink:
 
     async def test_a_generated_turn_encrypts_outputs_and_cites_the_chunk(self) -> None:
         bound = BoundSink()
-        chunk_id = "00000000-0000-4000-8000-000000000061"
-        record = bound.seal(
-            Samples()
-            .audit_record()
-            .model_copy(update={"retrieved_context_ids": (chunk_id,)}),
-            AuditRecordHash.GENESIS,
-        )
+        chunk_id = Samples().snippet().chunk_id
+        record = bound.seal(Samples().audit_record(), AuditRecordHash.GENESIS)
         await bound.sink.append(record)
         turn = bound.connection.parameters[0]
         citation = bound.connection.parameters[1]
@@ -103,7 +98,7 @@ class TestPostgresAuditSink:
         assert b'"temperature":0.0' in bound.cipher.decrypt(turn["decoding_params"])
         assert citation == {
             "turn_id": record.turn_id,
-            "chunk_id": UUID(chunk_id),
+            "chunk_id": chunk_id,
             "ordinal": 0,
         }
         assert all(

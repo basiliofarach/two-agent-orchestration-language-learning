@@ -403,6 +403,13 @@ classDiagram
         +float confidence
     }
 
+    class Snippet {
+        +UUID chunk_id
+        +str content
+        +SourceRef source
+        +int ordinal
+    }
+
     class SourceRef {
         +UUID document_id
         +str source_uri
@@ -452,7 +459,7 @@ classDiagram
         +str record_hash
         +datetime recorded_at
     }
-    note for TurnAuditRecord "Generation fields are null together when the<br/>model did not run. That absence stays in<br/>the hashed record."
+    note for TurnAuditRecord "retrieved_context_ids are Snippet.chunk_id<br/>values. Generation fields are null together<br/>when the model did not run. That absence<br/>stays in the hashed record."
 
     class HumanAction {
         <<frozen>>
@@ -466,7 +473,8 @@ classDiagram
     TurnState *-- RedactedText
     TurnState *-- RetrievalResult
     TurnState *-- GeneratedUnit
-    RetrievalResult *-- SourceRef
+    RetrievalResult *-- Snippet
+    Snippet *-- SourceRef
     GeneratedUnit *-- SourceSupportReport
     TurnAuditRecord "1" --> "0..1" HumanAction : appended after
 ```

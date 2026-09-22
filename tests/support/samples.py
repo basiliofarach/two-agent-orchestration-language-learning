@@ -50,7 +50,12 @@ class Samples:
         )
 
     def snippet(self) -> Snippet:
-        return Snippet(content="Hola means hello.", source=self.source(), ordinal=0)
+        return Snippet(
+            chunk_id=UUID("00000000-0000-4000-8000-000000000061"),
+            content="Hola means hello.",
+            source=self.source(),
+            ordinal=0,
+        )
 
     def query(self) -> RetrievalQuery:
         return RetrievalQuery(text="how do I greet someone")
@@ -157,7 +162,7 @@ class Samples:
             turn_index=0,
             learner_prompt_redacted=prompt,
             redacted_categories=(),
-            retrieved_context_ids=(str(self.source().document_id),),
+            retrieved_context_ids=(str(self.snippet().chunk_id),),
             model_revision="b" * 40,
             template_version="tpl-1",
             decoding_params=self.decoding(),

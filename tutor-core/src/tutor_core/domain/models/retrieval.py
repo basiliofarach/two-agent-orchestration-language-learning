@@ -30,10 +30,16 @@ class SourceRef(BaseModel):
 
 
 class Snippet(BaseModel):
-    """One retrieved passage and the source it came from."""
+    """One retrieved passage and the source it came from.
+
+    ``chunk_id`` is the ``kb_chunk`` row this passage was read from.
+    ``TurnAuditRecord.retrieved_context_ids`` stores that identifier, and
+    ``turn_citation.chunk_id`` references it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    chunk_id: UUID
     content: str = Field(min_length=1)
     source: SourceRef
     ordinal: int = Field(ge=0)

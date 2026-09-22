@@ -195,9 +195,7 @@ class TestAuditSinkTransaction:
 
     def _generated(self, hasher: AuditRecordHash) -> TurnAuditRecord:
         return SealedTurn(hasher).at(
-            Samples()
-            .audit_record()
-            .model_copy(update={"retrieved_context_ids": (_CHUNK,)}),
+            Samples().audit_record(),
             AuditRecordHash.GENESIS,
         )
 

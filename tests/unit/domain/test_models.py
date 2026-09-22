@@ -315,6 +315,12 @@ class TestRedactedText:
 
 
 class TestRetrievalResult:
+    def test_a_cited_turn_records_the_retrieved_chunk(self) -> None:
+        samples = Samples()
+        chunk_id = str(samples.snippet().chunk_id)
+        assert samples.audit_record().retrieved_context_ids == (chunk_id,)
+        assert chunk_id != str(samples.source().document_id)
+
     def test_snippet_source_must_be_listed(self) -> None:
         samples = Samples()
         other = samples.source().model_copy(

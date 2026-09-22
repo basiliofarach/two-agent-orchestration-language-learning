@@ -48,10 +48,12 @@ class TurnAuditRecord(BaseModel):
     digest. ``recorded_at`` is supplied by the caller from ``ClockPort``.
 
     ``session_id`` and ``turn_index`` place the record in one session chain.
-    Generation fields are absent together when the model did not run. That
-    absence is stored as ``None`` and stays in the record the hash covers; a
-    stop does not invent a revision or an output. The tutor action is a
-    separate :class:`HumanAction` append and is not part of this record.
+    ``retrieved_context_ids`` are ``Snippet.chunk_id`` values, the same
+    identifiers ``turn_citation.chunk_id`` stores. Generation fields are
+    absent together when the model did not run. That absence is stored as
+    ``None`` and stays in the record the hash covers; a stop does not invent
+    a revision or an output. The tutor action is a separate
+    :class:`HumanAction` append and is not part of this record.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
