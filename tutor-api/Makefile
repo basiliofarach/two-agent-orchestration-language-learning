@@ -53,7 +53,7 @@ check: sync
 	$(UV) --directory "$(REPO)" run pytest
 
 up:
-	docker compose up -d --wait postgres
+	docker compose up
 
 migrate:
 	$(RUN) alembic upgrade head
