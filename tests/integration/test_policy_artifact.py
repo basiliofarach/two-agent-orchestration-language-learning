@@ -6,6 +6,7 @@ from uuid import UUID
 
 import psycopg
 import pytest
+from sqlalchemy.exc import DBAPIError
 from tests.support.curation import Curator
 from tests.support.migrated_database import MigratedDatabase, PostgresUrl
 from tests.support.samples import Samples
@@ -19,9 +20,11 @@ from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.adapters.persistence.versioned_policy import (
     PolicyCardCodec,
     PolicyVersionMissing,
+    PolicyVersionWriter,
     VersionedPolicyCard,
 )
 from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.domain.policy.lineage import PolicyRuleLineage
 from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.unit_of_work import (
@@ -93,6 +96,54 @@ class HeldSelection(TransactionalWork):
             SecondVersion().card(), datetime(2026, 2, 1, tzinfo=UTC)
         )
         self.logged = await policy.version()
+
+
+class RivalVersion:
+    """policy-3 adds the same id as policy-2 with a different statement."""
+
+    def card(self) -> PolicyCard:
+        current = Samples().policy_card()
+        added = Samples().policy_rule("log-version", "skip the log", "12")
+        return current.model_copy(
+            update={
+                "version": "policy-3",
+                "allowed_actions": current.allowed_actions + (added,),
+            }
+        )
+
+
+class OverlappingPublication(TransactionalWork):
+    """Publish policy-2, and commit policy-3 before policy-2 commits."""
+
+    def __init__(self, cipher: CipherPort, owner_url: str) -> None:
+        self._cipher = cipher
+        self._owner_url = owner_url
+        self.rival_error: DBAPIError | None = None
+
+    async def run(self, connection: TransactionConnection) -> None:
+        writer = PolicyVersionWriter(
+            connection, PolicyCardCodec(self._cipher), PolicyRuleLineage()
+        )
+        await writer.publish(SecondVersion().card(), datetime(2026, 6, 1, tzinfo=UTC))
+        curator = Curator(PostgresUrl(self._owner_url).async_url(), self._cipher)
+        try:
+            await curator.publish(
+                RivalVersion().card(), datetime(2026, 7, 1, tzinfo=UTC)
+            )
+        except DBAPIError as exc:
+            self.rival_error = exc
+
+
+class SerializationFailure:
+    """Whether a driver error is Postgres SQLSTATE 40001."""
+
+    def __init__(self, error: DBAPIError | None) -> None:
+        self._error = error
+
+    def matches(self) -> bool:
+        if self._error is None:
+            return False
+        return getattr(self._error.orig, "sqlstate", None) == "40001"
 
 
 class PublishedPolicy:
@@ -174,6 +225,36 @@ class TestVersionedPolicy:
             await engine.dispose()
         assert work.selected == "policy-1"
         assert work.logged == "policy-1"
+
+    async def test_overlapping_publications_cannot_both_commit(
+        self, fresh_database: str
+    ) -> None:
+        database = MigratedDatabase()
+        database.upgrade(fresh_database)
+        database.seed_learner(fresh_database)
+        cipher = AesGcmEnvelope(key=bytes(range(32)), key_id=UUID(int=1))
+        await Curator(PostgresUrl(fresh_database).async_url(), cipher).publish(
+            Samples().policy_card(), datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        work = OverlappingPublication(cipher, fresh_database)
+        engine = DatabaseEngine(PostgresUrl(fresh_database).async_url())
+        first_error: DBAPIError | None = None
+        try:
+            await SqlAlchemyUnitOfWork(await engine.connect()).run(work)
+        except DBAPIError as exc:
+            first_error = exc
+        finally:
+            await engine.dispose()
+        failures = [
+            SerializationFailure(error).matches()
+            for error in (first_error, work.rival_error)
+        ]
+        assert failures.count(True) == 1
+        with psycopg.connect(fresh_database) as connection:
+            stored = connection.execute(
+                "SELECT count(*) FROM policy_version"
+            ).fetchone()
+        assert stored == (2,)
 
 
 class LegacyPolicyRow:

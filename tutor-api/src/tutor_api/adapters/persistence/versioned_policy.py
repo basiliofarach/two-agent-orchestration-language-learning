@@ -161,7 +161,22 @@ class VersionedPolicyCard(PolicyArtifactPort):
 
 
 class PolicyVersionWriter(PolicyPublicationPort):
-    """Insert one policy version. Rows already stored are not updated."""
+    """Insert one policy version. Rows already stored are not updated.
+
+    The lineage check reads every stored version and runs in Python, so no
+    constraint enforces it, and ``policy_version``'s primary key does not:
+    two versions with different names can redefine the same id. A
+    publication therefore runs SERIALIZABLE. Two that overlap each read
+    history the other writes, so Postgres aborts one with
+    ``serialization_failure`` (SQLSTATE 40001) and none of it commits. The
+    operator retries it against the history that did commit.
+
+    ``publish`` opens its transaction. Postgres rejects ``SET TRANSACTION``
+    after a query, so a caller that breaks this fails instead of publishing
+    at a weaker isolation.
+    """
+
+    _SERIALIZABLE = "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
 
     _EVERY = """
         SELECT version, allowed_actions, denied_actions, escalation_rules,
@@ -193,6 +208,7 @@ class PolicyVersionWriter(PolicyPublicationPort):
     async def publish(self, card: PolicyCard, effective_from: datetime) -> None:
         """Insert ``card`` if its rule ids still mean what they meant."""
         stamped = EffectiveInstant(instant=effective_from).instant
+        await self._connection.execute(self._SERIALIZABLE)
         rows = await self._connection.fetch_all(self._EVERY, {})
         try:
             existing = tuple(self._codec.open(row) for row in rows)

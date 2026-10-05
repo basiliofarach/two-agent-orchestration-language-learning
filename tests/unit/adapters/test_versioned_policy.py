@@ -220,10 +220,24 @@ class TestPolicyVersionWriter:
                 datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
-        assert len(connection.statements) == 2
-        assert connection.statements[1].lstrip().upper().startswith("INSERT")
-        assert "UPDATE" not in connection.statements[1].upper()
-        assert connection.parameters[1]["version"] == "policy-1"
+        assert len(connection.statements) == 3
+        assert connection.statements[2].lstrip().upper().startswith("INSERT")
+        assert "UPDATE" not in connection.statements[2].upper()
+        assert connection.parameters[2]["version"] == "policy-1"
+
+    async def test_publish_runs_serializable_before_reading_the_history(
+        self,
+    ) -> None:
+        connection = ScriptedConnection()
+        await (
+            Wired()
+            .writer(connection)
+            .publish(Samples().policy_card(), datetime(2026, 1, 1, tzinfo=UTC))
+        )
+        assert connection.statements[0] == (
+            "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+        )
+        assert "FROM policy_version" in connection.statements[1]
 
     async def test_a_changed_rule_meaning_is_not_inserted(self) -> None:
         connection = Wired().stored()
@@ -291,7 +305,7 @@ class TestPolicyVersionWriter:
                 datetime(2026, 6, 1, 12, 0, tzinfo=offset),
             )
         )
-        assert connection.parameters[1]["effective_from"] == datetime(
+        assert connection.parameters[2]["effective_from"] == datetime(
             2026, 6, 1, 10, 0, tzinfo=UTC
         )
 
@@ -316,7 +330,7 @@ class TestPolicyVersionWriter:
                 datetime(2026, 6, 1, tzinfo=UTC),
             )
         )
-        assert connection.statements[1].lstrip().upper().startswith("INSERT")
+        assert connection.statements[2].lstrip().upper().startswith("INSERT")
         assigned = PolicyRule(
             policy_rule_id="retrieve_vetted",
             statement="retrieve_vetted",
