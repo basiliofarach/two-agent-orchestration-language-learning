@@ -2,6 +2,11 @@
 
 *Status:* Accepted · *Date:* 2026-09-22
 
+*Amended:* 2026-10-05 ([DEC-0014](0014-one-request-connection.md)) —
+`Container.scope()` adds a `RequestScope`: a request-scoped type is built
+once per scope, and `Provide` opens one scope per HTTP request. The lifetime
+check is unchanged.
+
 Supersedes the wireup clause of
 [DEC-0003](0003-python-toolchain-uv-fastapi-wireup.md). The uv and FastAPI
 clauses of that record still stand, as does the rule that the router signature

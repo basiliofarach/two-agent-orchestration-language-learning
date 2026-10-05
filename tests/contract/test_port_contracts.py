@@ -10,9 +10,10 @@ import pytest
 from tests.support.samples import Samples
 
 from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.corpus import CorpusDocument, IngestedDocument
 from tutor_core.domain.models.learner import LearnerHistorySnapshot, LearnerId
 from tutor_core.domain.models.retrieval import (
-    RetrievalQuery,
+    RedactedRetrievalRequest,
     RetrievalResult,
     SourceRef,
 )
@@ -30,6 +31,7 @@ from tutor_core.domain.policy.policy_card import PolicyCard
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_core.domain.ports.corpus_ingestion import CorpusIngestionPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
@@ -38,6 +40,7 @@ from tutor_core.domain.ports.learner_history import LearnerHistoryPort
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
+from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
@@ -67,8 +70,8 @@ class KnowledgeBasePortContract:
         msg = "subclass must supply a KnowledgeBasePort"
         raise NotImplementedError(msg)
 
-    def test_retrieve_returns_a_result(self) -> None:
-        result = self.port().retrieve(Samples().query())
+    async def test_retrieve_returns_a_result(self) -> None:
+        result = await self.port().retrieve(Samples().redacted_request())
         assert isinstance(result, RetrievalResult)
 
 
@@ -208,10 +211,38 @@ class PolicyArtifactPortContract:
         msg = "subclass must supply a PolicyArtifactPort"
         raise NotImplementedError(msg)
 
-    def test_version_matches_the_current_card(self) -> None:
-        card = self.port().current()
+    async def test_version_matches_the_current_card(self) -> None:
+        card = await self.port().current()
         assert isinstance(card, PolicyCard)
-        assert self.port().version() == card.version
+        assert await self.port().version() == card.version
+
+
+class PolicyPublicationPortContract:
+    """Every ``PolicyPublicationPort`` accepts one card."""
+
+    def port(self) -> PolicyPublicationPort:
+        msg = "subclass must supply a PolicyPublicationPort"
+        raise NotImplementedError(msg)
+
+    async def test_publish_accepts_a_card(self) -> None:
+        await self.port().publish(
+            Samples().policy_card(),
+            datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+
+class CorpusIngestionPortContract:
+    """Every ``CorpusIngestionPort`` returns the document it stored."""
+
+    def port(self) -> CorpusIngestionPort:
+        msg = "subclass must supply a CorpusIngestionPort"
+        raise NotImplementedError(msg)
+
+    async def test_ingest_returns_the_document_id(self) -> None:
+        document = Samples().corpus_document()
+        ingested = await self.port().ingest(document)
+        assert isinstance(ingested, IngestedDocument)
+        assert ingested.document_id == document.document_id
 
 
 class ClockPortContract:
@@ -264,7 +295,7 @@ class _Redactor(PiiRedactionPort):
 
 
 class _Knowledge(KnowledgeBasePort):
-    def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
+    async def retrieve(self, request: RedactedRetrievalRequest) -> RetrievalResult:
         return Samples().retrieval()
 
 
@@ -342,11 +373,21 @@ class _Audit(AuditSinkPort):
 
 
 class _Policy(PolicyArtifactPort):
-    def current(self) -> PolicyCard:
+    async def current(self) -> PolicyCard:
         return Samples().policy_card()
 
-    def version(self) -> str:
+    async def version(self) -> str:
         return Samples().policy_card().version
+
+
+class _Publication(PolicyPublicationPort):
+    async def publish(self, card: PolicyCard, effective_from: datetime) -> None:
+        return None
+
+
+class _Corpus(CorpusIngestionPort):
+    async def ingest(self, document: CorpusDocument) -> IngestedDocument:
+        return IngestedDocument(document_id=document.document_id, chunk_ids=())
 
 
 class _Cipher(CipherPort):
@@ -453,6 +494,16 @@ class TestStubPolicyArtifactPort(PolicyArtifactPortContract):
         return _Policy()
 
 
+class TestStubPolicyPublicationPort(PolicyPublicationPortContract):
+    def port(self) -> PolicyPublicationPort:
+        return _Publication()
+
+
+class TestStubCorpusIngestionPort(CorpusIngestionPortContract):
+    def port(self) -> CorpusIngestionPort:
+        return _Corpus()
+
+
 class _CompletedWork(TransactionalWork):
     def __init__(self) -> None:
         self.ran = False
@@ -484,6 +535,13 @@ class _MemoryConnection(TransactionConnection):
         parameters: Mapping[str, object],
     ) -> tuple[object, ...] | None:
         return None
+
+    async def fetch_all(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[tuple[object, ...], ...]:
+        return ()
 
 
 class _MemoryUnitOfWork(UnitOfWorkPort):

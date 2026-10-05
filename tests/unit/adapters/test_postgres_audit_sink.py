@@ -83,7 +83,7 @@ class TestPostgresAuditSink:
         assert parameters["source_support"] is None
         assert len(bound.connection.statements) == 1
         prompt = bound.cipher.decrypt(parameters["learner_prompt_redacted"])
-        assert prompt == record.learner_prompt_redacted.encode("utf-8")
+        assert prompt == record.learner_prompt.text.encode("utf-8")
 
     async def test_a_generated_turn_encrypts_outputs_and_cites_the_chunk(self) -> None:
         bound = BoundSink()

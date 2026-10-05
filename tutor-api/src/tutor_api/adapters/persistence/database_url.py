@@ -1,4 +1,4 @@
-"""Build the URL Alembic connects with from settings. Nothing is read here."""
+"""Build the URLs Alembic and the application connect with. Nothing is read here."""
 
 from urllib.parse import quote
 
@@ -23,14 +23,6 @@ class MigrationDatabaseUrl:
     """
 
     SYNC_DRIVER = "postgresql+psycopg"
-
-    _INTERCHANGEABLE = (
-        "postgresql+asyncpg",
-        "postgresql+psycopg2",
-        "postgresql+psycopg",
-        "postgresql",
-        "postgres",
-    )
 
     def __init__(self, settings: ApplicationSettings) -> None:
         self._settings = settings
@@ -72,8 +64,65 @@ class MigrationDatabaseUrl:
         return value
 
     def _with_sync_driver(self, url: str) -> str:
+        return DriverSwap(self.SYNC_DRIVER).apply(url)
+
+
+class DriverSwap:
+    """Replace a recognised Postgres driver prefix. Others pass through."""
+
+    _INTERCHANGEABLE = (
+        "postgresql+asyncpg",
+        "postgresql+psycopg2",
+        "postgresql+psycopg",
+        "postgresql",
+        "postgres",
+    )
+
+    def __init__(self, driver: str) -> None:
+        self._driver = driver
+
+    def apply(self, url: str) -> str:
+        """Return ``url`` with its driver replaced by this one."""
         for driver in self._INTERCHANGEABLE:
             prefix = f"{driver}://"
             if url.startswith(prefix):
-                return f"{self.SYNC_DRIVER}://{url[len(prefix) :]}"
+                return f"{self._driver}://{url[len(prefix) :]}"
         return url
+
+
+class ApplicationDatabaseUrl:
+    """The async URL the application serves requests with (DEC-0014).
+
+    The application role, not the owner: ``tutor_app`` holds only the grants
+    the request path needs, so a request cannot alter the schema.
+    ``APPLICATION_DATABASE_URL`` wins outright; otherwise the URL is composed
+    from ``POSTGRES_APP_*`` and the shared host, port and database.
+    """
+
+    ASYNC_DRIVER = "postgresql+asyncpg"
+
+    def __init__(self, settings: ApplicationSettings) -> None:
+        self._settings = settings
+
+    def value(self) -> str:
+        """Return the URL, driver normalised to asyncpg."""
+        configured = self._settings.application_database_url
+        if configured:
+            return DriverSwap(self.ASYNC_DRIVER).apply(configured)
+        password = self._required(
+            "POSTGRES_APP_PASSWORD", self._settings.postgres_app_password
+        )
+        database = self._required("POSTGRES_DB", self._settings.postgres_db)
+        return (
+            f"{self.ASYNC_DRIVER}://"
+            f"{quote(self._settings.postgres_app_user, safe='')}:"
+            f"{quote(password, safe='')}"
+            f"@{self._settings.postgres_host}:{self._settings.postgres_port}"
+            f"/{database}"
+        )
+
+    def _required(self, name: str, value: str | None) -> str:
+        if not value:
+            msg = f"{name} is not set. Export it or set APPLICATION_DATABASE_URL."
+            raise ValueError(msg)
+        return value

@@ -8,7 +8,11 @@ from tests.support.sealed_turn import SealedTurn
 
 from tutor_core.domain.audit.chain import ChainVerifier
 from tutor_core.domain.audit.record_hash import AuditRecordHash
-from tutor_core.domain.models.safety import DecodingParams, SourceSupportReport
+from tutor_core.domain.models.safety import (
+    DecodingParams,
+    SourceSupportReport,
+    StoredLearnerPrompt,
+)
 
 
 class AuditedFieldChanges:
@@ -20,8 +24,16 @@ class AuditedFieldChanges:
             ("turn_id", UUID("00000000-0000-4000-8000-000000000099")),
             ("session_id", UUID("00000000-0000-4000-8000-000000000098")),
             ("turn_index", 1),
-            ("learner_prompt_redacted", "niño"),
-            ("redacted_categories", ("name",)),
+            (
+                "learner_prompt",
+                StoredLearnerPrompt(text="niño", redacted_categories=()),
+            ),
+            (
+                "learner_prompt",
+                StoredLearnerPrompt(
+                    text="Where is the library?", redacted_categories=("name",)
+                ),
+            ),
             ("retrieved_context_ids", ()),
             ("model_revision", "c" * 40),
             ("template_version", "tpl-2"),
@@ -78,10 +90,9 @@ class TestAuditRecordHash:
             assert f'"{field}":null' in canonical
         assert "tutor_id" not in canonical
         assert "edited_output" not in canonical
-        assert '"learner_prompt_redacted":"niño"' in AuditRecordHash().canonical(
-            Samples()
-            .stopped_audit_record()
-            .model_copy(update={"learner_prompt_redacted": "niño"})
+        niño = StoredLearnerPrompt(text="niño", redacted_categories=())
+        assert '"text":"niño"' in AuditRecordHash().canonical(
+            Samples().stopped_audit_record().model_copy(update={"learner_prompt": niño})
         )
 
 
@@ -91,7 +102,8 @@ class TestChainVerifier:
         sealed = SealedTurn(hasher).at(
             Samples().stopped_audit_record(), AuditRecordHash.GENESIS
         )
-        tampered = sealed.model_copy(update={"learner_prompt_redacted": "changed"})
+        changed = StoredLearnerPrompt(text="changed", redacted_categories=())
+        tampered = sealed.model_copy(update={"learner_prompt": changed})
         found = ChainVerifier(hasher).find_break((tampered,))
         assert found is not None
         assert found.reason == "tampered"

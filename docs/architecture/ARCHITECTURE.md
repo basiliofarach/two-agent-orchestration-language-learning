@@ -117,7 +117,7 @@ tutor-core/src/tutor_core/           # pure domain + application, no I/O
   domain/
     models/        turn.py · audit.py · retrieval.py · learner.py · safety.py
                    verdict.py · timestamps.py — AwareDatetime (DEC-0010)
-    ports/         fifteen ABCs, one per file (DEC-0001)
+    ports/         seventeen ABCs, one per file (DEC-0001)
     gates/         registry.py + four gate classes
     policy/        policy_card.py — versioned, machine-readable
   application/
@@ -137,6 +137,7 @@ tutor-api/
                                encryption_at_rest.py · aes_gcm_envelope.py (DEC-0012)
                                migration_environment.py · migration_session.py
                                audit_sink.py · knowledge_base.py · learner_history.py
+                               versioned_policy.py
       llm/                     ollama_model.py · local_embedding.py
       checks/                  grammar.py · safety.py · source_support.py · pii_redaction.py
       system_clock.py
@@ -176,12 +177,17 @@ exactly one public method: `prepare` → `Prepared.execute` →
 `ConductTurn`'s execute-handler delegates to the graph in
 `application/turn/`. Gate order is graph placement (DEC-0005). Do not put
 `prepare`, `execute`, and `finalise` on one class. Do not `dispose()` per
-request — the container owns lifetimes (DEC-0013).
+request — the container owns lifetimes (DEC-0013). Within one request,
+`Provide` resolves from one `RequestScope`, so the policy, knowledge base,
+audit sink and unit of work share one `RequestConnection` and retrieval
+commits with its audit row (DEC-0014). Curation ports are not registered.
 
 ## 4. Ports
 
-Fifteen `abc.ABC` interfaces in `domain/ports/`, each defined before its
-implementation (DEC-0001).
+Seventeen `abc.ABC` interfaces in `domain/ports/`, each defined before its
+implementation (DEC-0001). `CorpusIngestionPort` and `PolicyPublicationPort`
+sit beside the read ports they must not be: ingestion is not retrieval, and
+publication is not `current()`.
 
 ### 4.1 Input boundary and retrieval
 
@@ -195,7 +201,7 @@ classDiagram
     }
     class KnowledgeBasePort {
         <<abstract>>
-        +retrieve(query RetrievalQuery) RetrievalResult
+        +retrieve(request RedactedRetrievalRequest) RetrievalResult
     }
     class LearnerHistoryPort {
         <<abstract>>
@@ -206,12 +212,11 @@ classDiagram
         +embed(text str) tuple~float~
     }
 
-    class RegexAndModelRedactor {
+    class RegexPiiRedactor {
         +redact(text) RedactedText
     }
     class PgVectorKnowledgeBase {
-        -allowed_review_status
-        +retrieve(query) RetrievalResult
+        +retrieve(request) RetrievalResult
     }
     class PostgresLearnerHistory {
         -field_allowlist
@@ -221,7 +226,7 @@ classDiagram
         +embed(text) tuple~float~
     }
 
-    PiiRedactionPort <|.. RegexAndModelRedactor
+    PiiRedactionPort <|.. RegexPiiRedactor
     KnowledgeBasePort <|.. PgVectorKnowledgeBase
     LearnerHistoryPort <|.. PostgresLearnerHistory
     EmbeddingPort <|.. LocalEmbedding
@@ -229,9 +234,14 @@ classDiagram
 ```
 
 `PiiRedactionPort` runs at the input boundary, in real time, before the prompt
-reaches any agent or the log (REQ-MINOR). `KnowledgeBasePort` exposes no
-open-web method (REQ-KB). `LearnerHistoryPort` is read-only and allowlist-bound
-(REQ-HISTORY).
+reaches any agent or the log (REQ-MINOR). The types carry that boundary:
+`KnowledgeBasePort.retrieve` takes a `RedactedRetrievalRequest` and
+`TurnAuditRecord.learner_prompt` is a `StoredLearnerPrompt`, built from
+`RedactedText`; neither accepts a raw `str`. `RegexPiiRedactor` is
+pattern-based and finds stated forms only (an email, a phone number, "my
+name is …", "me llamo …", a street address); where a form is ambiguous it
+over-redacts. `KnowledgeBasePort` exposes no open-web method (REQ-KB).
+`LearnerHistoryPort` is read-only and allowlist-bound (REQ-HISTORY).
 
 ### 4.2 Generation and output checks
 
@@ -447,7 +457,7 @@ classDiagram
         +UUID turn_id
         +UUID session_id
         +int turn_index
-        +str learner_prompt_redacted
+        +StoredLearnerPrompt learner_prompt
         +tuple~str~ retrieved_context_ids
         +str model_revision
         +decoding_params
@@ -892,7 +902,7 @@ REQ-HISTORY). The gate count stays at four.
 | REQ-COMP / REQ-ACCURACY refusal | `GeneratedUnit.refused`, `refusal_reason` |
 | REQ-DASH dashboard controls | `app/routes/_base.sessions.$sessionId` |
 | REQ-KB ingestion checklist | `kb_document` |
-| REQ-KB vetted sources only | `PgVectorKnowledgeBase.allowed_review_status` |
+| REQ-KB vetted sources only | `PgVectorKnowledgeBase._RETRIEVE` (`review_status = 'approved'` literal) |
 | REQ-HISTORY minimal schema, data minimisation | `LearnerHistoryPort` field allowlist |
 | REQ-AUDIT prompt, context IDs, model, decoding params | `TurnAuditRecord` |
 | REQ-AUDIT output before and after checks | `output_before_checks`, `output_after_checks` |

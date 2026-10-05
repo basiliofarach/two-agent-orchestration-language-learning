@@ -6,7 +6,19 @@
 adapter-side ABC; `TransactionalWork.run` now receives it, and a domain
 signature cannot name an infrastructure type. `fetch_one` was added the same
 day so an enlisted adapter can read one predecessor row without opening a
-second connection. The port set is otherwise unchanged.
+second connection.
+
+*Amended:* 2026-10-05 ([DEC-0014](0014-one-request-connection.md)) —
+`KnowledgeBasePort.retrieve`, `CorpusIngestionPort.ingest`,
+`PolicyArtifactPort.current`/`version` and `PolicyPublicationPort.publish`
+are async, and `TransactionConnection` gains `fetch_all`, so every
+persistence port enlists in the request's one connection.
+
+*Amended:* 2026-10-05 — `CorpusIngestionPort` and `PolicyPublicationPort`
+added. Retrieval stays read-only and policy selection stays read-only.
+Curation and publication are separate capabilities, so the agent that
+retrieves cannot ingest, and the reader of the policy cannot publish a
+version. The port set is otherwise unchanged.
 
 ## Context
 
@@ -41,6 +53,7 @@ Ports defined before implementation, each traced to the requirement it carries:
 | --- | --- | --- | --- |
 | `PiiRedactionPort` | Redact PII from learner input in real time | Runs at the boundary; nothing downstream sees raw text | REQ-MINOR |
 | `KnowledgeBasePort` | Retrieve vetted educational material | Vetted corpus only; no open web | REQ-KB, REQ-COMP |
+| `CorpusIngestionPort` | Record source, version, and review status | Curation only; no retrieval; no open web; no default review status | REQ-KB |
 | `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist | REQ-HISTORY |
 | `EmbeddingPort` | Text → vector | — | — |
 | `LanguageModelPort` | Prompt → completion | No tool access; no network | REQ-COMP |
@@ -51,10 +64,11 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `OversightGatePort` | One gate in the graph | See DEC-0005 | REQ-GATES |
 | `AuditSinkPort` | Append one immutable turn record | Append-only; no update/delete | REQ-AUDIT |
 | `PolicyArtifactPort` | Supply the versioned machine-readable policy | Read-only; version logged per verdict | REQ-POLICY |
+| `PolicyPublicationPort` | Append one policy version | No update or delete; a changed rule meaning needs a new id | REQ-POLICY |
 | `ClockPort` | Current time | Injected for deterministic replay | — |
 | `CipherPort` | Encrypt / decrypt bytes at the persistence boundary | Bytes only; no domain types; holds no store | REQ-MINOR, DEC-0012 |
 | `UnitOfWorkPort` | One transaction for a turn's writes | Adapters enlist; they do not open a connection | REQ-AUDIT, DEC-0006 |
-| `TransactionConnection` | Commit, rollback, close, execute, and fetch one row on the enlisted transaction | No connect, no engine, no cursor; a holder cannot open a second transaction | REQ-AUDIT, DEC-0006 |
+| `TransactionConnection` | Commit, rollback, close, execute, and fetch one row or all rows on the enlisted transaction | No connect, no engine, no cursor; a holder cannot open a second transaction | REQ-AUDIT, DEC-0006 |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
 takes an explicit field allowlist at construction. `LanguageModelPort` is handed

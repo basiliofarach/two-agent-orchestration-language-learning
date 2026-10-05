@@ -89,3 +89,71 @@ class TestConcurrentResolution:
             resolved = list(pool.map(lambda _: container.resolve(PolicyCard), range(8)))
         assert provider.created == 1
         assert len({id(item) for item in resolved}) == 1
+
+
+class Connection:
+    """Stands in for the request's enlisted connection."""
+
+
+class Holder:
+    """A request-scoped consumer that keeps what it was handed."""
+
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+
+class HolderProvider(StubProvider):
+    def __init__(self, provided: type) -> None:
+        super().__init__(provided, Lifetime.REQUEST, (Connection,))
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return Holder(resolved[Connection])
+
+
+class KnowledgeHolder(Holder):
+    pass
+
+
+class AuditHolder(Holder):
+    pass
+
+
+class TestRequestScope:
+    def _container(self) -> Container:
+        return Container(
+            (
+                StubProvider(Connection, Lifetime.REQUEST),
+                StubProvider(PolicyCard, Lifetime.SINGLETON),
+                HolderProvider(KnowledgeHolder),
+                HolderProvider(AuditHolder),
+            )
+        )
+
+    def test_a_request_object_is_built_once_per_scope(self) -> None:
+        scope = self._container().scope()
+        assert scope.resolve(Connection) is scope.resolve(Connection)
+
+    def test_two_consumers_in_one_scope_share_the_connection(self) -> None:
+        """Retrieval and the audit sink must enlist in one transaction."""
+        scope = self._container().scope()
+        knowledge = scope.resolve(KnowledgeHolder)
+        audit = scope.resolve(AuditHolder)
+        assert isinstance(knowledge, Holder)
+        assert isinstance(audit, Holder)
+        assert knowledge.connection is audit.connection
+        assert knowledge.connection is scope.resolve(Connection)
+
+    def test_two_scopes_share_no_request_object(self) -> None:
+        """One learner's request never sees another's connection."""
+        container = self._container()
+        assert container.scope().resolve(Connection) is not container.scope().resolve(
+            Connection
+        )
+
+    def test_a_singleton_is_shared_across_scopes(self) -> None:
+        container = self._container()
+        assert container.scope().resolve(PolicyCard) is container.resolve(PolicyCard)
+
+    def test_an_unregistered_type_is_refused_in_a_scope(self) -> None:
+        with pytest.raises(UnregisteredDependency):
+            Container(()).scope().resolve(PolicyCard)

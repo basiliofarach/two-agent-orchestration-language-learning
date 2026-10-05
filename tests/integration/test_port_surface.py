@@ -45,13 +45,13 @@ class PublicClasses:
 class TestPortSurface:
     def test_port_modules_are_abstract(self) -> None:
         modules = PortModules().load()
-        assert len(modules) == 15
+        assert len(modules) == 17
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        # 15 modules, 17 classes: unit_of_work.py declares the port, the
+        # 17 modules, 19 classes: unit_of_work.py declares the port, the
         # work that enlists in it, and the connection that work is given.
-        assert len(classes) == 17
+        assert len(classes) == 19
         for cls in classes:
             assert issubclass(cls, ABC)
             assert cls.__abstractmethods__

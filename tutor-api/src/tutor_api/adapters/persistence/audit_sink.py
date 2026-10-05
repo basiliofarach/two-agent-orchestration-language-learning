@@ -147,8 +147,10 @@ class PostgresAuditSink(AuditSinkPort):
             "turn_id": record.turn_id,
             "session_id": record.session_id,
             "turn_index": record.turn_index,
-            "learner_prompt_redacted": self._text(payload["learner_prompt_redacted"]),
-            "redacted_categories": self._json(payload["redacted_categories"]),
+            "learner_prompt_redacted": self._text(payload["learner_prompt"]["text"]),
+            "redacted_categories": self._json(
+                payload["learner_prompt"]["redacted_categories"]
+            ),
             "model_revision": record.model_revision,
             "template_version": self._optional_text(payload["template_version"]),
             "decoding_params": self._optional_json(payload["decoding_params"]),

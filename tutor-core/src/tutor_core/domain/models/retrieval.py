@@ -5,14 +5,29 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tutor_core.domain.models.safety import RedactedText
 
-class RetrievalQuery(BaseModel):
-    """Text the knowledge base may search. There is no URL and no web query."""
+
+class RedactedRetrievalRequest(BaseModel):
+    """Retrieval the pipeline may run. The prompt is already redacted.
+
+    Downstream of the input boundary the signature takes ``RedactedText``,
+    not a raw learner string (REQ-MINOR). The knowledge base searches this
+    text. There is no URL and no web query.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    text: str = Field(min_length=1)
+    prompt: RedactedText
     limit: int = Field(default=5, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def prompt_has_text(self) -> Self:
+        """An empty prompt is not a query."""
+        if not self.prompt.text:
+            msg = "retrieval request has no text"
+            raise ValueError(msg)
+        return self
 
 
 class SourceRef(BaseModel):

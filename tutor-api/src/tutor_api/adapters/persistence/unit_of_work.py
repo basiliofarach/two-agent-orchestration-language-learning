@@ -45,6 +45,14 @@ class SqlAlchemyConnection(TransactionConnection):
             return None
         return tuple(row)
 
+    async def fetch_all(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[tuple[object, ...], ...]:
+        result = await self._connection.execute(text(statement), dict(parameters))
+        return tuple(tuple(row) for row in result.all())
+
 
 class SqlAlchemyUnitOfWork(UnitOfWorkPort):
     """Run enlisted work and close the connection either way."""
