@@ -172,7 +172,8 @@ class, then the router if the unit is reached over HTTP.
 chain**, not a domain port and not the gate chain. Each stage type exposes
 exactly one public method: `prepare` → `Prepared.execute` →
 `Executed.finalise`. Only `finalise` returns `TResult`. The router writes
-`service.prepare(body).execute().finalise()`.
+`(await service.prepare(body).execute()).finalise()` (DEC-0011, amended:
+`execute` is async).
 
 `ConductTurn`'s execute-handler delegates to the graph in
 `application/turn/`. Gate order is graph placement (DEC-0005). Do not put
@@ -242,6 +243,12 @@ pattern-based and finds stated forms only (an email, a phone number, "my
 name is …", "me llamo …", a street address); where a form is ambiguous it
 over-redacts. `KnowledgeBasePort` exposes no open-web method (REQ-KB).
 `LearnerHistoryPort` is read-only and allowlist-bound (REQ-HISTORY).
+`read(learner_id, requested)` is async: the adapter selects on the request's
+connection (DEC-0014), and only the fields the turn requested — the ones the
+permission gate judged. A requested field outside the allowlist raises. The
+database grant is column-level, so `learner.pseudonym` is not selectable by
+the application role. A learner whose `retain_until` has passed yields an
+empty snapshot before any history column is selected.
 
 ### 4.2 Generation and output checks
 
@@ -273,7 +280,7 @@ classDiagram
     }
     class SourceSupportPort {
         <<abstract>>
-        +verify(draft str, sources) SourceSupportReport
+        +verify(draft str, snippets) SourceSupportReport
     }
 
     class OllamaLanguageModel {
@@ -286,33 +293,40 @@ classDiagram
         -tone_constraints
         +render(task, context, history) RenderedPrompt
     }
-    class LanguageToolGrammar {
+    class PatternGrammarCheck {
         +check(text) tuple~GrammarFinding~
     }
-    class RuleAndModelClassifier {
+    class CategorySafetyClassifier {
         +classify(text) tuple~SafetyFlag~
     }
-    class ClaimSpanVerifier {
-        +verify(draft, sources) SourceSupportReport
+    class OverlapSourceSupport {
+        +verify(draft, snippets) SourceSupportReport
     }
 
     LanguageModelPort <|.. OllamaLanguageModel
     PromptTemplatePort <|.. FixedPromptTemplate
-    GrammarCheckPort <|.. LanguageToolGrammar
-    SafetyClassifierPort <|.. RuleAndModelClassifier
-    SourceSupportPort <|.. ClaimSpanVerifier
+    GrammarCheckPort <|.. PatternGrammarCheck
+    SafetyClassifierPort <|.. CategorySafetyClassifier
+    SourceSupportPort <|.. OverlapSourceSupport
 ```
 
 `SourceSupportPort` implements REQ-ACCURACY's hallucination control: it verifies
-that key claims in a generated explanation are supported by retrieved sources
-and **flags unsupported spans for human review** rather than silently removing
-them.
+that key claims in a generated explanation are supported by the retrieved
+snippets and **flags unsupported spans for human review** rather than silently
+removing them. `verify` takes snippets because a `SourceRef` carries the URI
+and not the passage.
 
-`LanguageModelPort` takes a prompt and returns text. It has no retrieval method
-and no HTTP client, so a prompt-injected instruction to fetch external content
-has no reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications,
+`LanguageModelPort` takes a prompt and returns text. `complete` is async so
+the local runtime call does not block the event loop. It has no retrieval
+method, so a prompt-injected instruction to fetch external content has no
+reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications,
 tool-scoping). `revision()` supplies the pinned SHA written into every audit
 record.
+
+`PatternGrammarCheck` and `CategorySafetyClassifier` report findings from
+fixed patterns. A library grammar checker would move with its own release and
+break replay. `OverlapSourceSupport` marks a sentence supported when its
+normalised text overlaps a snippet.
 
 `FixedPromptTemplate` carries the tone constraints and target proficiency level;
 `template_version()` is logged, because REQ-ACCURACY treats prompt formulation

@@ -12,12 +12,13 @@ class MigrationSession:
     """Run schema statements on the Alembic connection."""
 
     def install_guard(self) -> None:
-        EncryptionAtRestSchema().install(self._driver())
+        EncryptionAtRestSchema().install(self.driver())
 
     def execute(self, statements: tuple[str, ...]) -> None:
         for statement in statements:
             op.execute(statement)
 
-    def _driver(self) -> psycopg.Connection:
+    def driver(self) -> psycopg.Connection:
+        """The psycopg connection Alembic is migrating on."""
         bind = op.get_bind()
         return cast(psycopg.Connection, bind.connection.driver_connection)

@@ -12,8 +12,51 @@ from tutor_core.domain.models.safety import (
     StoredLearnerPrompt,
 )
 from tutor_core.domain.models.timestamps import AwareDatetime
+from tutor_core.domain.models.verdict import GateStage
 
 TutorAction = Literal["approve", "edit", "override", "stop"]
+
+GateOutcome = Literal["pass", "pause", "stop", "not_evaluated"]
+
+# REQ-GATES order. A record's evaluations follow it, one row per gate.
+GATE_ORDER: tuple[GateStage, ...] = (
+    "context_and_permission",
+    "conflict_and_ambiguity",
+    "sensitivity_and_high_stakes",
+    "drift_and_anomaly",
+)
+
+
+class ChainHead(BaseModel):
+    """Where the next record in one session's chain attaches (REQ-AUDIT).
+
+    ``previous_record_hash`` is the latest record's digest, or the genesis
+    value for an empty session. ``turn_index`` is the index the next record
+    must carry.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    previous_record_hash: str = Field(min_length=1)
+    turn_index: int = Field(ge=0)
+
+
+class GateEvaluation(BaseModel):
+    """One gate's row in ``gate_evaluation`` (REQ-GATES, REQ-AUDIT).
+
+    The log distinguishes *checked and passed* (``pass``), *checked and
+    fired* (``pause`` or ``stop``) and *not reached* (``not_evaluated``).
+    A gate that was not reached cites the rule of the verdict that halted
+    the turn before it, so every row names the policy that explains it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    gate_name: GateStage
+    decision: GateOutcome
+    reason: str = Field(min_length=1)
+    policy_rule_id: str = Field(min_length=1)
+    evaluated_at: AwareDatetime
 
 
 class HumanAction(BaseModel):
@@ -50,6 +93,7 @@ class TurnAuditRecord(BaseModel):
     ``recorded_at`` is supplied by the caller from ``ClockPort``.
 
     ``session_id`` and ``turn_index`` place the record in one session chain.
+    ``gate_evaluations`` are the four gate rows, in the hash with the turn.
     ``retrieved_context_ids`` are ``Snippet.chunk_id`` values, the same
     identifiers ``turn_citation.chunk_id`` stores. Generation fields are
     absent together when the model did not run. That absence is stored as
@@ -74,6 +118,7 @@ class TurnAuditRecord(BaseModel):
     refused: bool | None = None
     safety_flags: tuple[SafetyFlag, ...] | None = None
     source_support: SourceSupportReport | None = None
+    gate_evaluations: tuple[GateEvaluation, ...] = ()
     policy_version: str = Field(min_length=1)
     previous_record_hash: str = Field(min_length=1)
     record_hash: str = Field(min_length=1)
@@ -96,5 +141,20 @@ class TurnAuditRecord(BaseModel):
             field is not None for field in fields
         ):
             msg = "a turn the model never ran carries no model revision and no outputs"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def one_evaluation_per_gate(self) -> Self:
+        """Either no gate rows, or all four in REQ-GATES order.
+
+        Records sealed before gate rows existed carry none. A turn that ran
+        the graph carries four: none is silently missing.
+        """
+        if not self.gate_evaluations:
+            return self
+        names = tuple(row.gate_name for row in self.gate_evaluations)
+        if names != GATE_ORDER:
+            msg = "gate evaluations must name each gate once, in REQ-GATES order"
             raise ValueError(msg)
         return self

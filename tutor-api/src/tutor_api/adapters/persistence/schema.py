@@ -1,6 +1,12 @@
 """Non-audit tables (BE-05) and the append-only audit tables (BE-06)."""
 
 import re
+from collections.abc import Callable
+
+import psycopg
+
+from tutor_api.adapters.persistence.learner_history import HistoryOutcomeCodec
+from tutor_core.domain.ports.cipher import CipherPort
 
 
 class ApplicationRole:
@@ -780,4 +786,117 @@ class RequestPathPrivileges:
         role = self._role.identifier()
         return tuple(
             f"REVOKE SELECT ON TABLE {table} FROM {role}" for table in self._TABLES
+        )
+
+
+class LearnerHistoryColumnGrant:
+    """SELECT on exactly the history columns a read needs (REQ-HISTORY).
+
+    Column-level, not table-level: the application role can select
+    ``learner_id``, ``retain_until`` and ``proficiency_level`` from
+    ``learner``, and nothing else there. ``pseudonym`` stays unreadable to
+    the request path even if an adapter were changed to select it. The
+    Python allowlist narrows a read further; this grant is the floor the
+    database enforces.
+
+    ``REVOKE ALL ON TABLE`` does not remove column privileges, so the
+    downgrade revokes the columns by name.
+    """
+
+    _COLUMNS = (
+        ("learner", ("learner_id", "retain_until", "proficiency_level")),
+        ("learner_history_event", ("learner_id", "item_id", "correct", "occurred_at")),
+    )
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Revoke table privileges, then grant SELECT on the named columns."""
+        role = self._role.identifier()
+        granted: list[str] = []
+        for table, columns in self._COLUMNS:
+            granted.append(f"REVOKE ALL ON TABLE {table} FROM PUBLIC, {role}")
+            granted.append(
+                f"GRANT SELECT ({', '.join(columns)}) ON TABLE {table} TO {role}"
+            )
+        return tuple(granted)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Revoke the column grants. The tables stay."""
+        role = self._role.identifier()
+        return tuple(
+            f"REVOKE SELECT ({', '.join(columns)}) ON TABLE {table} FROM {role}"
+            for table, columns in self._COLUMNS
+        )
+
+
+class HistoryOutcomeEncryption:
+    """Convert ``learner_history_event.correct`` from boolean to ciphertext.
+
+    In place, without losing an outcome: a sealed column is added, each row's
+    outcome is sealed by the application (DEC-0012 — the database never holds
+    the key), and the boolean column is dropped only after every row has its
+    sealed value. The outcome is sealed as one byte, so the two outcomes
+    cannot be told apart by ciphertext length (``HistoryOutcomeCodec``).
+
+    ``cipher`` is called only when there are rows to convert, so a fresh
+    database upgrades without a key. The downgrade reverses it the same way.
+    """
+
+    def upgrade(
+        self,
+        connection: psycopg.Connection,
+        cipher: Callable[[], CipherPort],
+        outcomes: HistoryOutcomeCodec,
+    ) -> None:
+        """Seal every boolean outcome, then replace the column."""
+        connection.execute(
+            "ALTER TABLE learner_history_event ADD COLUMN correct_sealed ciphertext"
+        )
+        rows = connection.execute(
+            "SELECT id, correct FROM learner_history_event"
+        ).fetchall()
+        if rows:
+            sealer = cipher()
+            for row_id, correct in rows:
+                connection.execute(
+                    "UPDATE learner_history_event "
+                    "SET correct_sealed = %s WHERE id = %s",
+                    (sealer.encrypt(outcomes.encode(bool(correct))), row_id),
+                )
+        connection.execute(
+            "ALTER TABLE learner_history_event ALTER COLUMN correct_sealed SET NOT NULL"
+        )
+        connection.execute("ALTER TABLE learner_history_event DROP COLUMN correct")
+        connection.execute(
+            "ALTER TABLE learner_history_event RENAME COLUMN correct_sealed TO correct"
+        )
+
+    def downgrade(
+        self,
+        connection: psycopg.Connection,
+        cipher: Callable[[], CipherPort],
+        outcomes: HistoryOutcomeCodec,
+    ) -> None:
+        """Open every sealed outcome, then restore the boolean column."""
+        connection.execute(
+            "ALTER TABLE learner_history_event ADD COLUMN correct_plain boolean"
+        )
+        rows = connection.execute(
+            "SELECT id, correct FROM learner_history_event"
+        ).fetchall()
+        if rows:
+            opener = cipher()
+            for row_id, sealed in rows:
+                connection.execute(
+                    "UPDATE learner_history_event SET correct_plain = %s WHERE id = %s",
+                    (outcomes.decode(opener.decrypt(bytes(sealed))), row_id),
+                )
+        connection.execute(
+            "ALTER TABLE learner_history_event ALTER COLUMN correct_plain SET NOT NULL"
+        )
+        connection.execute("ALTER TABLE learner_history_event DROP COLUMN correct")
+        connection.execute(
+            "ALTER TABLE learner_history_event RENAME COLUMN correct_plain TO correct"
         )

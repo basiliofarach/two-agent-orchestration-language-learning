@@ -7,7 +7,14 @@ REPO := $(abspath ..)
 # prek and CI all resolve. Do not relocate it per-member.
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
-	lint-migrations
+	lint-migrations migrate seed serve
+
+# Source roots are explicit: macOS marks .venv files hidden and Python
+# >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
+SRC := PYTHONPATH="$(REPO)/tutor-core/src:$(CURDIR)/src"
+# `--project` keeps this directory as the working directory, so
+# ApplicationSettings finds tutor-api/.env (`--directory` would not).
+RUN := $(SRC) $(UV) run --project "$(REPO)"
 
 help:
 	@echo "Backend commands (cwd must be tutor-api):"
@@ -18,8 +25,9 @@ help:
 	@echo "  make check         prek hooks + pytest"
 	@echo "  make lint-migrations  ruff --fix + format over alembic/versions"
 	@echo "  make smoke-model   local Ollama completion (SHA-pinned)"
-	@echo "HTTP serve is not in this phase. After the API ticket:"
-	@echo "  $(UV) run uvicorn tutor_api.main:app --reload --host 127.0.0.1 --port 8000"
+	@echo "  make migrate       apply every Alembic revision, as the owner role"
+	@echo "  make seed          publish the policy card, ingest the demo KB, enrol a learner"
+	@echo "  make serve         the API on http://127.0.0.1:8000 (docs at /docs)"
 
 sync:
 	$(UV) --directory "$(REPO)" sync --frozen --group dev
@@ -45,7 +53,16 @@ check: sync
 	$(UV) --directory "$(REPO)" run pytest
 
 up:
-	docker compose up -d postgres
+	docker compose up -d --wait postgres
+
+migrate:
+	$(RUN) alembic upgrade head
+
+seed:
+	$(RUN) python -m tutor_api.curation.prototype_seed
+
+serve:
+	$(RUN) tutor-api
 
 down:
 	docker compose down

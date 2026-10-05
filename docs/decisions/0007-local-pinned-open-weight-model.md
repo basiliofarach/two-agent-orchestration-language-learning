@@ -2,6 +2,14 @@
 
 *Status:* Accepted · *Date:* 2026-09-18
 
+*Amended:* 2026-10-06 — `/api/tags` reports a *manifest* digest, not the
+weights. The adapter resolves the model name whose modelfile `FROM` line
+names the pinned weights blob (`/api/show`), generates, then reads that
+name's weights again; a name repointed in between fails the turn. The pin is
+located through `MODEL_PIN_PATH`, not inferred from the package's install
+location. The residual gap: Ollama generates by name, so the check brackets
+generation rather than binding it.
+
 ## Context
 
 The Content Generation Agent needs one LLM. Constraints:
@@ -27,7 +35,10 @@ snippets plus minimal history, on the order of thousands of tokens.
 
 The model is pinned by **commit SHA, never by tag**, and that SHA is written
 into every `TurnAuditRecord` (DEC-0002). A tag can be repointed; a SHA cannot.
-The audit log therefore states exactly which weights produced each output.
+The name sent to the local runtime is whichever installed model digest
+contains that SHA. The audit log therefore states exactly which weights
+produced each output. `complete` is async (DEC-0014); `revision()` does not
+contact the runtime.
 
 ## Consequences
 

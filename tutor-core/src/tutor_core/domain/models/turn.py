@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from tutor_core.domain.models.learner import LearnerHistorySnapshot, LearnerId
 from tutor_core.domain.models.retrieval import RetrievalResult
 from tutor_core.domain.models.safety import GeneratedUnit, RedactedText, SafetyFlag
 
@@ -14,13 +15,23 @@ class TurnState(BaseModel):
     ``extra="forbid"`` still applies. This model is not frozen: immutability
     belongs to the audit record written from a snapshot, not to the in-flight
     object (ARCHITECTURE §5, DEC-0010).
+
+    ``requested_history_fields`` and ``requires_unvetted_source`` are set
+    when the turn is prepared, before any read. The permission gate judges
+    them; retrieval then reads exactly the requested fields (REQ-GATES,
+    REQ-HISTORY). ``retrieved`` and ``history`` are written by the retrieval
+    node, ``generated`` and ``safety_flags`` by the generation node.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     turn_id: UUID
     session_id: UUID
+    learner_id: LearnerId
     learner_prompt: RedactedText | None = None
+    requested_history_fields: tuple[str, ...] = ()
+    requires_unvetted_source: bool = False
     retrieved: RetrievalResult | None = None
+    history: LearnerHistorySnapshot | None = None
     generated: GeneratedUnit | None = None
     safety_flags: tuple[SafetyFlag, ...] = ()

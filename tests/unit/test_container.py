@@ -6,21 +6,45 @@ from uuid import UUID
 
 import pytest
 from pydantic import SecretStr, ValidationError
+from tests.support.repository import RepositoryPaths
 
 from tutor_api.container import ApplicationContainer, SettingsProvider
-from tutor_api.di.container import Container
+from tutor_api.di.container import Container, RequestScope
 from tutor_api.di.lifetime import Lifetime, UnregisteredDependency
 from tutor_api.routers.health import HealthStatus
 from tutor_api.settings import ApplicationSettings
+from tutor_core.application.agents.generation import GenerationAgent
+from tutor_core.application.agents.retrieval import RetrievalAgent
+from tutor_core.application.services.conduct_turn import (
+    ConductTurn,
+    ExecuteTurn,
+    FinaliseTurn,
+    PrepareTurn,
+)
+from tutor_core.application.turn.guarded_generation import GenerationGuard
+from tutor_core.application.turn.guarded_retrieval import RetrievalGuard
+from tutor_core.application.turn.orchestrator import TurnOrchestrator
+from tutor_core.application.turn.record import TurnRecordBuilder
+from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
+from tutor_core.domain.gates.context_permission import ContextPermissionGate
+from tutor_core.domain.gates.drift import DriftAnomalyGate
+from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
+from tutor_core.domain.models.learner import HistoryFieldSet
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.corpus_ingestion import CorpusIngestionPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
+from tutor_core.domain.ports.grammar_check import GrammarCheckPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
+from tutor_core.domain.ports.language_model import LanguageModelPort
+from tutor_core.domain.ports.learner_history import LearnerHistoryPort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
+from tutor_core.domain.ports.prompt_template import PromptTemplatePort
+from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
+from tutor_core.domain.ports.source_support import SourceSupportPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
 
 
@@ -44,6 +68,7 @@ class Configured:
             "postgres_app_password": "app-secret",
             "tutor_kek": SecretStr(base64.b64encode(bytes(range(32))).decode()),
             "tutor_kek_id": UUID(int=1),
+            "model_pin_path": RepositoryPaths().root() / "config" / "runtime.toml",
         }
         return ApplicationSettings(_env_file=None, **{**defaults, **values})  # type: ignore[arg-type]
 
@@ -150,6 +175,68 @@ class TestRequestPathRegistration:
         cipher = Configured().container().resolve(CipherPort)
         assert isinstance(cipher, CipherPort)
         assert cipher.decrypt(cipher.encrypt(b"hola")) == b"hola"
+
+
+class TestTurnPathRegistration:
+    def _scope(self) -> RequestScope:
+        return (
+            Configured()
+            .container(
+                history_fields="proficiency_level,events",
+                conflict_confidence_threshold=0.5,
+            )
+            .scope()
+        )
+
+    @pytest.mark.parametrize(
+        "port",
+        [
+            LearnerHistoryPort,
+            ContextPermissionGate,
+            ConflictAmbiguityGate,
+            RetrievalAgent,
+            RetrievalGuard,
+            PromptTemplatePort,
+            LanguageModelPort,
+            GrammarCheckPort,
+            SafetyClassifierPort,
+            SourceSupportPort,
+            GenerationAgent,
+            GenerationGuard,
+            SensitivityHighStakesGate,
+            DriftAnomalyGate,
+            TurnOrchestrator,
+            TurnRecordBuilder,
+            PrepareTurn,
+            ExecuteTurn,
+            FinaliseTurn,
+            ConductTurn,
+        ],
+    )
+    def test_the_turn_path_resolves(self, port: type) -> None:
+        scope = self._scope()
+        assert isinstance(scope.resolve(port), port)
+
+    def test_an_unset_history_allowlist_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="HISTORY_FIELDS"):
+            Configured().container().scope().resolve(LearnerHistoryPort)
+
+    def test_an_unset_model_pin_is_refused(self) -> None:
+        container = Configured().container(model_pin_path=None)
+        with pytest.raises(ValueError, match="MODEL_PIN_PATH"):
+            container.resolve(LanguageModelPort)
+
+    def test_the_gate_and_the_history_read_share_one_field_set(self) -> None:
+        scope = self._scope()
+        assert scope.resolve(HistoryFieldSet) is scope.resolve(HistoryFieldSet)
+        assert scope.resolve(HistoryFieldSet) == HistoryFieldSet(
+            fields=("proficiency_level", "events")
+        )
+
+    def test_an_unset_conflict_threshold_is_refused(self) -> None:
+        container = Configured().container(history_fields="proficiency_level")
+        with pytest.raises(ValueError, match="CONFLICT_CONFIDENCE_THRESHOLD"):
+            container.scope().resolve(ConflictAmbiguityGate)
 
 
 class TestHealthStatus:

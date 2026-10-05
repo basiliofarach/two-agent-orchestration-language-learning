@@ -11,7 +11,9 @@ class OversightGatePort(ABC):
 
     Scope boundary: ``name()`` and ``evaluate(turn) -> GateVerdict``. A gate
     returns a verdict and has no write path. It must not assign to the
-    mutable ``TurnState`` it receives (DEC-0010).
+    mutable ``TurnState`` it receives (DEC-0010). ``evaluate`` is async
+    because a verdict's ``policy_rule_id`` is resolved from the policy card
+    on the turn's connection (DEC-0014).
     """
 
     @abstractmethod
@@ -20,6 +22,6 @@ class OversightGatePort(ABC):
         raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
-    def evaluate(self, turn: TurnState) -> GateVerdict:
+    async def evaluate(self, turn: TurnState) -> GateVerdict:
         """Judge ``turn`` and return a verdict. Do not modify ``turn``."""
         raise NotImplementedError  # pragma: no cover

@@ -2,6 +2,15 @@
 
 *Status:* Accepted · *Date:* 2026-09-18
 
+*Amended:* 2026-10-06 — Implemented as `LangGraphTurnOrchestrator`. Nodes:
+permission-then-retrieval, conflict-then-generation, sensitivity, drift. A
+conditional edge after each node ends the graph on any non-pass verdict, so
+the order is the graph's edges. The turn and its four gate rows are written
+once, at the end, in one transaction (ARCHITECTURE §8.2), not one record per
+transition. **Not yet implemented:** the checkpointer and `interrupt`, and
+checkpoint identifiers on the audit record. Human review currently starts
+from the held turn the API returns.
+
 ## Context
 
 DEC-0005 and [ARCHITECTURE.md

@@ -129,8 +129,8 @@ produce identical ciphertexts and equality is not leaked.
 | `turn_audit` | `output_before_checks` | Content addressed to an identified minor |
 | `turn_audit` | `output_after_checks` | As above |
 | `human_action` | `edited_output` | As above, plus tutor attribution. The action is its own row, so this text is not written by updating `turn_audit`. |
-| `learner_history` | `proficiency_level` | Assessment of a named minor |
-| `learner_history` | item outcomes | Per-learner performance record |
+| `learner` | `proficiency_level` | Assessment of a named minor |
+| `learner_history_event` | `item_id`, `correct` | Per-learner performance. `correct` is ciphertext: a boolean outcome is personal data, and the plaintext-column trigger does not watch booleans. It is sealed as one byte (`0x01`/`0x00`): AES-GCM preserves length, so sealing `"true"`/`"false"` would reveal the outcome by ciphertext size. Revision `b7e2c4a91d08` converts existing rows in place. |
 
 ### Exempt, with reasons — this list is the whole exemption set
 

@@ -5,6 +5,7 @@ import pytest
 from tutor_api.adapters.persistence.schema import (
     ApplicationRole,
     AuditSchema,
+    LearnerHistoryColumnGrant,
     RequestPathPrivileges,
 )
 from tutor_api.settings import ApplicationSettings
@@ -74,3 +75,30 @@ class TestRequestPathPrivileges:
             'REVOKE SELECT ON TABLE kb_chunk FROM "audit_writer"',
         )
         assert all("DROP" not in statement for statement in statements)
+
+
+class TestLearnerHistoryColumnGrant:
+    def test_grants_select_on_named_columns_and_never_the_pseudonym(self) -> None:
+        statements = LearnerHistoryColumnGrant(
+            ApplicationRole("audit_writer")
+        ).statements()
+        assert statements == (
+            'REVOKE ALL ON TABLE learner FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (learner_id, retain_until, proficiency_level) "
+            'ON TABLE learner TO "audit_writer"',
+            'REVOKE ALL ON TABLE learner_history_event FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (learner_id, item_id, correct, occurred_at) "
+            'ON TABLE learner_history_event TO "audit_writer"',
+        )
+        assert all("pseudonym" not in statement for statement in statements)
+
+    def test_downgrade_revokes_the_columns_by_name(self) -> None:
+        downgrade = LearnerHistoryColumnGrant(
+            ApplicationRole("audit_writer")
+        ).downgrade_statements()
+        assert downgrade == (
+            "REVOKE SELECT (learner_id, retain_until, proficiency_level) "
+            'ON TABLE learner FROM "audit_writer"',
+            "REVOKE SELECT (learner_id, item_id, correct, occurred_at) "
+            'ON TABLE learner_history_event FROM "audit_writer"',
+        )

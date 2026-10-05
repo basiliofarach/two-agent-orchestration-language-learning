@@ -98,8 +98,9 @@ class TestPortInstantiation:
 
 
 class TestPortMethodSurface:
-    def test_audit_sink_declares_append_only(self) -> None:
-        assert AuditSinkPort.__abstractmethods__ == frozenset({"append"})
+    def test_audit_sink_declares_append_and_a_read_of_the_head_only(self) -> None:
+        # No update, no delete, no upsert: the head read is the only addition.
+        assert AuditSinkPort.__abstractmethods__ == frozenset({"append", "head"})
 
     def test_language_model_exposes_complete_and_revision_only(self) -> None:
         assert LanguageModelPort.__abstractmethods__ == frozenset(
@@ -121,6 +122,9 @@ class TestPortMethodSurface:
             PolicyArtifactPort.current,
             PolicyArtifactPort.version,
             PolicyPublicationPort.publish,
+            LearnerHistoryPort.read,
+            OversightGatePort.evaluate,
+            LanguageModelPort.complete,
         ):
             assert inspect.iscoroutinefunction(method), method.__qualname__
 

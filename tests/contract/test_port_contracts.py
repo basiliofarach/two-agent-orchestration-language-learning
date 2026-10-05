@@ -9,13 +9,17 @@ from uuid import UUID
 import pytest
 from tests.support.samples import Samples
 
-from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.audit import ChainHead, TurnAuditRecord
 from tutor_core.domain.models.corpus import CorpusDocument, IngestedDocument
-from tutor_core.domain.models.learner import LearnerHistorySnapshot, LearnerId
+from tutor_core.domain.models.learner import (
+    HistoryFieldSet,
+    LearnerHistorySnapshot,
+    LearnerId,
+)
 from tutor_core.domain.models.retrieval import (
     RedactedRetrievalRequest,
     RetrievalResult,
-    SourceRef,
+    Snippet,
 )
 from tutor_core.domain.models.safety import (
     GrammarFinding,
@@ -85,8 +89,9 @@ class LearnerHistoryPortContract:
     def learner_id(self) -> LearnerId:
         return Samples().learner_id()
 
-    def test_read_returns_that_learners_snapshot(self) -> None:
-        snapshot = self.port().read(self.learner_id())
+    async def test_read_returns_that_learners_snapshot(self) -> None:
+        requested = HistoryFieldSet(fields=("proficiency_level",))
+        snapshot = await self.port().read(self.learner_id(), requested)
         assert isinstance(snapshot, LearnerHistorySnapshot)
         assert snapshot.learner_id == self.learner_id()
 
@@ -112,8 +117,8 @@ class LanguageModelPortContract:
         msg = "subclass must supply a LanguageModelPort"
         raise NotImplementedError(msg)
 
-    def test_complete_and_revision_agree(self) -> None:
-        completion = self.port().complete(Samples().rendered_prompt())
+    async def test_complete_and_revision_agree(self) -> None:
+        completion = await self.port().complete(Samples().rendered_prompt())
         assert isinstance(completion, ModelCompletion)
         assert self.port().revision() == completion.model_revision
 
@@ -169,7 +174,7 @@ class SourceSupportPortContract:
         raise NotImplementedError(msg)
 
     def test_verify_returns_supported_and_unsupported(self) -> None:
-        report = self.port().verify("Hola means hello.", (Samples().source(),))
+        report = self.port().verify("Hola means hello.", (Samples().snippet(),))
         assert isinstance(report, SourceSupportReport)
         assert isinstance(report.supported, tuple)
         assert isinstance(report.unsupported, tuple)
@@ -182,10 +187,10 @@ class OversightGatePortContract:
         msg = "subclass must supply an OversightGatePort"
         raise NotImplementedError(msg)
 
-    def test_evaluate_returns_a_verdict_without_mutating_the_turn(self) -> None:
+    async def test_evaluate_returns_a_verdict_without_mutating_the_turn(self) -> None:
         turn = Samples().turn()
         before = turn.model_dump()
-        verdict = self.port().evaluate(turn)
+        verdict = await self.port().evaluate(turn)
         assert isinstance(verdict, GateVerdict)
         assert verdict.decision in {"pass", "pause", "stop"}
         assert turn.model_dump() == before
@@ -202,6 +207,10 @@ class AuditSinkPortContract:
         record = Samples().audit_record()
         assert isinstance(record, TurnAuditRecord)
         assert await self.port().append(record) is None
+
+    async def test_head_names_where_the_next_record_attaches(self) -> None:
+        head = await self.port().head(Samples().audit_record().session_id)
+        assert isinstance(head, ChainHead)
 
 
 class PolicyArtifactPortContract:
@@ -303,7 +312,9 @@ class _History(LearnerHistoryPort):
     def __init__(self, field_allowlist: tuple[str, ...]) -> None:
         self._field_allowlist = field_allowlist
 
-    def read(self, learner_id: LearnerId) -> LearnerHistorySnapshot:
+    async def read(
+        self, learner_id: LearnerId, requested: HistoryFieldSet
+    ) -> LearnerHistorySnapshot:
         return LearnerHistorySnapshot(
             learner_id=learner_id,
             proficiency_level="A1",
@@ -317,7 +328,7 @@ class _Embedding(EmbeddingPort):
 
 
 class _Model(LanguageModelPort):
-    def complete(self, prompt: RenderedPrompt) -> ModelCompletion:
+    async def complete(self, prompt: RenderedPrompt) -> ModelCompletion:
         return Samples().completion()
 
     def revision(self) -> str:
@@ -351,7 +362,7 @@ class _Support(SourceSupportPort):
     def verify(
         self,
         draft: str,
-        sources: tuple[SourceRef, ...],
+        snippets: tuple[Snippet, ...],
     ) -> SourceSupportReport:
         return Samples().support()
 
@@ -360,13 +371,16 @@ class _Gate(OversightGatePort):
     def name(self) -> str:
         return "context_and_permission"
 
-    def evaluate(self, turn: TurnState) -> GateVerdict:
+    async def evaluate(self, turn: TurnState) -> GateVerdict:
         return Samples().verdict()
 
 
 class _Audit(AuditSinkPort):
     def __init__(self) -> None:
         self.records: list[TurnAuditRecord] = []
+
+    async def head(self, session_id: UUID) -> ChainHead:
+        return ChainHead(previous_record_hash="0" * 64, turn_index=len(self.records))
 
     async def append(self, record: TurnAuditRecord) -> None:
         self.records.append(record)

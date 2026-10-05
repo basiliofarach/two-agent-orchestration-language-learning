@@ -14,7 +14,12 @@ from tutor_api.adapters.persistence.audit_sink import (
     PostgresAuditSink,
 )
 from tutor_core.domain.audit.record_hash import AuditRecordHash
-from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.audit import (
+    GATE_ORDER,
+    ChainHead,
+    GateEvaluation,
+    TurnAuditRecord,
+)
 from tutor_core.domain.ports.cipher import CipherPort
 
 
@@ -46,13 +51,13 @@ class BoundSink:
 
 
 class TestPostgresAuditSink:
-    def test_append_is_the_only_write_method_exposed(self) -> None:
+    def test_append_is_the_only_write_method_and_head_the_only_read(self) -> None:
         public = [
             name
             for name in dir(PostgresAuditSink)
             if not name.startswith("_") and callable(getattr(PostgresAuditSink, name))
         ]
-        assert public == ["append"]
+        assert public == ["append", "head"]
 
     async def test_recorded_at_comes_from_injected_clock(self) -> None:
         clock = FrozenClock(datetime(2026, 9, 21, 15, 30, tzinfo=UTC))
@@ -209,3 +214,74 @@ class TestPostgresAuditSink:
             first.record_hash
         )
         assert bound.connection.parameters[0]["turn_index"] == 1
+
+
+class TestGateRowsAndHead:
+    async def test_each_gate_row_is_written_with_its_reason_sealed(self) -> None:
+        bound = BoundSink()
+        record = bound.seal(GatedRecord().stopped(), AuditRecordHash.GENESIS)
+        await bound.sink.append(record)
+        gates = [
+            parameters
+            for statement, parameters in zip(
+                bound.connection.statements, bound.connection.parameters, strict=True
+            )
+            if "gate_evaluation" in statement
+        ]
+        assert [row["decision"] for row in gates] == [
+            "stop",
+            "not_evaluated",
+            "not_evaluated",
+            "not_evaluated",
+        ]
+        assert [row["gate_name"] for row in gates] == list(GATE_ORDER)
+        assert bound.cipher.decrypt(gates[0]["reason"]) == b"scripted stop"
+        assert all(row["turn_id"] == record.turn_id for row in gates)
+
+    async def test_an_empty_session_attaches_at_genesis(self) -> None:
+        connection = RecordingConnection()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), AuditRecordHash())
+        head = await sink.head(Samples().audit_record().session_id)
+        assert head == ChainHead(
+            previous_record_hash=AuditRecordHash.GENESIS, turn_index=0
+        )
+
+    async def test_a_session_with_records_attaches_after_the_latest(self) -> None:
+        connection = RecordingConnection()
+        connection.rows.append(("c" * 64, 4))
+        sink = PostgresAuditSink(connection, ReversibleCipher(), AuditRecordHash())
+        head = await sink.head(Samples().audit_record().session_id)
+        assert head == ChainHead(previous_record_hash="c" * 64, turn_index=5)
+        assert connection.fetches[0][0].lstrip().upper().startswith("SELECT")
+        assert connection.statements == []
+
+
+class GatedRecord:
+    """A stopped record carrying its four gate rows."""
+
+    def stopped(self) -> TurnAuditRecord:
+        halting = "rule-context_and_permission-stop"
+        rows = (
+            GateEvaluation(
+                gate_name="context_and_permission",
+                decision="stop",
+                reason="scripted stop",
+                policy_rule_id=halting,
+                evaluated_at=Samples().when(),
+            ),
+            *(
+                GateEvaluation(
+                    gate_name=name,
+                    decision="not_evaluated",
+                    reason="Not reached.",
+                    policy_rule_id=halting,
+                    evaluated_at=Samples().when(),
+                )
+                for name in GATE_ORDER[1:]
+            ),
+        )
+        return (
+            Samples()
+            .stopped_audit_record()
+            .model_copy(update={"gate_evaluations": rows})
+        )
