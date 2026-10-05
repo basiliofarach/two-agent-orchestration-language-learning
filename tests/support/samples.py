@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from tutor_core.domain.audit.chain import ChainBreak
+from tutor_core.domain.audit.record_hash import HistoricalPrompt
 from tutor_core.domain.models.audit import HumanAction, TurnAuditRecord
 from tutor_core.domain.models.corpus import CorpusDocument, IngestedDocument
 from tutor_core.domain.models.learner import (
@@ -31,7 +32,12 @@ from tutor_core.domain.models.safety import (
 )
 from tutor_core.domain.models.turn import TurnState
 from tutor_core.domain.models.verdict import GateVerdict
-from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard, PolicyRule
+from tutor_core.domain.policy.policy_card import (
+    ArticleMapping,
+    LegacyAction,
+    PolicyCard,
+    PolicyRule,
+)
 
 
 class Samples:
@@ -191,6 +197,12 @@ class Samples:
     def article_mapping(self) -> ArticleMapping:
         return ArticleMapping(article="12", locus="per-turn audit log")
 
+    def legacy_action(self) -> LegacyAction:
+        return LegacyAction(action="retrieve_vetted")
+
+    def historical_prompt(self) -> HistoricalPrompt:
+        return HistoricalPrompt.from_stored(self.stored_prompt())
+
     def policy_rule(
         self,
         rule_id: str = "retrieve-vetted",
@@ -271,6 +283,8 @@ class Samples:
             self.audit_record(),
             self.chain_break(),
             self.article_mapping(),
+            self.legacy_action(),
+            self.historical_prompt(),
             self.policy_rule(),
             self.policy_card(),
             self.corpus_document(),

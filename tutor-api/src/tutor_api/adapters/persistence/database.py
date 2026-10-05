@@ -1,5 +1,6 @@
 """Construct the async engine when a caller asks. Nothing is created at import."""
 
+import asyncio
 from collections.abc import Mapping
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -32,47 +33,63 @@ class RequestConnection(TransactionConnection):
 
     Commit, rollback and close before first use are no-ops: nothing was
     opened, so there is nothing to end.
+
+    Opening is serialized. Two coroutines can both observe that nothing is
+    open yet; without the lock each would connect, and one connection would
+    be dropped. Close takes the same lock, so it cannot return while a
+    connect is still in flight and then leave that connection unclosed.
+    The lock is held for the statement too: one asyncpg connection cannot
+    run two operations at once.
     """
 
     def __init__(self, engine: DatabaseEngine) -> None:
         self._engine = engine
         self._opened: TransactionConnection | None = None
+        self._gate = asyncio.Lock()
 
     async def commit(self) -> None:
-        if self._opened is not None:
-            await self._opened.commit()
+        async with self._gate:
+            if self._opened is not None:
+                await self._opened.commit()
 
     async def rollback(self) -> None:
-        if self._opened is not None:
-            await self._opened.rollback()
+        async with self._gate:
+            if self._opened is not None:
+                await self._opened.rollback()
 
     async def close(self) -> None:
-        if self._opened is not None:
-            await self._opened.close()
+        async with self._gate:
+            opened = self._opened
             self._opened = None
+            if opened is not None:
+                await opened.close()
 
     async def execute(
         self,
         statement: str,
         parameters: Mapping[str, object] | None = None,
     ) -> None:
-        await (await self._open()).execute(statement, parameters)
+        async with self._gate:
+            await (await self._open()).execute(statement, parameters)
 
     async def fetch_one(
         self,
         statement: str,
         parameters: Mapping[str, object],
     ) -> tuple[object, ...] | None:
-        return await (await self._open()).fetch_one(statement, parameters)
+        async with self._gate:
+            return await (await self._open()).fetch_one(statement, parameters)
 
     async def fetch_all(
         self,
         statement: str,
         parameters: Mapping[str, object],
     ) -> tuple[tuple[object, ...], ...]:
-        return await (await self._open()).fetch_all(statement, parameters)
+        async with self._gate:
+            return await (await self._open()).fetch_all(statement, parameters)
 
     async def _open(self) -> TransactionConnection:
+        """Open once. The caller holds ``_gate``; this lock is not reentrant."""
         if self._opened is None:
             self._opened = await self._engine.connect()
         return self._opened

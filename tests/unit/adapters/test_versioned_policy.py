@@ -1,5 +1,6 @@
 """Versioned policy: the card in force, and publication that does not update."""
 
+import json
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -21,12 +22,25 @@ from tutor_api.adapters.persistence.versioned_policy import (
     VersionedPolicyCard,
 )
 from tutor_core.domain.policy.lineage import PolicyRuleLineage, PolicyRuleMeaningChanged
-from tutor_core.domain.policy.policy_card import PolicyCard
+from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard, PolicyRule
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
 
 _MARCH = datetime(2026, 3, 1, tzinfo=UTC)
+
+
+class SealedArticleMapping:
+    """One article mapping, sealed the way a policy column stores it."""
+
+    def ciphertext(self, cipher: CipherPort) -> bytes:
+        mapping = ArticleMapping(article="12", locus="per-turn audit log")
+        encoded = json.dumps(
+            [mapping.model_dump(mode="json")],
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return cipher.encrypt(encoded.encode("utf-8"))
 
 
 class SealedRow:
@@ -130,6 +144,37 @@ class TestPolicyCardCodec:
         with pytest.raises(ValueError, match="not ciphertext"):
             PolicyCardCodec(cipher).open(row)
 
+    def test_a_legacy_string_list_opens_as_rules(self) -> None:
+        cipher = ReversibleCipher()
+        codec = PolicyCardCodec(cipher)
+        row = (
+            "policy-1",
+            cipher.encrypt(b'["retrieve_vetted"]'),
+            cipher.encrypt(b'["open_web"]'),
+            cipher.encrypt(b'["pause_routes_to_tutor"]'),
+            SealedArticleMapping().ciphertext(cipher),
+        )
+        card = codec.open(row)
+        assert card.version == "policy-1"
+        assert card.allowed_actions[0].policy_rule_id == "retrieve_vetted"
+        assert card.allowed_actions[0].statement == "retrieve_vetted"
+        assert card.allowed_actions[0].article is None
+        assert card.denied_actions[0].statement == "open_web"
+        assert card.escalation_rules[0].statement == "pause_routes_to_tutor"
+        assert card.article_mappings[0].article == "12"
+
+    def test_a_rule_column_that_is_not_a_list_is_rejected(self) -> None:
+        cipher = ReversibleCipher()
+        row = (
+            "policy-1",
+            cipher.encrypt(b'{"policy_rule_id":"retrieve-vetted"}'),
+            cipher.encrypt(b"[]"),
+            cipher.encrypt(b"[]"),
+            cipher.encrypt(b"[]"),
+        )
+        with pytest.raises(ValueError, match="not a list"):
+            PolicyCardCodec(cipher).open(row)
+
 
 class TestPolicyVersionWriter:
     async def test_publish_inserts_and_does_not_update(self) -> None:
@@ -216,6 +261,45 @@ class TestPolicyVersionWriter:
         assert connection.parameters[1]["effective_from"] == datetime(
             2026, 6, 1, 10, 0, tzinfo=UTC
         )
+
+    async def test_a_legacy_action_keeps_its_meaning_until_the_article_is_set(
+        self,
+    ) -> None:
+        cipher = ReversibleCipher()
+        legacy = (
+            "policy-1",
+            cipher.encrypt(b'["retrieve_vetted"]'),
+            cipher.encrypt(b"[]"),
+            cipher.encrypt(b"[]"),
+            SealedArticleMapping().ciphertext(cipher),
+        )
+        connection = ScriptedConnection((legacy,))
+        opened = PolicyCardCodec(cipher).open(legacy)
+        await (
+            Wired()
+            .writer(connection)
+            .publish(
+                opened.model_copy(update={"version": "policy-2"}),
+                datetime(2026, 6, 1, tzinfo=UTC),
+            )
+        )
+        assert connection.statements[1].lstrip().upper().startswith("INSERT")
+        assigned = PolicyRule(
+            policy_rule_id="retrieve_vetted",
+            statement="retrieve_vetted",
+            article="10",
+        )
+        with pytest.raises(PolicyRuleMeaningChanged, match="changed meaning"):
+            await (
+                Wired()
+                .writer(ScriptedConnection((legacy,)))
+                .publish(
+                    opened.model_copy(
+                        update={"version": "policy-3", "allowed_actions": (assigned,)}
+                    ),
+                    datetime(2026, 7, 1, tzinfo=UTC),
+                )
+            )
 
     def test_public_methods_are_publish_only(self) -> None:
         public = [

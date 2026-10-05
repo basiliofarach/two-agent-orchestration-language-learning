@@ -423,6 +423,22 @@ class TestPolicyCard:
                 }
             )
 
+    def test_a_rule_without_an_article_is_rejected(self) -> None:
+        payload = Samples().policy_rule().model_dump()
+        del payload["article"]
+        with pytest.raises(ValidationError, match="no article"):
+            PolicyRule.model_validate(payload)
+
+    def test_a_legacy_action_string_keeps_the_action_and_no_article(self) -> None:
+        rule = PolicyRule.model_validate("retrieve_vetted")
+        assert rule.policy_rule_id == "retrieve_vetted"
+        assert rule.statement == "retrieve_vetted"
+        assert rule.article is None
+
+    def test_an_empty_legacy_action_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="legacy policy action is empty"):
+            PolicyRule.model_validate("   ")
+
     def test_an_unknown_article_on_a_rule_is_rejected(self) -> None:
         payload = Samples().policy_rule().model_dump()
         payload["article"] = "99"

@@ -24,7 +24,7 @@ class RuleMeaning(BaseModel):
 
     category: RuleCategory
     statement: str
-    article: str
+    article: str | None
 
 
 class PolicyRuleLineage:

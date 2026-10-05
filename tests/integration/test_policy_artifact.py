@@ -1,5 +1,6 @@
 """Two policy versions coexist. A turn keeps the one in force when it started."""
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -21,7 +22,7 @@ from tutor_api.adapters.persistence.versioned_policy import (
     VersionedPolicyCard,
 )
 from tutor_core.domain.audit.record_hash import AuditRecordHash
-from tutor_core.domain.policy.policy_card import PolicyCard
+from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.unit_of_work import (
     TransactionalWork,
@@ -134,3 +135,55 @@ class TestVersionedPolicy:
         assert started == "policy-1"
         assert stored == ("policy-1",)
         assert later == "policy-2"
+
+
+class LegacyPolicyRow:
+    """One ``policy_version`` row in the pre-object action shape."""
+
+    def __init__(self, cipher: CipherPort) -> None:
+        self._cipher = cipher
+
+    def insert(self, url: str) -> None:
+        """Store string arrays, the shape published before ``PolicyRule``."""
+        allowed = self._seal(["retrieve_vetted"])
+        denied = self._seal(["open_web"])
+        escalation = self._seal(["pause_routes_to_tutor"])
+        mapping = ArticleMapping(article="12", locus="per-turn audit log")
+        mappings = self._seal([mapping.model_dump(mode="json")])
+        with psycopg.connect(url) as connection:
+            connection.execute(
+                """
+                INSERT INTO policy_version (
+                    version, allowed_actions, denied_actions, escalation_rules,
+                    article_mappings, effective_from
+                ) VALUES ('policy-legacy', %s, %s, %s, %s, '2026-01-01T00:00:00Z')
+                """,
+                (allowed, denied, escalation, mappings),
+            )
+
+    def _seal(self, payload: object) -> bytes:
+        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        return self._cipher.encrypt(encoded.encode("utf-8"))
+
+
+class TestLegacyPolicyPayload:
+    async def test_current_reads_a_string_array_published_earlier(
+        self, fresh_database: str
+    ) -> None:
+        MigratedDatabase().upgrade(fresh_database)
+        cipher = AesGcmEnvelope(key=bytes(range(32)), key_id=UUID(int=1))
+        LegacyPolicyRow(cipher).insert(fresh_database)
+        engine = DatabaseEngine(PostgresUrl(fresh_database).async_url())
+        connection = await engine.connect()
+        try:
+            card = await VersionedPolicyCard(
+                connection, FrozenClock(_MARCH), PolicyCardCodec(cipher)
+            ).current()
+        finally:
+            await connection.close()
+            await engine.dispose()
+        assert card.version == "policy-legacy"
+        assert card.allowed_actions[0].policy_rule_id == "retrieve_vetted"
+        assert card.allowed_actions[0].article is None
+        assert card.denied_actions[0].statement == "open_web"
+        assert card.article_mappings[0].locus == "per-turn audit log"

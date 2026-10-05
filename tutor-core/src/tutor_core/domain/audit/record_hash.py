@@ -2,8 +2,34 @@
 
 import hashlib
 import json
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict
 
 from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.safety import StoredLearnerPrompt
+
+
+class HistoricalPrompt(BaseModel):
+    """The prompt fields a digest covered before the prompt was nested.
+
+    ``learner_prompt`` stores the text and the categories together. The
+    hash still names them as the two top-level fields the earlier rows
+    were sealed with.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    learner_prompt_redacted: str
+    redacted_categories: tuple[str, ...]
+
+    @classmethod
+    def from_stored(cls, prompt: StoredLearnerPrompt) -> Self:
+        """Project the nested prompt back onto those two fields."""
+        return cls(
+            learner_prompt_redacted=prompt.text,
+            redacted_categories=prompt.redacted_categories,
+        )
 
 
 class AuditRecordHash:
@@ -33,8 +59,17 @@ class AuditRecordHash:
         Keys are sorted and separators carry no whitespace, so two equal
         records produce one string. Absent generation fields are null, not
         omitted.
+
+        The prompt is written as the two fields the historical digest
+        covered, ``learner_prompt_redacted`` and ``redacted_categories``.
+        The domain model nests them on ``learner_prompt``; hashing that
+        object would report every row sealed before the nesting as tampered.
         """
-        payload = record.model_dump(mode="json", exclude={"record_hash"})
+        payload = record.model_dump(
+            mode="json", exclude={"record_hash", "learner_prompt"}
+        )
+        prompt = HistoricalPrompt.from_stored(record.learner_prompt)
+        payload.update(prompt.model_dump(mode="json"))
         return json.dumps(
             payload,
             sort_keys=True,

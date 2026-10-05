@@ -90,10 +90,13 @@ class TestAuditRecordHash:
             assert f'"{field}":null' in canonical
         assert "tutor_id" not in canonical
         assert "edited_output" not in canonical
-        niño = StoredLearnerPrompt(text="niño", redacted_categories=())
-        assert '"text":"niño"' in AuditRecordHash().canonical(
+        niño = StoredLearnerPrompt(text="niño", redacted_categories=("name",))
+        canonical = AuditRecordHash().canonical(
             Samples().stopped_audit_record().model_copy(update={"learner_prompt": niño})
         )
+        assert '"learner_prompt":' not in canonical
+        assert '"learner_prompt_redacted":"niño"' in canonical
+        assert '"redacted_categories":["name"]' in canonical
 
 
 class TestChainVerifier:

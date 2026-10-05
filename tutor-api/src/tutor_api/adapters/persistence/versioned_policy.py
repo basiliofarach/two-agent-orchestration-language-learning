@@ -76,6 +76,9 @@ class PolicyCardCodec:
 
     def _open_rules(self, value: object) -> tuple[PolicyRule, ...]:
         payload = json.loads(self._cipher.decrypt(self._bytes(value)))
+        if not isinstance(payload, list):
+            msg = "policy rules are not a list"
+            raise ValueError(msg)
         return tuple(PolicyRule.model_validate(item) for item in payload)
 
     def _open_mappings(self, value: object) -> tuple[ArticleMapping, ...]:
