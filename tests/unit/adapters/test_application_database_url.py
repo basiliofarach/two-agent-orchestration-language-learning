@@ -31,14 +31,53 @@ class TestApplicationDatabaseUrl:
         )
         assert "p%40ss%2Fword@" in ApplicationDatabaseUrl(settings).value()
 
-    def test_an_override_wins_and_is_normalised_to_asyncpg(self) -> None:
+    def test_an_override_as_the_application_role_is_normalised_to_asyncpg(self) -> None:
         settings = Configured().settings(
-            application_database_url="postgresql://u:p@db:5432/tutor"
+            postgres_app_user="tutor_app",
+            application_database_url="postgresql://tutor_app:p%40ss@db:5432/tutor",
         )
         assert (
             ApplicationDatabaseUrl(settings).value()
-            == "postgresql+asyncpg://u:p@db:5432/tutor"
+            == "postgresql+asyncpg://tutor_app:p%40ss@db:5432/tutor"
         )
+
+    def test_an_override_as_the_owner_is_rejected(self) -> None:
+        settings = Configured().settings(
+            postgres_app_user="tutor_app",
+            application_database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+        )
+        with pytest.raises(ValueError, match="not the application role 'tutor_app'"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_an_override_is_rejected_when_the_application_role_is_the_owner(
+        self,
+    ) -> None:
+        settings = Configured().settings(
+            postgres_user="tutor_owner",
+            postgres_app_user="tutor_owner",
+            application_database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+        )
+        with pytest.raises(ValueError, match="is the migration owner"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_a_composed_url_is_rejected_when_the_application_role_is_the_owner(
+        self,
+    ) -> None:
+        settings = Configured().settings(
+            postgres_user="tutor_owner",
+            postgres_db="tutor",
+            postgres_app_user="tutor_owner",
+            postgres_app_password="secret",
+        )
+        with pytest.raises(ValueError, match="is the migration owner"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_an_override_without_a_user_is_rejected(self) -> None:
+        settings = Configured().settings(
+            application_database_url="postgresql://db:5432/tutor"
+        )
+        with pytest.raises(ValueError, match="has no user"):
+            ApplicationDatabaseUrl(settings).value()
 
     def test_a_missing_password_names_what_to_set(self) -> None:
         settings = Configured().settings(postgres_db="tutor")

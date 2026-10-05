@@ -7,10 +7,12 @@ beforehand on the operator path; a turn cannot ingest (DEC-0001).
 
 import base64
 from datetime import UTC, datetime
+from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import UUID
 
 import psycopg
 import pytest
+from psycopg import sql
 from pydantic import SecretStr
 from tests.support.curation import Curator
 from tests.support.migrated_database import MigratedDatabase, PostgresUrl
@@ -41,16 +43,68 @@ _DOCUMENT = UUID("00000000-0000-4000-8000-000000000080")
 _TEXT = "The library is open."
 
 
+class ApplicationLogin:
+    """The migration's application role, with a password it can connect by."""
+
+    _PASSWORD = "app-secret"
+
+    def __init__(self, owner_url: str) -> None:
+        self._owner_url = owner_url
+        self._role = ApplicationSettings().postgres_app_user
+
+    def role(self) -> str:
+        """The role name the migration granted."""
+        return self._role
+
+    def enable(self) -> None:
+        """Allow the role to log in. The migration creates it NOLOGIN."""
+        with psycopg.connect(self._owner_url) as connection:
+            connection.execute(
+                sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(
+                    sql.Identifier(self._role),
+                    sql.Literal(self._PASSWORD),
+                )
+            )
+
+    def async_url(self) -> str:
+        """The owner URL's server and database, as this role."""
+        return RoleUrl(PostgresUrl(self._owner_url).async_url()).as_role(
+            self._role, self._PASSWORD
+        )
+
+
+class RoleUrl:
+    """One server and database, logging in as a named role."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    def as_role(self, role: str, password: str) -> str:
+        """Return ``url`` with its user and password replaced."""
+        parts = urlsplit(self._url)
+        host = parts.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        port = f":{parts.port}" if parts.port is not None else ""
+        user = quote(role, safe="")
+        secret = quote(password, safe="")
+        return urlunsplit(
+            (parts.scheme, f"{user}:{secret}@{host}{port}", parts.path, "", "")
+        )
+
+
 class Wired:
     """The production container over one test database."""
 
     def __init__(self, url: str) -> None:
         self._url = url
+        self._login = ApplicationLogin(url)
 
     def container(self) -> Container:
         settings = ApplicationSettings(
             _env_file=None,  # type: ignore[call-arg]
-            application_database_url=PostgresUrl(self._url).async_url(),
+            postgres_app_user=self._login.role(),
+            application_database_url=self._login.async_url(),
             tutor_kek=SecretStr(base64.b64encode(_KEK).decode()),
             tutor_kek_id=UUID(int=1),
         )
@@ -60,6 +114,7 @@ class Wired:
         database = MigratedDatabase()
         database.upgrade(self._url)
         database.seed_learner(self._url)
+        self._login.enable()
         cipher = container.resolve(CipherPort)
         assert isinstance(cipher, CipherPort)
         curator = Curator(PostgresUrl(self._url).async_url(), cipher)

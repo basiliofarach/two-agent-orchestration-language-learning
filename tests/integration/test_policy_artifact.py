@@ -75,6 +75,26 @@ class StartTurn(TransactionalWork):
         await sink.append(record)
 
 
+class HeldSelection(TransactionalWork):
+    """Select the card, let a later version commit, then read the version."""
+
+    def __init__(self, cipher: CipherPort, owner_url: str) -> None:
+        self._cipher = cipher
+        self._owner_url = owner_url
+        self.selected: str | None = None
+        self.logged: str | None = None
+
+    async def run(self, connection: TransactionConnection) -> None:
+        policy = VersionedPolicyCard(
+            connection, FrozenClock(_MARCH), PolicyCardCodec(self._cipher)
+        )
+        self.selected = (await policy.current()).version
+        await Curator(PostgresUrl(self._owner_url).async_url(), self._cipher).publish(
+            SecondVersion().card(), datetime(2026, 2, 1, tzinfo=UTC)
+        )
+        self.logged = await policy.version()
+
+
 class PublishedPolicy:
     """Learner, session, and both policy versions, committed."""
 
@@ -135,6 +155,25 @@ class TestVersionedPolicy:
         assert started == "policy-1"
         assert stored == ("policy-1",)
         assert later == "policy-2"
+
+    async def test_a_publication_after_selection_does_not_change_the_logged_version(
+        self, fresh_database: str
+    ) -> None:
+        database = MigratedDatabase()
+        database.upgrade(fresh_database)
+        database.seed_learner(fresh_database)
+        cipher = AesGcmEnvelope(key=bytes(range(32)), key_id=UUID(int=1))
+        await Curator(PostgresUrl(fresh_database).async_url(), cipher).publish(
+            Samples().policy_card(), datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        work = HeldSelection(cipher, fresh_database)
+        engine = DatabaseEngine(PostgresUrl(fresh_database).async_url())
+        try:
+            await SqlAlchemyUnitOfWork(await engine.connect()).run(work)
+        finally:
+            await engine.dispose()
+        assert work.selected == "policy-1"
+        assert work.logged == "policy-1"
 
 
 class LegacyPolicyRow:

@@ -1,6 +1,6 @@
 """Build the URLs Alembic and the application connect with. Nothing is read here."""
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from tutor_api.settings import ApplicationSettings
 
@@ -90,13 +90,66 @@ class DriverSwap:
         return url
 
 
+class UrlUser:
+    """The login name in a Postgres URL. Absent means the URL names none."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    def value(self) -> str:
+        """Return the decoded user. Raise when the URL has none."""
+        username = urlsplit(self._url).username
+        if not username:
+            msg = "APPLICATION_DATABASE_URL has no user"
+            raise ValueError(msg)
+        return username
+
+
+class ApplicationRoleUrl:
+    """An application URL that logs in as the application role (DEC-0014)."""
+
+    def __init__(self, role: str) -> None:
+        self._role = role
+
+    def require(self, url: str) -> str:
+        """Return ``url`` when its user is this role. Reject any other login."""
+        username = UrlUser(url).value()
+        if username != self._role:
+            msg = (
+                "APPLICATION_DATABASE_URL connects as "
+                f"{username!r}, not the application role {self._role!r}"
+            )
+            raise ValueError(msg)
+        return url
+
+
+class DistinctFromOwner:
+    """The application role is never the migration owner (DEC-0014)."""
+
+    def __init__(self, owner: str | None) -> None:
+        self._owner = owner
+
+    def require(self, role: str) -> str:
+        """Return ``role`` when it is not the owner. Reject it otherwise."""
+        if role == self._owner:
+            msg = (
+                f"POSTGRES_APP_USER {role!r} is the migration owner; "
+                "the application must connect as its own role"
+            )
+            raise ValueError(msg)
+        return role
+
+
 class ApplicationDatabaseUrl:
     """The async URL the application serves requests with (DEC-0014).
 
     The application role, not the owner: ``tutor_app`` holds only the grants
     the request path needs, so a request cannot alter the schema.
-    ``APPLICATION_DATABASE_URL`` wins outright; otherwise the URL is composed
-    from ``POSTGRES_APP_*`` and the shared host, port and database.
+    ``APPLICATION_DATABASE_URL`` is accepted only when its user is
+    ``postgres_app_user``. An override that logs in as the migration owner
+    is rejected, and so is a ``postgres_app_user`` equal to
+    ``postgres_user``, which would pass that check. Otherwise the URL is
+    composed from ``POSTGRES_APP_*`` and the shared host, port and database.
     """
 
     ASYNC_DRIVER = "postgresql+asyncpg"
@@ -106,16 +159,20 @@ class ApplicationDatabaseUrl:
 
     def value(self) -> str:
         """Return the URL, driver normalised to asyncpg."""
+        role = DistinctFromOwner(self._settings.postgres_user).require(
+            self._settings.postgres_app_user
+        )
         configured = self._settings.application_database_url
         if configured:
-            return DriverSwap(self.ASYNC_DRIVER).apply(configured)
+            normalised = DriverSwap(self.ASYNC_DRIVER).apply(configured)
+            return ApplicationRoleUrl(role).require(normalised)
         password = self._required(
             "POSTGRES_APP_PASSWORD", self._settings.postgres_app_password
         )
         database = self._required("POSTGRES_DB", self._settings.postgres_db)
         return (
             f"{self.ASYNC_DRIVER}://"
-            f"{quote(self._settings.postgres_app_user, safe='')}:"
+            f"{quote(role, safe='')}:"
             f"{quote(password, safe='')}"
             f"@{self._settings.postgres_host}:{self._settings.postgres_port}"
             f"/{database}"

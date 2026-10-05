@@ -105,10 +105,14 @@ class PolicyCardCodec:
 class VersionedPolicyCard(PolicyArtifactPort):
     """The policy version in force at the injected clock (REQ-POLICY).
 
-    ``current()`` is the latest row whose ``effective_from`` is at or before
-    that instant. A missing or unreadable version raises. There is no
-    built-in default card. Reads run on the request's enlisted connection
-    (DEC-0014).
+    The first ``current()`` selects the latest row whose ``effective_from``
+    is at or before that instant, and this request-scoped adapter keeps
+    that card. ``version()`` returns it. A publication that commits later,
+    or a clock that has since crossed another ``effective_from``, does not
+    change the card already selected, so the version written to the audit
+    record is the card the turn used. A missing or unreadable version
+    raises and is not kept. There is no built-in default card. Reads run
+    on the request's enlisted connection (DEC-0014).
     """
 
     _LATEST = """
@@ -129,9 +133,22 @@ class VersionedPolicyCard(PolicyArtifactPort):
         self._connection = connection
         self._clock = clock
         self._codec = codec
+        self._selected: PolicyCard | None = None
 
     async def current(self) -> PolicyCard:
-        """Return the card in force now. Raise when none is."""
+        """Return the card selected for this request. Raise when none is."""
+        selected = self._selected
+        if selected is None:
+            selected = await self._select()
+            self._selected = selected
+        return selected
+
+    async def version(self) -> str:
+        """The version of the card already selected for this request."""
+        return (await self.current()).version
+
+    async def _select(self) -> PolicyCard:
+        """Read the card in force. A failure is not cached."""
         row = await self._connection.fetch_one(
             self._LATEST, {"as_of": self._clock.now()}
         )
@@ -141,10 +158,6 @@ class VersionedPolicyCard(PolicyArtifactPort):
             return self._codec.open(row)
         except (ValueError, ValidationError) as exc:
             raise PolicyVersionUnreadable("policy version cannot be read") from exc
-
-    async def version(self) -> str:
-        """The version string a turn records when it starts."""
-        return (await self.current()).version
 
 
 class PolicyVersionWriter(PolicyPublicationPort):

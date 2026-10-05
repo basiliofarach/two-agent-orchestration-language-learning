@@ -1,6 +1,7 @@
 """Versioned policy: the card in force, and publication that does not update."""
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -88,6 +89,26 @@ class Wired:
         )
 
 
+class SecondRead(ScriptedConnection):
+    """The first fetch is the card in force. A later fetch is a newer publication."""
+
+    def __init__(self, first: tuple[object, ...], later: tuple[object, ...]) -> None:
+        super().__init__((first,))
+        self._later = later
+        self.reads = 0
+
+    async def fetch_one(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[object, ...] | None:
+        self._record(statement, parameters)
+        self.reads += 1
+        if self.reads == 1:
+            return self._rows[0]
+        return self._later
+
+
 class TestVersionedPolicyCardContract(PolicyArtifactPortContract):
     def port(self) -> PolicyArtifactPort:
         return Wired().reader(Wired().stored())
@@ -105,6 +126,18 @@ class TestVersionedPolicyCard:
         card = await Wired().reader(connection, clock).current()
         assert card == Samples().policy_card()
         assert connection.parameters[0]["as_of"] == clock.now()
+
+    async def test_version_returns_the_card_already_selected(self) -> None:
+        cipher = ReversibleCipher()
+        first = SealedRow(cipher).of(Samples().policy_card())
+        later = SealedRow(cipher).of(
+            Samples().policy_card().model_copy(update={"version": "policy-2"})
+        )
+        connection = SecondRead(first, later)
+        port = Wired().reader(connection)
+        assert (await port.current()).version == "policy-1"
+        assert await port.version() == "policy-1"
+        assert connection.reads == 1
 
     async def test_a_missing_version_raises_instead_of_a_default(self) -> None:
         port = Wired().reader(ScriptedConnection())
