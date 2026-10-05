@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from tutor_api.container import ApplicationContainer
+from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
 from tutor_api.routers.health import HealthRouter
 
@@ -38,4 +38,4 @@ class Application:
 # The ASGI server imports a name, so the entrypoint is a module attribute. It
 # is a constructed entrypoint, not global mutable state: nothing reassigns it,
 # and every collaborator below it is injected.
-app = Application(ApplicationContainer().build()).asgi()
+app = Application(ApplicationContainer(SettingsProvider()).build()).asgi()

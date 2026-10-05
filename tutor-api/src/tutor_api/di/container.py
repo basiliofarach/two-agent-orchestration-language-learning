@@ -1,5 +1,6 @@
 """Resolve the object graph, and refuse to start one that can leak."""
 
+from collections.abc import Callable
 from threading import RLock
 
 from tutor_api.di.lifetime import Lifetime, ScopeLeak, UnregisteredDependency
@@ -39,6 +40,26 @@ class LifetimeValidation:
                     raise ScopeLeak(holder, required)
 
 
+class RequestScope:
+    """One request's ``REQUEST``-lifetime objects (DEC-0014).
+
+    Within a scope a request-scoped type is built once, so the knowledge
+    base, the audit sink and the unit of work a request resolves all hold
+    the same connection, and retrieval commits with the audit row that
+    describes it (DEC-0006). Two scopes share nothing request-scoped: one
+    learner's request never receives another's connection. Singletons
+    still come from the container.
+    """
+
+    def __init__(self, build: Callable[[type, dict[type, object]], object]) -> None:
+        self._build = build
+        self._instances: dict[type, object] = {}
+
+    def resolve(self, requested: type) -> object:
+        """Return ``requested``, built at most once in this scope."""
+        return self._build(requested, self._instances)
+
+
 class Container:
     """The object graph. Constructed once per application, never at import."""
 
@@ -62,17 +83,33 @@ class Container:
 
         A singleton is built once and kept on this container — on the
         instance, never at module level, so two applications in one process
-        (the test suite runs several) share nothing.
+        (the test suite runs several) share nothing. Outside a scope a
+        request-scoped type is built fresh on every call; use ``scope()``
+        when collaborators must share one.
         """
+        return self._build(requested, {})
+
+    def scope(self) -> RequestScope:
+        """Open the scope one HTTP request resolves from."""
+        return RequestScope(self._build)
+
+    def _build(self, requested: type, scoped: dict[type, object]) -> object:
         with self._lock:
             if requested in self._singletons:
                 return self._singletons[requested]
+            if requested in scoped:
+                return scoped[requested]
             provider = self._providers.get(requested)
             if provider is None:
                 raise UnregisteredDependency(Container, requested)
             created = provider.create(
-                {required: self.resolve(required) for required in provider.requires()}
+                {
+                    required: self._build(required, scoped)
+                    for required in provider.requires()
+                }
             )
             if provider.lifetime() is Lifetime.SINGLETON:
                 self._singletons[requested] = created
+            else:
+                scoped[requested] = created
             return created

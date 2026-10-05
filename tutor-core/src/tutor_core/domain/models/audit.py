@@ -9,6 +9,7 @@ from tutor_core.domain.models.safety import (
     DecodingParams,
     SafetyFlag,
     SourceSupportReport,
+    StoredLearnerPrompt,
 )
 from tutor_core.domain.models.timestamps import AwareDatetime
 
@@ -44,8 +45,9 @@ class HumanAction(BaseModel):
 class TurnAuditRecord(BaseModel):
     """Frozen per-turn log record (DEC-0002, REQ-AUDIT).
 
-    ``learner_prompt_redacted`` stores the redacted prompt itself, not a
-    digest. ``recorded_at`` is supplied by the caller from ``ClockPort``.
+    ``learner_prompt`` stores the redacted prompt itself, not a digest. It is
+    a ``StoredLearnerPrompt``, so a raw learner string is rejected (REQ-MINOR).
+    ``recorded_at`` is supplied by the caller from ``ClockPort``.
 
     ``session_id`` and ``turn_index`` place the record in one session chain.
     ``retrieved_context_ids`` are ``Snippet.chunk_id`` values, the same
@@ -61,8 +63,7 @@ class TurnAuditRecord(BaseModel):
     turn_id: UUID
     session_id: UUID
     turn_index: int = Field(ge=0)
-    learner_prompt_redacted: str
-    redacted_categories: tuple[str, ...]
+    learner_prompt: StoredLearnerPrompt
     retrieved_context_ids: tuple[str, ...]
     model_revision: str | None = Field(default=None, min_length=1)
     template_version: str | None = Field(default=None, min_length=1)

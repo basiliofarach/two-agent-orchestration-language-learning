@@ -8,7 +8,7 @@ from fastapi.params import Depends
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from tutor_api.container import ApplicationContainer
+from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
 from tutor_api.di.dependency import Provide
 from tutor_api.di.lifetime import Lifetime
@@ -102,7 +102,9 @@ class TestHealthRouter:
         Only the shape is asserted. Whether a database is configured depends
         on the directory the suite runs from, and is not this test's subject.
         """
-        with TestClient(Application(ApplicationContainer().build()).asgi()) as started:
+        with TestClient(
+            Application(ApplicationContainer(SettingsProvider()).build()).asgi()
+        ) as started:
             body = started.get("/health").json()
         assert body["status"] == "ok"
         assert isinstance(body["database_configured"], bool)

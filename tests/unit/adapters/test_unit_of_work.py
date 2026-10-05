@@ -48,6 +48,16 @@ class RecordingConnection(TransactionConnection):
             return None
         return self.rows.pop(0)
 
+    async def fetch_all(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[tuple[object, ...], ...]:
+        self.fetches.append((statement, dict(parameters)))
+        drained = tuple(self.rows)
+        self.rows.clear()
+        return drained
+
 
 class SucceedingWork(TransactionalWork):
     async def run(self, connection: TransactionConnection) -> None:

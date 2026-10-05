@@ -2,7 +2,11 @@
 
 import pytest
 
-from tutor_api.adapters.persistence.schema import ApplicationRole, AuditSchema
+from tutor_api.adapters.persistence.schema import (
+    ApplicationRole,
+    AuditSchema,
+    RequestPathPrivileges,
+)
 from tutor_api.settings import ApplicationSettings
 
 
@@ -46,3 +50,27 @@ class TestAuditSchemaGrantsTheConfiguredRole:
         creation = AuditSchema(role).statements()[0]
         assert "rolname = 'audit_writer'" in creation
         assert 'CREATE ROLE "audit_writer" NOLOGIN' in creation
+
+
+class TestRequestPathPrivileges:
+    def test_grants_select_on_the_request_path_tables_only(self) -> None:
+        role = ApplicationRole("audit_writer")
+        statements = RequestPathPrivileges(role).statements()
+        granted = tuple(statement for statement in statements if "GRANT " in statement)
+        assert granted == (
+            'GRANT SELECT ON TABLE policy_version TO "audit_writer"',
+            'GRANT SELECT ON TABLE kb_document TO "audit_writer"',
+            'GRANT SELECT ON TABLE kb_chunk TO "audit_writer"',
+        )
+        assert all("INSERT" not in statement for statement in granted)
+        assert all("tutor_app" not in statement for statement in statements)
+
+    def test_downgrade_revokes_select_and_does_not_drop_the_tables(self) -> None:
+        privileges = RequestPathPrivileges(ApplicationRole("audit_writer"))
+        statements = privileges.downgrade_statements()
+        assert statements == (
+            'REVOKE SELECT ON TABLE policy_version FROM "audit_writer"',
+            'REVOKE SELECT ON TABLE kb_document FROM "audit_writer"',
+            'REVOKE SELECT ON TABLE kb_chunk FROM "audit_writer"',
+        )
+        assert all("DROP" not in statement for statement in statements)

@@ -20,7 +20,7 @@ no accompanying paper is required.
     oversight gates sits in the orchestration graph.
 
 [Decisions](decisions/README.md)
-:   Thirteen MADR records, DEC-0001 to DEC-0013 — what was chosen, what was
+:   Fourteen MADR records, DEC-0001 to DEC-0014 — what was chosen, what was
     rejected, and the reasoning. Superseded rather than edited.
 
 [Implementation plan](architecture/IMPLEMENTATION-PLAN.md)

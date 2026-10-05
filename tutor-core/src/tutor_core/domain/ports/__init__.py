@@ -3,6 +3,7 @@
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_core.domain.ports.corpus_ingestion import CorpusIngestionPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
@@ -11,6 +12,7 @@ from tutor_core.domain.ports.learner_history import LearnerHistoryPort
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
+from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
@@ -24,6 +26,7 @@ __all__ = [
     "AuditSinkPort",
     "CipherPort",
     "ClockPort",
+    "CorpusIngestionPort",
     "EmbeddingPort",
     "GrammarCheckPort",
     "KnowledgeBasePort",
@@ -32,6 +35,7 @@ __all__ = [
     "OversightGatePort",
     "PiiRedactionPort",
     "PolicyArtifactPort",
+    "PolicyPublicationPort",
     "PromptTemplatePort",
     "SafetyClassifierPort",
     "SourceSupportPort",

@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 
 class TransactionConnection(ABC):
-    """The commit, rollback, close and execute a unit of work needs.
+    """The commit, rollback, close, execute and fetches a unit of work needs.
 
     Scope boundary: the operations a turn's writes need and nothing more —
     no connect, no engine, no cursor. A collaborator holding one of these
@@ -58,6 +58,20 @@ class TransactionConnection(ABC):
         Values are bound, never interpolated into ``statement``. An enlisted
         adapter reads the predecessor hash through this method, so it does
         not open a second connection to continue the chain.
+        """
+        raise NotImplementedError  # pragma: no cover
+
+    @abstractmethod
+    async def fetch_all(
+        self,
+        statement: str,
+        parameters: Mapping[str, object],
+    ) -> tuple[tuple[object, ...], ...]:
+        """Return every row, in the statement's order.
+
+        Values are bound, never interpolated into ``statement``. Retrieval and
+        policy selection read through this method, so they run on the turn's
+        transaction rather than a connection of their own (DEC-0014).
         """
         raise NotImplementedError  # pragma: no cover
 

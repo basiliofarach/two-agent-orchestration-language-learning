@@ -1,13 +1,17 @@
 """ABC mechanics and the method sets DEC-0001 requires."""
 
+import inspect
 from abc import ABC
+from typing import get_type_hints
 
 import pytest
 
+from tutor_core.domain.models.retrieval import RedactedRetrievalRequest
 from tutor_core.domain.ports import (
     AuditSinkPort,
     CipherPort,
     ClockPort,
+    CorpusIngestionPort,
     EmbeddingPort,
     GrammarCheckPort,
     KnowledgeBasePort,
@@ -16,12 +20,14 @@ from tutor_core.domain.ports import (
     OversightGatePort,
     PiiRedactionPort,
     PolicyArtifactPort,
+    PolicyPublicationPort,
     PromptTemplatePort,
     SafetyClassifierPort,
     SourceSupportPort,
     TransactionalWork,
     UnitOfWorkPort,
 )
+from tutor_core.domain.ports.unit_of_work import TransactionConnection
 
 
 class _ImplementedMethod:
@@ -36,6 +42,7 @@ class PortCatalogue:
         return (
             PiiRedactionPort,
             KnowledgeBasePort,
+            CorpusIngestionPort,
             LearnerHistoryPort,
             EmbeddingPort,
             LanguageModelPort,
@@ -46,6 +53,7 @@ class PortCatalogue:
             OversightGatePort,
             AuditSinkPort,
             PolicyArtifactPort,
+            PolicyPublicationPort,
             ClockPort,
             CipherPort,
             UnitOfWorkPort,
@@ -101,6 +109,25 @@ class TestPortMethodSurface:
     def test_knowledge_base_has_no_open_web_method(self) -> None:
         assert KnowledgeBasePort.__abstractmethods__ == frozenset({"retrieve"})
 
+    def test_transaction_connection_reads_but_cannot_connect(self) -> None:
+        assert TransactionConnection.__abstractmethods__ == frozenset(
+            {"commit", "rollback", "close", "execute", "fetch_one", "fetch_all"}
+        )
+
+    def test_persistence_ports_run_on_the_enlisted_connection(self) -> None:
+        for method in (
+            KnowledgeBasePort.retrieve,
+            CorpusIngestionPort.ingest,
+            PolicyArtifactPort.current,
+            PolicyArtifactPort.version,
+            PolicyPublicationPort.publish,
+        ):
+            assert inspect.iscoroutinefunction(method), method.__qualname__
+
+    def test_knowledge_base_takes_redacted_text_only(self) -> None:
+        hints = get_type_hints(KnowledgeBasePort.retrieve)
+        assert hints["request"] is RedactedRetrievalRequest
+
     def test_learner_history_is_read_only(self) -> None:
         assert LearnerHistoryPort.__abstractmethods__ == frozenset({"read"})
         doc = LearnerHistoryPort.__doc__ or ""
@@ -114,6 +141,12 @@ class TestPortMethodSurface:
         assert PolicyArtifactPort.__abstractmethods__ == frozenset(
             {"current", "version"}
         )
+
+    def test_policy_publication_does_not_select_the_current_version(self) -> None:
+        assert PolicyPublicationPort.__abstractmethods__ == frozenset({"publish"})
+
+    def test_corpus_ingestion_does_not_retrieve(self) -> None:
+        assert CorpusIngestionPort.__abstractmethods__ == frozenset({"ingest"})
 
     def test_cipher_is_encrypt_and_decrypt_only(self) -> None:
         assert CipherPort.__abstractmethods__ == frozenset({"encrypt", "decrypt"})

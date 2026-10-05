@@ -228,7 +228,7 @@ class TestAuditSinkTransaction:
             assert row is not None
             prompt, revision, refused, previous, digest = row
             assert cipher.decrypt(bytes(prompt)) == (
-                record.learner_prompt_redacted.encode()
+                record.learner_prompt.text.encode()
             )
             assert revision == record.model_revision
             assert refused is False

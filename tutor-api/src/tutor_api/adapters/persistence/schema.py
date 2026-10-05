@@ -749,3 +749,35 @@ class SupersededAuditSchema:
             f"REVOKE UPDATE, DELETE, TRUNCATE ON TABLE turn_audit FROM {role}",
             f"REVOKE UPDATE, DELETE, TRUNCATE ON TABLE gate_evaluation FROM {role}",
         )
+
+
+class RequestPathPrivileges:
+    """SELECT on the tables a request reads. Writes stay with the owner.
+
+    Retrieval joins ``kb_chunk`` to ``kb_document``. The policy reader
+    selects ``policy_version``. Curation and publication are the operator
+    path (DEC-0014), so this role is not granted INSERT on these tables.
+    The audit migration already created the role and granted the audit
+    tables; this grant is the read the request path was missing.
+    """
+
+    _TABLES = ("policy_version", "kb_document", "kb_chunk")
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Revoke everything, then grant SELECT on each request-path table."""
+        role = self._role.identifier()
+        granted: list[str] = []
+        for table in self._TABLES:
+            granted.append(f"REVOKE ALL ON TABLE {table} FROM PUBLIC, {role}")
+            granted.append(f"GRANT SELECT ON TABLE {table} TO {role}")
+        return tuple(granted)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the SELECT grant. The tables themselves stay."""
+        role = self._role.identifier()
+        return tuple(
+            f"REVOKE SELECT ON TABLE {table} FROM {role}" for table in self._TABLES
+        )

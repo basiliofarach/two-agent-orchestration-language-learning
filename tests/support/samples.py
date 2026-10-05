@@ -4,14 +4,16 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from tutor_core.domain.audit.chain import ChainBreak
+from tutor_core.domain.audit.record_hash import HistoricalPrompt
 from tutor_core.domain.models.audit import HumanAction, TurnAuditRecord
+from tutor_core.domain.models.corpus import CorpusDocument, IngestedDocument
 from tutor_core.domain.models.learner import (
     HistoryItem,
     LearnerHistorySnapshot,
     LearnerId,
 )
 from tutor_core.domain.models.retrieval import (
-    RetrievalQuery,
+    RedactedRetrievalRequest,
     RetrievalResult,
     Snippet,
     SourceRef,
@@ -26,10 +28,16 @@ from tutor_core.domain.models.safety import (
     RenderedPrompt,
     SafetyFlag,
     SourceSupportReport,
+    StoredLearnerPrompt,
 )
 from tutor_core.domain.models.turn import TurnState
 from tutor_core.domain.models.verdict import GateVerdict
-from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard
+from tutor_core.domain.policy.policy_card import (
+    ArticleMapping,
+    LegacyAction,
+    PolicyCard,
+    PolicyRule,
+)
 
 
 class Samples:
@@ -56,9 +64,6 @@ class Samples:
             source=self.source(),
             ordinal=0,
         )
-
-    def query(self) -> RetrievalQuery:
-        return RetrievalQuery(text="how do I greet someone")
 
     def retrieval(self) -> RetrievalResult:
         return RetrievalResult(
@@ -155,13 +160,11 @@ class Samples:
         )
 
     def audit_record(self) -> TurnAuditRecord:
-        prompt = "Where is the library?"
         return TurnAuditRecord(
             turn_id=UUID("00000000-0000-4000-8000-000000000003"),
             session_id=UUID("00000000-0000-4000-8000-000000000004"),
             turn_index=0,
-            learner_prompt_redacted=prompt,
-            redacted_categories=(),
+            learner_prompt=self.stored_prompt(),
             retrieved_context_ids=(str(self.snippet().chunk_id),),
             model_revision="b" * 40,
             template_version="tpl-1",
@@ -183,8 +186,7 @@ class Samples:
             turn_id=UUID("00000000-0000-4000-8000-000000000003"),
             session_id=UUID("00000000-0000-4000-8000-000000000004"),
             turn_index=0,
-            learner_prompt_redacted="Where is the library?",
-            redacted_categories=(),
+            learner_prompt=self.stored_prompt(),
             retrieved_context_ids=(),
             policy_version="policy-1",
             previous_record_hash="c" * 64,
@@ -195,14 +197,58 @@ class Samples:
     def article_mapping(self) -> ArticleMapping:
         return ArticleMapping(article="12", locus="per-turn audit log")
 
+    def legacy_action(self) -> LegacyAction:
+        return LegacyAction(action="retrieve_vetted")
+
+    def historical_prompt(self) -> HistoricalPrompt:
+        return HistoricalPrompt.from_stored(self.stored_prompt())
+
+    def policy_rule(
+        self,
+        rule_id: str = "retrieve-vetted",
+        statement: str = "retrieve_vetted",
+        article: str = "10",
+    ) -> PolicyRule:
+        return PolicyRule(
+            policy_rule_id=rule_id,
+            statement=statement,
+            article=article,
+        )
+
     def policy_card(self) -> PolicyCard:
         return PolicyCard(
             version="policy-1",
-            allowed_actions=("retrieve_vetted",),
-            denied_actions=("open_web",),
-            escalation_rules=("pause_routes_to_tutor",),
+            allowed_actions=(self.policy_rule(),),
+            denied_actions=(self.policy_rule("no-open-web", "open_web", "10"),),
+            escalation_rules=(
+                self.policy_rule("pause-to-tutor", "pause_routes_to_tutor", "14"),
+            ),
             article_mappings=(self.article_mapping(),),
         )
+
+    def corpus_document(self) -> CorpusDocument:
+        return CorpusDocument(
+            document_id=UUID("00000000-0000-4000-8000-000000000060"),
+            source_uri="kb://library",
+            version="1",
+            review_status="approved",
+            content="The library is open.",
+        )
+
+    def ingested_document(self) -> IngestedDocument:
+        return IngestedDocument(
+            document_id=UUID("00000000-0000-4000-8000-000000000060"),
+            chunk_ids=(UUID("00000000-0000-4000-8000-000000000061"),),
+        )
+
+    def redacted_request(
+        self, text: str = "Where is the library?", limit: int = 5
+    ) -> RedactedRetrievalRequest:
+        prompt = RedactedText(text=text, redacted_categories=(), redaction_count=0)
+        return RedactedRetrievalRequest(prompt=prompt, limit=limit)
+
+    def stored_prompt(self) -> StoredLearnerPrompt:
+        return StoredLearnerPrompt.model_validate(self.redacted())
 
     def turn(self) -> TurnState:
         return TurnState(
@@ -216,7 +262,6 @@ class Samples:
 
     def frozen_instances(self) -> tuple[object, ...]:
         return (
-            self.query(),
             self.source(),
             self.snippet(),
             self.retrieval(),
@@ -238,5 +283,12 @@ class Samples:
             self.audit_record(),
             self.chain_break(),
             self.article_mapping(),
+            self.legacy_action(),
+            self.historical_prompt(),
+            self.policy_rule(),
             self.policy_card(),
+            self.corpus_document(),
+            self.ingested_document(),
+            self.redacted_request(),
+            self.stored_prompt(),
         )

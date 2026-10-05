@@ -94,6 +94,33 @@ class RedactedText(BaseModel):
         return self
 
 
+class StoredLearnerPrompt(BaseModel):
+    """The prompt an audit record stores (REQ-MINOR, REQ-AUDIT).
+
+    Built from the ``RedactedText`` the redactor returned. A raw ``str`` is
+    rejected, so ``TurnAuditRecord`` cannot be handed the string that
+    arrived. REQ-AUDIT stores the redacted text and the categories beside
+    it; ``redaction_count`` has no column, so it is not carried here, and a
+    record rebuilt from its row hashes to the digest it was sealed with.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    redacted_categories: tuple[str, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_redacted_text(cls, value: object) -> object:
+        """Take the redactor's output as it was returned."""
+        if isinstance(value, RedactedText):
+            return {
+                "text": value.text,
+                "redacted_categories": value.redacted_categories,
+            }
+        return value
+
+
 class RenderedPrompt(BaseModel):
     """A fixed template after rendering, with the template version to log."""
 

@@ -30,7 +30,8 @@ in the [Implementation plan](../architecture/IMPLEMENTATION-PLAN.md).
 | [DEC-0010](0010-mutable-turnstate-graph-wrapper.md) | Working `TurnState` is mutable Pydantic; graph state wraps it | Accepted (amended: recorded instants) |
 | [DEC-0011](0011-layer-roles-and-service-lifecycle.md) | Layer roles; application-service typestate chain | Accepted |
 | [DEC-0012](0012-encryption-at-rest-by-default.md) | Encryption at rest by default; plaintext is the exception | Accepted |
-| [DEC-0013](0013-first-party-composition-root.md) | First-party composition root; FastAPI `Depends()` only | Accepted |
+| [DEC-0013](0013-first-party-composition-root.md) | First-party composition root; FastAPI `Depends()` only | Accepted (amended: request scope) |
+| [DEC-0014](0014-one-request-connection.md) | One connection per request; persistence ports enlist in it | Accepted |
 
 ## Article coverage
 
@@ -40,7 +41,7 @@ Article it speaks to, so the columns do not partition.
 | AI Act article | Records |
 | --- | --- |
 | Art. 10 — Data governance | 0002, 0006, 0007, 0012 |
-| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010, 0012 |
+| Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010, 0012, 0014 |
 | Art. 14 — Human oversight | 0004, 0005, 0008 |
 | Art. 15 — Accuracy and robustness | 0001, 0005, 0007, 0011, 0013 |
 

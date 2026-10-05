@@ -14,16 +14,18 @@ from tests.support.timezones import OffsetlessTimezone
 from tutor_core.domain import models as model_package
 from tutor_core.domain import policy as policy_package
 from tutor_core.domain.models.audit import HumanAction, TurnAuditRecord
-from tutor_core.domain.models.retrieval import RetrievalResult
+from tutor_core.domain.models.corpus import CorpusDocument
+from tutor_core.domain.models.retrieval import RedactedRetrievalRequest, RetrievalResult
 from tutor_core.domain.models.safety import (
     ClaimSpan,
     GeneratedUnit,
     RedactedText,
     SourceSupportReport,
+    StoredLearnerPrompt,
 )
 from tutor_core.domain.models.turn import TurnState
 from tutor_core.domain.models.verdict import GateDecision, GateStage, GateVerdict
-from tutor_core.domain.policy.policy_card import PolicyCard
+from tutor_core.domain.policy.policy_card import PolicyCard, PolicyRule
 
 _FROZEN = Samples().frozen_instances()
 
@@ -105,8 +107,8 @@ class TestTurnAuditRecord:
     def test_prompt_is_stored_not_digested(self) -> None:
         prompt = "Where is the library?"
         record = Samples().audit_record()
-        assert record.learner_prompt_redacted == prompt
-        assert " " in record.learner_prompt_redacted
+        assert record.learner_prompt.text == prompt
+        assert " " in record.learner_prompt.text
 
     def test_output_before_and_after_checks_are_both_kept(self) -> None:
         record = TurnAuditRecord.model_validate(
@@ -397,6 +399,127 @@ class TestPolicyCard:
         payload["version"] = ""
         with pytest.raises(ValidationError):
             PolicyCard.model_validate(payload)
+
+    def test_a_rule_without_a_policy_rule_id_is_rejected(self) -> None:
+        payload = Samples().policy_rule().model_dump()
+        payload["policy_rule_id"] = ""
+        with pytest.raises(ValidationError):
+            PolicyRule.model_validate(payload)
+
+    def test_a_missing_policy_rule_id_is_rejected(self) -> None:
+        payload = Samples().policy_rule().model_dump()
+        del payload["policy_rule_id"]
+        with pytest.raises(ValidationError):
+            PolicyRule.model_validate(payload)
+
+    def test_an_unknown_article_mapping_is_rejected(self) -> None:
+        payload = Samples().article_mapping().model_dump()
+        payload["article"] = "99"
+        with pytest.raises(ValidationError, match="unknown article mapping"):
+            PolicyCard.model_validate(
+                {
+                    **Samples().policy_card().model_dump(),
+                    "article_mappings": [payload],
+                }
+            )
+
+    def test_a_rule_without_an_article_is_rejected(self) -> None:
+        payload = Samples().policy_rule().model_dump()
+        del payload["article"]
+        with pytest.raises(ValidationError, match="no article"):
+            PolicyRule.model_validate(payload)
+
+    def test_a_legacy_action_string_keeps_the_action_and_no_article(self) -> None:
+        rule = PolicyRule.model_validate("retrieve_vetted")
+        assert rule.policy_rule_id == "retrieve_vetted"
+        assert rule.statement == "retrieve_vetted"
+        assert rule.article is None
+
+    def test_an_empty_legacy_action_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="legacy policy action is empty"):
+            PolicyRule.model_validate("   ")
+
+    def test_an_unknown_article_on_a_rule_is_rejected(self) -> None:
+        payload = Samples().policy_rule().model_dump()
+        payload["article"] = "99"
+        with pytest.raises(ValidationError, match="unknown article mapping"):
+            PolicyRule.model_validate(payload)
+
+    def test_a_repeated_policy_rule_id_is_rejected(self) -> None:
+        rule = Samples().policy_rule().model_dump()
+        payload = Samples().policy_card().model_dump()
+        payload["denied_actions"] = [rule]
+        with pytest.raises(ValidationError, match="policy_rule_id repeated"):
+            PolicyCard.model_validate(payload)
+
+
+class TestLearnerTextBoundary:
+    def test_retrieval_rejects_a_raw_string(self) -> None:
+        with pytest.raises(ValidationError):
+            RedactedRetrievalRequest.model_validate(
+                {"prompt": "ada@example.com", "limit": 5}
+            )
+
+    def test_retrieval_rejects_an_empty_prompt(self) -> None:
+        empty = RedactedText(text="", redacted_categories=(), redaction_count=0)
+        with pytest.raises(ValidationError, match="no text"):
+            RedactedRetrievalRequest(prompt=empty)
+
+    def test_the_stored_prompt_rejects_a_raw_string(self) -> None:
+        with pytest.raises(ValidationError):
+            StoredLearnerPrompt.model_validate("ada@example.com")
+
+    def test_the_stored_prompt_keeps_the_text_and_categories(self) -> None:
+        redacted = RedactedText(
+            text="Email [REDACTED:email]",
+            redacted_categories=("email",),
+            redaction_count=2,
+        )
+        stored = StoredLearnerPrompt.model_validate(redacted)
+        assert stored.text == redacted.text
+        assert stored.redacted_categories == ("email",)
+        assert "redaction_count" not in stored.model_dump()
+
+    def test_the_audit_record_rejects_a_raw_prompt_string(self) -> None:
+        payload = Samples().stopped_audit_record().model_dump()
+        payload["learner_prompt"] = "ada@example.com"
+        with pytest.raises(ValidationError):
+            TurnAuditRecord.model_validate(payload)
+
+    def test_the_audit_record_has_no_raw_prompt_field(self) -> None:
+        payload = Samples().stopped_audit_record().model_dump()
+        payload["learner_prompt_redacted"] = "ada@example.com"
+        with pytest.raises(ValidationError):
+            TurnAuditRecord.model_validate(payload)
+
+    def test_the_audit_record_takes_the_redactor_output(self) -> None:
+        redacted = RedactedText(
+            text="Email [REDACTED:email]",
+            redacted_categories=("email",),
+            redaction_count=1,
+        )
+        record = Samples().stopped_audit_record()
+        rebuilt = TurnAuditRecord.model_validate(
+            {**record.model_dump(), "learner_prompt": redacted}
+        )
+        assert rebuilt.learner_prompt.text == "Email [REDACTED:email]"
+        assert rebuilt.learner_prompt.redacted_categories == ("email",)
+
+    def test_a_dumped_audit_record_validates_back_to_itself(self) -> None:
+        record = Samples().audit_record()
+        assert TurnAuditRecord.model_validate(record.model_dump()) == record
+
+    def test_ingestion_refuses_a_missing_review_status(self) -> None:
+        payload = Samples().corpus_document().model_dump()
+        del payload["review_status"]
+        with pytest.raises(ValidationError):
+            CorpusDocument.model_validate(payload)
+
+    def test_ingestion_does_not_treat_whitespace_as_a_document(self) -> None:
+        payload = Samples().corpus_document().model_dump()
+        payload["content"] = "\n\n"
+        with pytest.raises(ValidationError, match="no passages"):
+            CorpusDocument.model_validate(payload)
 
 
 class DatetimeNowCalls:

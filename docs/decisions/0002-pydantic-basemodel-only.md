@@ -28,8 +28,7 @@ class TurnAuditRecord(BaseModel):
     turn_id: UUID
     session_id: UUID
     turn_index: int
-    learner_prompt_redacted: str      # PII-redacted prompt (REQ-AUDIT)
-    redacted_categories: tuple[str, ...]
+    learner_prompt: StoredLearnerPrompt  # redacted text + categories (REQ-AUDIT)
     retrieved_context_ids: tuple[str, ...]
     model_revision: str | None        # pinned SHA when the model ran; null on a stop
     output_before_checks: str | None  # null with the revision when the model did not run
