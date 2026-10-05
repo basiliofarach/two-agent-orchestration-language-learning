@@ -7,8 +7,11 @@ from tutor_api.settings import ApplicationSettings
 
 
 class Configured:
+    """Settings with no ``.env``. The owner is named unless a test overrides it."""
+
     def settings(self, **values: object) -> ApplicationSettings:
-        return ApplicationSettings(_env_file=None, **values)  # type: ignore[call-arg]
+        named = {"postgres_user": "tutor_owner", **values}
+        return ApplicationSettings(_env_file=None, **named)  # type: ignore[call-arg]
 
 
 class TestApplicationDatabaseUrl:
@@ -70,6 +73,37 @@ class TestApplicationDatabaseUrl:
             postgres_app_password="secret",
         )
         with pytest.raises(ValueError, match="is the migration owner"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_the_owner_named_only_by_database_url_is_rejected(self) -> None:
+        settings = Configured().settings(
+            postgres_user=None,
+            database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+            postgres_app_user="tutor_owner",
+            application_database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+        )
+        with pytest.raises(ValueError, match="is the migration owner"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_database_url_names_the_owner_over_postgres_user(self) -> None:
+        settings = Configured().settings(
+            postgres_user="someone_else",
+            database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+            postgres_app_user="tutor_owner",
+            application_database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+        )
+        with pytest.raises(ValueError, match="is the migration owner"):
+            ApplicationDatabaseUrl(settings).value()
+
+    def test_an_unknown_owner_is_rejected_rather_than_assumed_distinct(
+        self,
+    ) -> None:
+        settings = Configured().settings(
+            postgres_user=None,
+            postgres_app_user="tutor_owner",
+            application_database_url="postgresql://tutor_owner:secret@db:5432/tutor",
+        )
+        with pytest.raises(ValueError, match="cannot tell the migration owner"):
             ApplicationDatabaseUrl(settings).value()
 
     def test_an_override_without_a_user_is_rejected(self) -> None:

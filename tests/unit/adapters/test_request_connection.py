@@ -2,9 +2,14 @@
 
 import asyncio
 
+import pytest
 from tests.unit.adapters.test_unit_of_work import RecordingConnection
 
-from tutor_api.adapters.persistence.database import DatabaseEngine, RequestConnection
+from tutor_api.adapters.persistence.database import (
+    DatabaseEngine,
+    RequestConnection,
+    RequestConnectionClosed,
+)
 from tutor_core.domain.ports.unit_of_work import TransactionConnection
 
 
@@ -73,13 +78,42 @@ class TestRequestConnection:
         assert opened.rolled_back
         assert opened.closed
 
-    async def test_after_close_the_next_use_takes_a_new_connection(self) -> None:
+    async def test_a_statement_after_close_raises_and_opens_nothing(self) -> None:
         engine = CountingEngine()
         connection = RequestConnection(engine)
         await connection.execute("SELECT 1")
         await connection.close()
-        await connection.execute("SELECT 2")
-        assert len(engine.opened) == 2
+        with pytest.raises(RequestConnectionClosed, match="already closed"):
+            await connection.execute("SELECT 2")
+        with pytest.raises(RequestConnectionClosed, match="already closed"):
+            await connection.fetch_one("SELECT 3", {})
+        with pytest.raises(RequestConnectionClosed, match="already closed"):
+            await connection.fetch_all("SELECT 4", {})
+        assert len(engine.opened) == 1
+
+    async def test_close_before_first_use_is_also_final(self) -> None:
+        engine = CountingEngine()
+        connection = RequestConnection(engine)
+        await connection.close()
+        with pytest.raises(RequestConnectionClosed, match="already closed"):
+            await connection.execute("SELECT 1")
+        assert engine.opened == []
+
+    async def test_commit_after_close_raises(self) -> None:
+        connection = RequestConnection(CountingEngine())
+        await connection.execute("SELECT 1")
+        await connection.close()
+        with pytest.raises(RequestConnectionClosed, match="already closed"):
+            await connection.commit()
+
+    async def test_rollback_and_close_after_close_are_no_ops(self) -> None:
+        engine = CountingEngine()
+        connection = RequestConnection(engine)
+        await connection.execute("SELECT 1")
+        await connection.close()
+        await connection.rollback()
+        await connection.close()
+        assert not engine.opened[0].rolled_back
 
     async def test_concurrent_first_use_opens_one_connection(self) -> None:
         engine = GatedEngine()

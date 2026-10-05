@@ -35,6 +35,17 @@ class PiiExamples:
             ("person_name", "Me llamo Ana García", "Ana García"),
             ("person_name", "mi nombre es Lucía", "Lucía"),
             ("person_name", "Hola, soy Íñigo", "Íñigo"),
+            ("person_name", "My name is O'Connor", "Connor"),
+            ("person_name", "I'm Sinéad O’Brien", "Brien"),
+            ("person_name", "My name is María de la Cruz", "Cruz"),
+            ("person_name", "Me llamo Ana-Lucía Pérez", "Lucía"),
+            ("person_name", "Me llamo Ana-Lucía Pérez", "Pérez"),
+            ("person_name", "I am Ludwig van Beethoven", "Beethoven"),
+            ("person_name", "My name is Ronald McDonald", "McDonald"),
+            ("person_name", "my name is maria", "maria"),
+            ("person_name", "my name is maria lopez.", "lopez"),
+            ("person_name", "me llamo ana y tengo diez años", "ana"),
+            ("person_name", "mi nombre es lucía, hola", "lucía"),
             ("postal_address", "I live at 12 King Street", "12 King Street"),
             ("postal_address", "I live at 12 Baker St", "12 Baker St"),
             ("postal_address", "Vivo en la Calle Mayor 5", "Calle Mayor 5"),
@@ -55,6 +66,7 @@ class OrdinaryPrompts:
             "Call me tomorrow",
             "I have 3 cats and 2 dogs",
             "The year 2026 was good",
+            "me llamo por teléfono a mi madre",
         )
 
 
@@ -89,6 +101,20 @@ class TestRegexPiiRedactor:
             "My name is Ada and I like books"
         )
         assert redacted.text == "My name is [REDACTED:person_name] and I like books"
+
+    def test_a_stated_full_name_is_one_replacement(self) -> None:
+        redacted = RegexPiiRedactor(StandardPiiSteps().steps()).redact(
+            "My name is María de la Cruz and I like books"
+        )
+        assert redacted.text == "My name is [REDACTED:person_name] and I like books"
+        assert redacted.redaction_count == 1
+
+    def test_a_category_is_listed_once_when_two_steps_find_it(self) -> None:
+        redacted = RegexPiiRedactor(StandardPiiSteps().steps()).redact(
+            "I am Bob. my name is maria"
+        )
+        assert redacted.redacted_categories == ("person_name",)
+        assert redacted.redaction_count == 2
 
     def test_repeated_emails_count_each_match(self) -> None:
         redacted = RegexPiiRedactor(StandardPiiSteps().steps()).redact(

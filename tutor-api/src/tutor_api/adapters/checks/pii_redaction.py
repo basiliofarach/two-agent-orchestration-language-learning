@@ -32,6 +32,14 @@ class StandardPiiSteps:
     ("Ada is my friend") is not found. Where a form is ambiguous the
     pattern over-redacts: a capitalised word after "I am" is treated as a
     name. For a minor's input, a lost word costs less than a leaked name.
+
+    A stated name runs to its last part: apostrophes (O'Connor), hyphens
+    (Ana-Lucía), inner capitals (McDonald), and lowercase particles between
+    capitalised parts (María de la Cruz). Learners often type in lowercase,
+    so a lowercase name is found too, but only after a lead-in that names
+    and nothing else ("my name is", "me llamo", "mi nombre es") and only
+    when it ends the clause. "I am tired" and "call me tomorrow" keep their
+    words.
     """
 
     _UPPER = "A-ZÀ-ÖØ-Þ"
@@ -46,6 +54,9 @@ class StandardPiiSteps:
             ),
             RedactionStep(category="phone", pattern=self._phone()),
             RedactionStep(category="person_name", pattern=self._person_name()),
+            RedactionStep(
+                category="person_name", pattern=self._lowercase_person_name()
+            ),
             RedactionStep(category="postal_address", pattern=self._address()),
         )
 
@@ -58,13 +69,30 @@ class StandardPiiSteps:
             r"|\b\d{9,15}\b"
         )
 
+    _PARTICLES = r"(?:(?:de|del|da|das|di|do|dos|du|la|las|los|le|van|von|der|den)\s+)"
+
     def _person_name(self) -> str:
-        word = f"[{self._UPPER}][{self._LOWER}]+"
+        part = (
+            f"[{self._UPPER}](?:['’][{self._UPPER}])?[{self._LOWER}]+"
+            f"(?:[{self._UPPER}][{self._LOWER}]+)?"
+        )
+        word = f"{part}(?:-{part})*"
         lead_in = (
             r"(?i:\b(?:my\s+name\s+is|my\s+name['’]s|i['’]m|i\s+am|call\s+me"
             r"|me\s+llamo|mi\s+nombre\s+es|soy)\s+)"
         )
-        return rf"{lead_in}(?P<pii>{word}(?:\s+{word}){{0,2}})\b"
+        rest = rf"(?:\s+{self._PARTICLES}{{0,2}}{word}){{0,3}}"
+        return rf"{lead_in}(?P<pii>{word}{rest})\b"
+
+    def _lowercase_person_name(self) -> str:
+        word = f"[{self._LOWER}]+(?:['’-][{self._LOWER}]+)*"
+        lead_in = (
+            r"(?i:\b(?:my\s+name\s+is|my\s+name['’]s|me\s+llamo"
+            r"|mi\s+nombre\s+es)\s+)"
+        )
+        rest = rf"(?:\s+{self._PARTICLES}{{0,2}}{word}){{0,2}}"
+        clause_end = r"(?=\s*(?:$|[.,;:!?)]|(?:and|y|but|pero)\b))"
+        return rf"{lead_in}(?P<pii>{word}{rest}){clause_end}"
 
     def _address(self) -> str:
         word = f"[{self._UPPER}][{self._LOWER}]+"
@@ -109,7 +137,7 @@ class RegexPiiRedactor(PiiRedactionPort):
             replace = partial(self._replace, token=self._token(step.category))
             current, found = re.compile(step.pattern).subn(replace, current)
             count += found
-            if found:
+            if found and step.category not in categories:
                 categories.append(step.category)
         return RedactedText(
             text=current,

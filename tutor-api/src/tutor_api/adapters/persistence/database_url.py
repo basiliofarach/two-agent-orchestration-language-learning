@@ -93,16 +93,41 @@ class DriverSwap:
 class UrlUser:
     """The login name in a Postgres URL. Absent means the URL names none."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, variable: str = "APPLICATION_DATABASE_URL") -> None:
         self._url = url
+        self._variable = variable
 
     def value(self) -> str:
         """Return the decoded user. Raise when the URL has none."""
         username = urlsplit(self._url).username
         if not username:
-            msg = "APPLICATION_DATABASE_URL has no user"
+            msg = f"{self._variable} has no user"
             raise ValueError(msg)
         return username
+
+
+class MigrationOwner:
+    """The role Alembic connects as, from the source that URL is built from.
+
+    ``DATABASE_URL`` wins, as it does in :class:`MigrationDatabaseUrl`, so
+    its user is the owner even when ``POSTGRES_USER`` names someone else.
+    """
+
+    def __init__(self, settings: ApplicationSettings) -> None:
+        self._settings = settings
+
+    def name(self) -> str:
+        """Return the owner's login. Raise when neither source names one."""
+        configured = self._settings.database_url
+        if configured:
+            return UrlUser(configured, "DATABASE_URL").value()
+        if self._settings.postgres_user:
+            return self._settings.postgres_user
+        msg = (
+            "cannot tell the migration owner from the application role: "
+            "set POSTGRES_USER or DATABASE_URL"
+        )
+        raise ValueError(msg)
 
 
 class ApplicationRoleUrl:
@@ -126,7 +151,7 @@ class ApplicationRoleUrl:
 class DistinctFromOwner:
     """The application role is never the migration owner (DEC-0014)."""
 
-    def __init__(self, owner: str | None) -> None:
+    def __init__(self, owner: str) -> None:
         self._owner = owner
 
     def require(self, role: str) -> str:
@@ -147,8 +172,10 @@ class ApplicationDatabaseUrl:
     the request path needs, so a request cannot alter the schema.
     ``APPLICATION_DATABASE_URL`` is accepted only when its user is
     ``postgres_app_user``. An override that logs in as the migration owner
-    is rejected, and so is a ``postgres_app_user`` equal to
-    ``postgres_user``, which would pass that check. Otherwise the URL is
+    is rejected, and so is a ``postgres_app_user`` equal to the owner, which
+    would pass that check. The owner is read from ``DATABASE_URL`` or
+    ``POSTGRES_USER``, as Alembic reads it; when neither names one, the URL
+    is refused rather than assumed to differ. Otherwise the URL is
     composed from ``POSTGRES_APP_*`` and the shared host, port and database.
     """
 
@@ -159,7 +186,7 @@ class ApplicationDatabaseUrl:
 
     def value(self) -> str:
         """Return the URL, driver normalised to asyncpg."""
-        role = DistinctFromOwner(self._settings.postgres_user).require(
+        role = DistinctFromOwner(MigrationOwner(self._settings).name()).require(
             self._settings.postgres_app_user
         )
         configured = self._settings.application_database_url

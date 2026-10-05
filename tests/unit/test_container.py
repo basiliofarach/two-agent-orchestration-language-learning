@@ -39,6 +39,7 @@ class Configured:
 
     def settings(self, **values: object) -> ApplicationSettings:
         defaults: dict[str, object] = {
+            "postgres_user": "tutor_owner",
             "postgres_db": "tutor",
             "postgres_app_password": "app-secret",
             "tutor_kek": SecretStr(base64.b64encode(bytes(range(32))).decode()),

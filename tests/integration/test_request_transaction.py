@@ -104,6 +104,7 @@ class Wired:
         settings = ApplicationSettings(
             _env_file=None,  # type: ignore[call-arg]
             postgres_app_user=self._login.role(),
+            database_url=self._url,
             application_database_url=self._login.async_url(),
             tutor_kek=SecretStr(base64.b64encode(_KEK).decode()),
             tutor_kek_id=UUID(int=1),
