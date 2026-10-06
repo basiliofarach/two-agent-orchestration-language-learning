@@ -213,6 +213,29 @@ class TestConductTurnOverHttp:
         assert served.model.calls == 0
         assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
 
+    async def test_a_reply_that_negates_the_vetted_sentence_pauses_at_drift(
+        self, fresh_database: str
+    ) -> None:
+        served = Served(
+            fresh_database,
+            RecordingModel("It is false that Hola means hello in Spanish."),
+        )
+        await served.install()
+        for client in served.client():
+            response = client.post(
+                "/turns", json=served.body("What does hola mean in Spanish?")
+            )
+        outcome = response.json()
+        assert outcome["status"] == "held_for_review"
+        assert outcome["halted_at"] == "drift_and_anomaly"
+        assert outcome["unsupported_claims"] == [
+            "It is false that Hola means hello in Spanish."
+        ]
+        assert served.gates(outcome["turn_id"])[3][1:] == (
+            "pause",
+            "drift-outside-envelope",
+        )
+
     async def test_a_session_stopped_during_generation_keeps_no_audit_row(
         self, fresh_database: str
     ) -> None:

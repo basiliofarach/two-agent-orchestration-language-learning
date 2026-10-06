@@ -303,7 +303,7 @@ classDiagram
     class CategorySafetyClassifier {
         +classify(text) tuple~SafetyFlag~
     }
-    class OverlapSourceSupport {
+    class SentenceSourceSupport {
         +verify(draft, snippets) SourceSupportReport
     }
 
@@ -311,7 +311,7 @@ classDiagram
     PromptTemplatePort <|.. FixedPromptTemplate
     GrammarCheckPort <|.. PatternGrammarCheck
     SafetyClassifierPort <|.. CategorySafetyClassifier
-    SourceSupportPort <|.. OverlapSourceSupport
+    SourceSupportPort <|.. SentenceSourceSupport
 ```
 
 `SourceSupportPort` implements REQ-ACCURACY's hallucination control: it verifies
@@ -329,8 +329,12 @@ record.
 
 `PatternGrammarCheck` and `CategorySafetyClassifier` report findings from
 fixed patterns. A library grammar checker would move with its own release and
-break replay. `OverlapSourceSupport` marks a sentence supported when its
-normalised text overlaps a snippet.
+break replay. `SentenceSourceSupport` marks a sentence supported only when a snippet
+states that sentence: the same normalised text, ignoring the final mark.
+Containment is not support, because a wrapping clause ("It is false
+that …") or a denying passage ("It is a myth that …") reverses the claim.
+A paraphrase is therefore unsupported and the drift gate holds it for the
+tutor; that is the intended fail-closed cost.
 
 `FixedPromptTemplate` carries the tone constraints and target proficiency level;
 `template_version()` is logged, because REQ-ACCURACY treats prompt formulation

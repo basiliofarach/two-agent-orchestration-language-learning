@@ -19,7 +19,7 @@ from tutor_api.adapters.checks.safety import (
     SafetyRule,
 )
 from tutor_api.adapters.checks.source_support import (
-    OverlapSourceSupport,
+    SentenceSourceSupport,
     SentenceSplitter,
 )
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
@@ -37,9 +37,9 @@ class TestCategorySafetyClassifierContract(SafetyClassifierPortContract):
         return CategorySafetyClassifier(MinorSafetyRules().rules())
 
 
-class TestOverlapSourceSupportContract(SourceSupportPortContract):
+class TestSentenceSourceSupportContract(SourceSupportPortContract):
     def port(self) -> SourceSupportPort:
-        return OverlapSourceSupport(SentenceSplitter())
+        return SentenceSourceSupport(SentenceSplitter())
 
 
 class TestPatternGrammarCheck:
@@ -121,9 +121,9 @@ class TestCategorySafetyClassifier:
         assert CategorySafetyClassifier((rule,)).classify("hello") == ()
 
 
-class TestOverlapSourceSupport:
-    def _support(self) -> OverlapSourceSupport:
-        return OverlapSourceSupport(SentenceSplitter())
+class TestSentenceSourceSupport:
+    def _support(self) -> SentenceSourceSupport:
+        return SentenceSourceSupport(SentenceSplitter())
 
     def test_an_overlapping_sentence_is_supported_and_the_other_is_kept(self) -> None:
         snippet = (
@@ -138,11 +138,43 @@ class TestOverlapSourceSupport:
         assert report.unsupported[0].text == "The museum is closed."
         assert report.support_ratio == 0.5
 
-    def test_a_passage_inside_a_longer_sentence_is_supported(self) -> None:
+    def test_a_passage_inside_a_longer_sentence_is_not_supported(self) -> None:
         snippet = Samples().snippet().model_copy(update={"content": "means hello"})
         report = self._support().verify("Hola means hello today.", (snippet,))
-        assert report.supported
-        assert report.unsupported == ()
+        assert report.supported == ()
+        assert report.support_ratio == 0.0
+
+    def test_a_sentence_that_negates_the_snippet_is_unsupported(self) -> None:
+        snippet = (
+            Samples()
+            .snippet()
+            .model_copy(update={"content": "Hola means hello in Spanish."})
+        )
+        report = self._support().verify(
+            "It is false that Hola means hello in Spanish.", (snippet,)
+        )
+        assert report.supported == ()
+        assert report.support_ratio == 0.0
+
+    def test_a_claim_the_snippet_only_mentions_to_deny_is_unsupported(self) -> None:
+        snippet = (
+            Samples()
+            .snippet()
+            .model_copy(update={"content": "It is a myth that hola means goodbye."})
+        )
+        report = self._support().verify("Hola means goodbye.", (snippet,))
+        assert report.supported == ()
+        assert report.support_ratio == 0.0
+
+    def test_one_sentence_of_a_longer_snippet_is_supported(self) -> None:
+        snippet = (
+            Samples()
+            .snippet()
+            .model_copy(update={"content": "Hola means hello.  Adios   means goodbye."})
+        )
+        report = self._support().verify("adios means goodbye!", (snippet,))
+        assert [span.text for span in report.supported] == ["adios means goodbye!"]
+        assert report.supported[0].source_ids == ("kb://greetings",)
         assert report.support_ratio == 1.0
 
     def test_a_one_word_sentence_is_not_treated_as_supported(self) -> None:

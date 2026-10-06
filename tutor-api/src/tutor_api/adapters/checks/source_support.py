@@ -8,14 +8,14 @@ from tutor_core.domain.ports.source_support import SourceSupportPort
 class SentenceSplitter:
     """Split a draft on sentence marks, keeping each sentence's offsets."""
 
-    _MARKS = ".!?"
+    MARKS = ".!?"
 
     def split(self, draft: str) -> tuple[tuple[str, int, int], ...]:
         """Return ``(text, start, end)`` for each non-blank sentence."""
         found: list[tuple[str, int, int]] = []
         start = 0
         for index, character in enumerate(draft):
-            if character not in self._MARKS:
+            if character not in self.MARKS:
                 continue
             found.extend(self._piece(draft, start, index + 1))
             start = index + 1
@@ -34,14 +34,22 @@ class SentenceSplitter:
         return ((text, span_start, span_start + len(text)),)
 
 
-class OverlapSourceSupport(SourceSupportPort):
-    """A sentence is supported when its text overlaps a retrieved passage.
+class SentenceSourceSupport(SourceSupportPort):
+    """A sentence is supported when a retrieved passage states that sentence.
 
-    Normalise by case-folding and collapsing whitespace. A sentence of
-    fewer than two words is not treated as a claim: it is listed as
-    unsupported, so a short fragment is not marked supported by accident.
-    The draft is not edited. Unsupported spans stay on the report.
-    ``source_ids`` on a supported span are the source URIs that overlapped.
+    Each snippet is split with the same splitter as the draft. A draft
+    sentence is supported only when it equals one snippet sentence after
+    case-folding, collapsing whitespace, and dropping the final sentence
+    mark. Containment is not support: "It is false that hola means hello"
+    contains a vetted sentence and reverses it, and "Hola means goodbye"
+    is contained in "It is a myth that hola means goodbye". Matching whole
+    sentences fails closed: a paraphrase is unsupported and the drift gate
+    holds it for the tutor (REQ-ACCURACY).
+
+    A sentence of fewer than two words is not treated as a claim: it is
+    listed as unsupported. The draft is not edited. Unsupported spans stay
+    on the report. ``source_ids`` on a supported span are the source URIs
+    that state the sentence.
     """
 
     def __init__(self, sentences: SentenceSplitter) -> None:
@@ -78,16 +86,21 @@ class OverlapSourceSupport(SourceSupportPort):
     def _matching(
         self, sentence: str, snippets: tuple[Snippet, ...]
     ) -> tuple[str, ...]:
-        normalised = self._normal(sentence)
-        if len(normalised.split()) < 2:
+        claim = self._normal(sentence)
+        if len(claim.split()) < 2:
             return ()
         found: list[str] = []
         for snippet in snippets:
-            material = self._normal(snippet.content)
             uri = snippet.source.source_uri
-            if uri not in found and (normalised in material or material in normalised):
+            if uri not in found and claim in self._stated(snippet.content):
                 found.append(uri)
         return tuple(found)
 
+    def _stated(self, passage: str) -> frozenset[str]:
+        """The normalised sentences ``passage`` states."""
+        return frozenset(
+            self._normal(text) for text, _start, _end in self._sentences.split(passage)
+        )
+
     def _normal(self, text: str) -> str:
-        return " ".join(text.casefold().split())
+        return " ".join(text.casefold().split()).rstrip(SentenceSplitter.MARKS)

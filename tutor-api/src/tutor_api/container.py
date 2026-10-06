@@ -24,7 +24,7 @@ from tutor_api.adapters.checks.grammar import MinorGrammarPatterns, PatternGramm
 from tutor_api.adapters.checks.pii_redaction import RegexPiiRedactor, StandardPiiSteps
 from tutor_api.adapters.checks.safety import CategorySafetyClassifier, MinorSafetyRules
 from tutor_api.adapters.checks.source_support import (
-    OverlapSourceSupport,
+    SentenceSourceSupport,
     SentenceSplitter,
 )
 from tutor_api.adapters.llm.fixed_prompt import FixedPromptTemplate
@@ -636,7 +636,7 @@ class SourceSupportProvider(Provider):
         return ()
 
     def create(self, resolved: Mapping[type, object]) -> object:
-        return OverlapSourceSupport(SentenceSplitter())
+        return SentenceSourceSupport(SentenceSplitter())
 
 
 class GenerationAgentProvider(Provider):
