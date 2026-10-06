@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from tutor_core.domain.models.timestamps import AwareDatetime
+from tutor_core.domain.models.timestamps import AwareDatetime, Timestamped
 
 
 class LearnerId(BaseModel):
@@ -47,10 +47,8 @@ class HistoryFieldSet(BaseModel):
         return tuple(field for field in requested if field not in self.fields)
 
 
-class HistoryItem(BaseModel):
+class HistoryItem(Timestamped):
     """One prior item outcome. The allowlist decides whether it is readable."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     item_id: str = Field(min_length=1)
     correct: bool

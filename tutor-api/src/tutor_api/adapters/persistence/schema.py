@@ -43,6 +43,31 @@ class ApplicationRole:
         return f"'{self._name}'"
 
 
+class InstantColumn:
+    """One full-precision ``timestamptz`` column (DEC-0010).
+
+    ``timestamptz(n)`` rounds, and ``timestamp`` without time zone comes back
+    naive. Neither spelling can be produced here. A new instant column is
+    this helper.
+    """
+
+    _NAME = re.compile(r"\A[a-z][a-z0-9_]{0,62}\Z")
+
+    def __init__(self, name: str) -> None:
+        if self._NAME.fullmatch(name) is None:
+            msg = "an instant column name is a lowercase identifier"
+            raise ValueError(msg)
+        self._name = name
+
+    def required(self) -> str:
+        """The column, always present."""
+        return f"{self._name} timestamptz NOT NULL"
+
+    def optional(self) -> str:
+        """The column, absent until the event it records has happened."""
+        return f"{self._name} timestamptz"
+
+
 class BaseSchema:
     """Knowledge base, learner, session, and policy tables."""
 
@@ -51,26 +76,32 @@ class BaseSchema:
 
     def statements(self) -> tuple[str, ...]:
         width = self.embedding_dimensions()
+        effective_from = InstantColumn("effective_from").required()
+        reviewed_at = InstantColumn("reviewed_at").optional()
+        retain_until = InstantColumn("retain_until").required()
+        occurred_at = InstantColumn("occurred_at").required()
+        started_at = InstantColumn("started_at").required()
+        stopped_at = InstantColumn("stopped_at").optional()
         return (
             "CREATE EXTENSION IF NOT EXISTS vector",
-            """
+            f"""
             CREATE TABLE policy_version (
                 version text PRIMARY KEY,
                 allowed_actions ciphertext NOT NULL,
                 denied_actions ciphertext NOT NULL,
                 escalation_rules ciphertext NOT NULL,
                 article_mappings ciphertext NOT NULL,
-                effective_from timestamptz NOT NULL
+                {effective_from}
             )
             """,
-            """
+            f"""
             CREATE TABLE kb_document (
                 id uuid PRIMARY KEY,
                 source_uri text NOT NULL,
                 version text NOT NULL,
                 review_status text NOT NULL,
                 reviewed_by ciphertext,
-                reviewed_at timestamptz,
+                {reviewed_at},
                 CONSTRAINT kb_document_review_status CHECK (
                     review_status IN ('pending', 'approved', 'rejected')
                 )
@@ -89,30 +120,30 @@ class BaseSchema:
             CREATE INDEX kb_chunk_embedding_hnsw
                 ON kb_chunk USING hnsw (embedding vector_cosine_ops)
             """,
-            """
+            f"""
             CREATE TABLE learner (
                 learner_id uuid PRIMARY KEY,
                 pseudonym ciphertext NOT NULL,
                 proficiency_level ciphertext NOT NULL,
-                retain_until timestamptz NOT NULL
+                {retain_until}
             )
             """,
-            """
+            f"""
             CREATE TABLE learner_history_event (
                 id uuid PRIMARY KEY,
                 learner_id uuid NOT NULL REFERENCES learner (learner_id),
                 item_id ciphertext NOT NULL,
                 correct boolean NOT NULL,
-                occurred_at timestamptz NOT NULL
+                {occurred_at}
             )
             """,
-            """
+            f"""
             CREATE TABLE tutoring_session (
                 id uuid PRIMARY KEY,
                 tutor_id ciphertext NOT NULL,
                 learner_id uuid NOT NULL REFERENCES learner (learner_id),
-                started_at timestamptz NOT NULL,
-                stopped_at timestamptz,
+                {started_at},
+                {stopped_at},
                 stop_reason ciphertext
             )
             """,
@@ -177,6 +208,9 @@ class AuditSchema:
         role = self._role.identifier()
         rolname = self._role.literal()
         generation = TurnAuditGenerationCheck().expression()
+        recorded_at = InstantColumn("recorded_at").required()
+        evaluated_at = InstantColumn("evaluated_at").required()
+        acted_at = InstantColumn("acted_at").required()
         return (
             f"""
             DO $role$
@@ -208,7 +242,7 @@ class AuditSchema:
                 policy_version text NOT NULL REFERENCES policy_version (version),
                 previous_record_hash text NOT NULL,
                 record_hash text NOT NULL,
-                recorded_at timestamptz NOT NULL,
+                {recorded_at},
                 CONSTRAINT turn_audit_session_turn UNIQUE (session_id, turn_index),
                 CONSTRAINT turn_audit_generation_together CHECK ({generation}
                 )
@@ -223,7 +257,7 @@ class AuditSchema:
                 UNIQUE (turn_id, chunk_id)
             )
             """,
-            """
+            f"""
             CREATE TABLE gate_evaluation (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
@@ -231,7 +265,7 @@ class AuditSchema:
                 decision text NOT NULL,
                 reason ciphertext,
                 policy_rule_id text NOT NULL,
-                evaluated_at timestamptz NOT NULL,
+                {evaluated_at},
                 CONSTRAINT gate_evaluation_decision CHECK (
                     decision IN ('pass', 'pause', 'stop', 'not_evaluated')
                 ),
@@ -240,14 +274,14 @@ class AuditSchema:
                 )
             )
             """,
-            """
+            f"""
             CREATE TABLE human_action (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
                 tutor_id ciphertext NOT NULL,
                 action text NOT NULL,
                 edited_output ciphertext,
-                acted_at timestamptz NOT NULL,
+                {acted_at},
                 CONSTRAINT human_action_kind CHECK (
                     action IN ('approve', 'edit', 'override', 'stop')
                 ),
@@ -331,6 +365,7 @@ class AuditSchemaUpgrade:
     def statements(self) -> tuple[str, ...]:
         role = self._role.identifier()
         generation = TurnAuditGenerationCheck().expression()
+        acted_at = InstantColumn("acted_at").required()
         return (
             f"""
             DO $upgrade$
@@ -436,7 +471,7 @@ class AuditSchemaUpgrade:
                         tutor_id ciphertext NOT NULL,
                         action text NOT NULL,
                         edited_output ciphertext,
-                        acted_at timestamptz NOT NULL,
+                        {acted_at},
                         CONSTRAINT human_action_kind CHECK (
                             action IN ('approve', 'edit', 'override', 'stop')
                         ),
@@ -513,6 +548,7 @@ class AuditSchemaUpgrade:
             "Not personal data. Required in cleartext for evidence "
             "and replay (DEC-0012)."
         )
+        recorded_at = InstantColumn("recorded_at").required()
         return (
             f"""
             DO $downgrade$
@@ -581,7 +617,7 @@ class AuditSchemaUpgrade:
                     policy_version text NOT NULL REFERENCES policy_version (version),
                     previous_record_hash text NOT NULL,
                     record_hash text NOT NULL,
-                    recorded_at timestamptz NOT NULL
+                    {recorded_at}
                 );
 
                 INSERT INTO turn_audit_restored (
@@ -675,6 +711,8 @@ class SupersededAuditSchema:
     def statements(self) -> tuple[str, ...]:
         role = self._role.identifier()
         rolname = self._role.literal()
+        recorded_at = InstantColumn("recorded_at").required()
+        evaluated_at = InstantColumn("evaluated_at").required()
         return (
             f"""
             DO $role$
@@ -687,7 +725,7 @@ class SupersededAuditSchema:
             END
             $role$
             """,
-            """
+            f"""
             CREATE TABLE turn_audit (
                 turn_id uuid PRIMARY KEY,
                 session_id uuid NOT NULL REFERENCES tutoring_session (id),
@@ -708,10 +746,10 @@ class SupersededAuditSchema:
                 policy_version text NOT NULL REFERENCES policy_version (version),
                 previous_record_hash text NOT NULL,
                 record_hash text NOT NULL,
-                recorded_at timestamptz NOT NULL
+                {recorded_at}
             )
             """,
-            """
+            f"""
             CREATE TABLE gate_evaluation (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
@@ -719,7 +757,7 @@ class SupersededAuditSchema:
                 decision text NOT NULL,
                 reason ciphertext,
                 policy_rule_id text NOT NULL,
-                evaluated_at timestamptz NOT NULL,
+                {evaluated_at},
                 CONSTRAINT gate_evaluation_decision CHECK (
                     decision IN ('pass', 'pause', 'stop', 'not_evaluated')
                 ),

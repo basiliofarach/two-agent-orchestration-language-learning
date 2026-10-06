@@ -42,10 +42,14 @@ addopts = [
     "--cov=tutor_api",
     "--cov-fail-under=100",
     "--cov-report=term-missing",
+    # Starts the real sandbox compose project; `make sandbox-lifecycle` runs it.
+    "-m",
+    "not sandbox_lifecycle",
 ]
 asyncio_mode = "auto"
 markers = [
     "requires_ollama: reaches the local Ollama runtime (skipped if unavailable)",
+    "sandbox_lifecycle: starts the throwaway compose project; only make sandbox-lifecycle runs it",
 ]
 filterwarnings = [
     "ignore:testcontainers.postgres is deprecated:DeprecationWarning",

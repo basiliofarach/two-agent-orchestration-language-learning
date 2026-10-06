@@ -7,7 +7,7 @@ REPO := $(abspath ..)
 # prek and CI all resolve. Do not relocate it per-member.
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
-	lint-migrations migrate seed serve
+	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
@@ -22,6 +22,8 @@ help:
 	@echo "  make up            start Postgres + pgvector"
 	@echo "  make down          stop Postgres"
 	@echo "  make test          pytest (coverage gate in the workspace)"
+	@echo "  make sandbox-test  throwaway Postgres: migrate it empty, audit it, integration tests"
+	@echo "  make sandbox-lifecycle  the sandbox runner itself, against real docker"
 	@echo "  make check         prek hooks + pytest"
 	@echo "  make lint-migrations  ruff --fix + format over alembic/versions"
 	@echo "  make smoke-model   local Ollama completion (SHA-pinned)"
@@ -47,6 +49,20 @@ lint-migrations:
 
 test: sync
 	$(UV) --directory "$(REPO)" run pytest
+
+# A second Postgres, not the one `make up` keeps. The compose file does not
+# read tutor-api/.env. The runner first removes any project a killed run left,
+# then migrates the empty `sandbox` database through the Alembic CLI. Each
+# integration test still creates its own database; test_instant_columns
+# audits the migrated one. The project and its volume are removed when pytest
+# exits, including when pytest fails.
+sandbox-test: sync
+	$(RUN) python -m tutor_api.sandbox
+
+# Starts and removes the real sandbox project. Not part of `make test`, and
+# skipped while a `make sandbox-test` holds the project.
+sandbox-lifecycle: sync
+	$(UV) --directory "$(REPO)" run pytest --no-cov -m sandbox_lifecycle tests/integration/test_sandbox_stack.py
 
 check: sync
 	cd "$(REPO)" && uvx prek run --all-files
