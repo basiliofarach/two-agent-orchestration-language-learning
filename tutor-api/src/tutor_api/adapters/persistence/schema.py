@@ -1,6 +1,12 @@
 """Non-audit tables (BE-05) and the append-only audit tables (BE-06)."""
 
 import re
+from collections.abc import Callable
+
+import psycopg
+
+from tutor_api.adapters.persistence.learner_history import HistoryOutcomeCodec
+from tutor_core.domain.ports.cipher import CipherPort
 
 
 class ApplicationRole:
@@ -780,4 +786,237 @@ class RequestPathPrivileges:
         role = self._role.identifier()
         return tuple(
             f"REVOKE SELECT ON TABLE {table} FROM {role}" for table in self._TABLES
+        )
+
+
+class LearnerHistoryColumnGrant:
+    """SELECT on exactly the history columns a read needs (REQ-HISTORY).
+
+    Column-level, not table-level: the application role can select
+    ``learner_id``, ``retain_until`` and ``proficiency_level`` from
+    ``learner``, and nothing else there. ``pseudonym`` stays unreadable to
+    the request path even if an adapter were changed to select it. The
+    Python allowlist narrows a read further; this grant is the floor the
+    database enforces. ``learner_history_event.id`` is included so the
+    read can order ties by the primary key; it is not a history field.
+
+    ``REVOKE ALL ON TABLE`` does not remove column privileges, so the
+    downgrade revokes the columns by name.
+    """
+
+    _COLUMNS = (
+        ("learner", ("learner_id", "retain_until", "proficiency_level")),
+        (
+            "learner_history_event",
+            ("learner_id", "item_id", "correct", "occurred_at", "id"),
+        ),
+    )
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Revoke table privileges, then grant SELECT on the named columns."""
+        role = self._role.identifier()
+        granted: list[str] = []
+        for table, columns in self._COLUMNS:
+            granted.append(f"REVOKE ALL ON TABLE {table} FROM PUBLIC, {role}")
+            granted.append(
+                f"GRANT SELECT ({', '.join(columns)}) ON TABLE {table} TO {role}"
+            )
+        return tuple(granted)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Revoke the column grants. The tables stay."""
+        role = self._role.identifier()
+        return tuple(
+            f"REVOKE SELECT ({', '.join(columns)}) ON TABLE {table} FROM {role}"
+            for table, columns in self._COLUMNS
+        )
+
+
+class LearnerHistoryEventIdGrant:
+    """SELECT on ``learner_history_event.id`` for catalogues already migrated.
+
+    The history grant class now includes ``id``. A database that applied
+    that revision before ``id`` was added does not re-run it, so this
+    grant repairs the privilege. Granting it again, on a fresh upgrade,
+    changes nothing. The downgrade leaves ``id`` in place: the history
+    grant owns that column, and its own downgrade revokes it.
+    """
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Grant SELECT on the event id. Idempotent if it is already held."""
+        role = self._role.identifier()
+        return (f"GRANT SELECT (id) ON TABLE learner_history_event TO {role}",)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Leave the id grant. The history grant's downgrade revokes it."""
+        return ()
+
+
+class TutoringSessionColumnGrant:
+    """SELECT on the session columns a turn must check before it reads.
+
+    Column-level: ``id``, ``learner_id`` and ``stopped_at`` only. The
+    request path confirms the session is this learner's and still open
+    (REQ-MINOR). ``tutor_id`` and ``stop_reason`` stay unreadable, so a
+    check cannot become a way to read the tutor's identity or the reason
+    the session was stopped.
+    """
+
+    _COLUMNS = ("id", "learner_id", "stopped_at")
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Revoke table privileges, then grant SELECT on the named columns."""
+        role = self._role.identifier()
+        columns = ", ".join(self._COLUMNS)
+        return (
+            f"REVOKE ALL ON TABLE tutoring_session FROM PUBLIC, {role}",
+            f"GRANT SELECT ({columns}) ON TABLE tutoring_session TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Revoke the column grant. The table stays."""
+        role = self._role.identifier()
+        columns = ", ".join(self._COLUMNS)
+        return (f"REVOKE SELECT ({columns}) ON TABLE tutoring_session FROM {role}",)
+
+
+class TurnAuditOpenSession:
+    """Refuse a ``turn_audit`` insert into a stopped session (ARCHITECTURE §8).
+
+    The request path checks the session before retrieval, but the model can
+    run for minutes after that. A stop committed in between would otherwise
+    see its session take one more turn. This trigger checks again at the
+    insert, in the database, so no request path can skip it.
+
+    ``FOR SHARE`` locks the session row until the turn commits. A stop that
+    is still uncommitted makes the insert wait and then see it; a stop that
+    arrives after the insert waits for the turn. Either way the turn and the
+    stop are ordered, and a stopped session never gains a row.
+
+    ``SECURITY DEFINER``: ``FOR SHARE`` needs UPDATE privilege, which the
+    application role must not hold on ``tutoring_session``. The function
+    runs as the migration owner with a fixed ``search_path``, reads
+    ``stopped_at`` only, and cannot be called except as this trigger.
+    """
+
+    SQLSTATE = "TS001"
+
+    def statements(self) -> tuple[str, ...]:
+        """Create the function and the trigger. The role gains no privilege."""
+        return (
+            f"""
+            CREATE FUNCTION reject_turn_in_stopped_session()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                stopped timestamptz;
+            BEGIN
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = NEW.session_id
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            "REVOKE ALL ON FUNCTION reject_turn_in_stopped_session() FROM PUBLIC",
+            """
+            CREATE TRIGGER turn_audit_open_session
+                BEFORE INSERT ON turn_audit
+                FOR EACH ROW EXECUTE FUNCTION reject_turn_in_stopped_session()
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the trigger, then its function."""
+        return (
+            "DROP TRIGGER IF EXISTS turn_audit_open_session ON turn_audit",
+            "DROP FUNCTION IF EXISTS reject_turn_in_stopped_session()",
+        )
+
+
+class HistoryOutcomeEncryption:
+    """Convert ``learner_history_event.correct`` from boolean to ciphertext.
+
+    In place, without losing an outcome: a sealed column is added, each row's
+    outcome is sealed by the application (DEC-0012 — the database never holds
+    the key), and the boolean column is dropped only after every row has its
+    sealed value. The outcome is sealed as one byte, so the two outcomes
+    cannot be told apart by ciphertext length (``HistoryOutcomeCodec``).
+
+    ``cipher`` is called only when there are rows to convert, so a fresh
+    database upgrades without a key. The downgrade reverses it the same way.
+    """
+
+    def upgrade(
+        self,
+        connection: psycopg.Connection,
+        cipher: Callable[[], CipherPort],
+        outcomes: HistoryOutcomeCodec,
+    ) -> None:
+        """Seal every boolean outcome, then replace the column."""
+        connection.execute(
+            "ALTER TABLE learner_history_event ADD COLUMN correct_sealed ciphertext"
+        )
+        rows = connection.execute(
+            "SELECT id, correct FROM learner_history_event"
+        ).fetchall()
+        if rows:
+            sealer = cipher()
+            for row_id, correct in rows:
+                connection.execute(
+                    "UPDATE learner_history_event "
+                    "SET correct_sealed = %s WHERE id = %s",
+                    (sealer.encrypt(outcomes.encode(bool(correct))), row_id),
+                )
+        connection.execute(
+            "ALTER TABLE learner_history_event ALTER COLUMN correct_sealed SET NOT NULL"
+        )
+        connection.execute("ALTER TABLE learner_history_event DROP COLUMN correct")
+        connection.execute(
+            "ALTER TABLE learner_history_event RENAME COLUMN correct_sealed TO correct"
+        )
+
+    def downgrade(
+        self,
+        connection: psycopg.Connection,
+        cipher: Callable[[], CipherPort],
+        outcomes: HistoryOutcomeCodec,
+    ) -> None:
+        """Open every sealed outcome, then restore the boolean column."""
+        connection.execute(
+            "ALTER TABLE learner_history_event ADD COLUMN correct_plain boolean"
+        )
+        rows = connection.execute(
+            "SELECT id, correct FROM learner_history_event"
+        ).fetchall()
+        if rows:
+            opener = cipher()
+            for row_id, sealed in rows:
+                connection.execute(
+                    "UPDATE learner_history_event SET correct_plain = %s WHERE id = %s",
+                    (outcomes.decode(opener.decrypt(bytes(sealed))), row_id),
+                )
+        connection.execute(
+            "ALTER TABLE learner_history_event ALTER COLUMN correct_plain SET NOT NULL"
+        )
+        connection.execute("ALTER TABLE learner_history_event DROP COLUMN correct")
+        connection.execute(
+            "ALTER TABLE learner_history_event RENAME COLUMN correct_plain TO correct"
         )

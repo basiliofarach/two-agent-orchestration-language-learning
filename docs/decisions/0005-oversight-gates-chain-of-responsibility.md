@@ -2,6 +2,23 @@
 
 *Status:* Accepted · *Date:* 2026-09-18
 
+*Amended:* 2026-10-05 — `evaluate` is async, because the gate loads the
+policy card on the request connection (DEC-0014). A failure inside the gate
+is `stop`, not `pass`. The gate still returns a verdict and does not log.
+
+*Amended:* 2026-10-06 — Two kinds of failure, handled differently. A card
+that cannot be loaded raises out of the gate: there is no rule to cite, and
+the request transaction may already be aborted, so the turn rolls back and
+the API returns 503 with nothing recorded. A failure while judging, after
+the card is loaded, is `stop`, citing the gate's evaluation-failed rule, and
+that rule is resolved on the card like every other; a card that does not
+name it also raises. Every recorded verdict therefore cites a rule on the
+card version the record names. The four gates exist: sensitivity pauses on
+a flagged category and stops on a refusal; drift pauses outside a per-turn
+envelope (confidence, source support, length, grammar findings). A gate not
+reached is stored as `not_evaluated`, citing the rule of the verdict that
+halted the turn.
+
 ## Context
 
 REQ-GATES specifies four oversight gates. Their positions in the pipeline are

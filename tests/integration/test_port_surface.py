@@ -9,6 +9,7 @@ from types import ModuleType
 
 import tutor_core.domain.ports as ports_package
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
+from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
 class PortModules:
@@ -45,15 +46,18 @@ class PublicClasses:
 class TestPortSurface:
     def test_port_modules_are_abstract(self) -> None:
         modules = PortModules().load()
-        assert len(modules) == 17
+        assert len(modules) == 18
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        # 17 modules, 19 classes: unit_of_work.py declares the port, the
-        # work that enlists in it, and the connection that work is given.
-        assert len(classes) == 19
-        for cls in classes:
-            assert issubclass(cls, ABC)
+        # 18 modules, 20 ports. unit_of_work.py also declares the work that
+        # enlists in the port and the connection that work is given.
+        # tutoring_session.py also declares SessionRejected, the refusal
+        # the port raises. That refusal is not a second interface.
+        ports = [cls for cls in classes if issubclass(cls, ABC)]
+        assert len(ports) == 20
+        assert [cls for cls in classes if not issubclass(cls, ABC)] == [SessionRejected]
+        for cls in ports:
             assert cls.__abstractmethods__
 
     def test_audit_sink_exposes_no_mutating_method(self) -> None:

@@ -254,8 +254,10 @@ class Samples:
         return TurnState(
             turn_id=UUID("00000000-0000-4000-8000-000000000003"),
             session_id=UUID("00000000-0000-4000-8000-000000000004"),
+            learner_id=self.learner_id(),
             learner_prompt=self.redacted(),
             retrieved=self.retrieval(),
+            history=self.history(),
             generated=self.generated(),
             safety_flags=(self.safety_flag(),),
         )

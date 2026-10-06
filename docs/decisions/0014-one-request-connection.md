@@ -29,9 +29,13 @@ DEC-0006 again.
 the request path enlists in it.**
 
 - `KnowledgeBasePort.retrieve`, `CorpusIngestionPort.ingest`,
-  `PolicyArtifactPort.current` / `version` and `PolicyPublicationPort.publish`
-  are `async`. Each adapter takes a `TransactionConnection`, the same domain
-  ABC the audit sink takes.
+  `LearnerHistoryPort.read`, `PolicyArtifactPort.current` / `version` and
+  `PolicyPublicationPort.publish` are `async`. Each adapter takes a
+  `TransactionConnection`, the same domain ABC the audit sink takes.
+- `OversightGatePort.evaluate` is `async`, because a gate loads the policy
+  card on that connection. `LanguageModelPort.complete` is `async` so the
+  local runtime call does not block the event loop; `revision()` stays
+  synchronous.
 - `TransactionConnection` gains `fetch_all`. Retrieval and policy history read
   through it, so they read on the turn's transaction.
 - `SqlGateway`, `PsycopgGateway` and `PsycopgTransactionConnection` are
@@ -63,8 +67,10 @@ that a failed turn leaves no `turn_audit` row and no `turn_citation`.
 **Positive.** One driver on the request path. No blocking I/O on the event
 loop.
 
-**Negative.** Four port signatures change, and every implementation and stub
-becomes `async`. `EmbeddingPort` stays synchronous: it does no I/O.
+**Negative.** Persistence ports, `OversightGatePort.evaluate` and
+`LanguageModelPort.complete` are `async`. `EmbeddingPort` stays synchronous:
+it does no I/O. `LanguageModelPort.revision` stays synchronous: it returns
+the stored SHA.
 
 **Negative.** A request connection that is used but never reaches a unit of
 work is not closed by the scope. On the request path every database access

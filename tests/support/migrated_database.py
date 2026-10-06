@@ -27,12 +27,18 @@ class PostgresUrl:
 class MigratedDatabase:
     """``upgrade head``, then the learner and session an audit row needs."""
 
-    def upgrade(self, url: str) -> None:
+    def upgrade(self, url: str, revision: str = "head") -> None:
+        command.upgrade(self._config(url), revision)
+
+    def downgrade(self, url: str, revision: str) -> None:
+        command.downgrade(self._config(url), revision)
+
+    def _config(self, url: str) -> Config:
         root = Path(__file__).resolve().parents[2] / "tutor-api"
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         config.set_main_option("sqlalchemy.url", PostgresUrl(url).sync())
-        command.upgrade(config, "head")
+        return config
 
     def seed_learner(self, url: str) -> None:
         with psycopg.connect(url) as connection, connection.cursor() as cursor:

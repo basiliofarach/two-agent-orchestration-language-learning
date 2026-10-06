@@ -172,7 +172,8 @@ class, then the router if the unit is reached over HTTP.
 chain**, not a domain port and not the gate chain. Each stage type exposes
 exactly one public method: `prepare` → `Prepared.execute` →
 `Executed.finalise`. Only `finalise` returns `TResult`. The router writes
-`service.prepare(body).execute().finalise()`.
+`(await service.prepare(body).execute()).finalise()` (DEC-0011, amended:
+`execute` is async).
 
 `ConductTurn`'s execute-handler delegates to the graph in
 `application/turn/`. Gate order is graph placement (DEC-0005). Do not put
@@ -242,6 +243,16 @@ pattern-based and finds stated forms only (an email, a phone number, "my
 name is …", "me llamo …", a street address); where a form is ambiguous it
 over-redacts. `KnowledgeBasePort` exposes no open-web method (REQ-KB).
 `LearnerHistoryPort` is read-only and allowlist-bound (REQ-HISTORY).
+`read(learner_id, requested)` is async: the adapter selects on the request's
+connection (DEC-0014), and only the fields the turn requested — the ones the
+permission gate judged. A requested field outside the allowlist raises. The
+database grant is column-level, so `learner.pseudonym` is not selectable by
+the application role. A learner whose `retain_until` has passed yields an
+empty snapshot before any history column is selected. Events are ordered
+by `occurred_at`, then by `id`, so two events recorded at one instant stay
+in one order. Before that read, `TutoringSessionPort` confirms the session
+exists, is not stopped, and belongs to this learner; a refusal rolls the
+turn back and writes no audit row.
 
 ### 4.2 Generation and output checks
 
@@ -273,7 +284,7 @@ classDiagram
     }
     class SourceSupportPort {
         <<abstract>>
-        +verify(draft str, sources) SourceSupportReport
+        +verify(draft str, snippets) SourceSupportReport
     }
 
     class OllamaLanguageModel {
@@ -286,33 +297,44 @@ classDiagram
         -tone_constraints
         +render(task, context, history) RenderedPrompt
     }
-    class LanguageToolGrammar {
+    class PatternGrammarCheck {
         +check(text) tuple~GrammarFinding~
     }
-    class RuleAndModelClassifier {
+    class CategorySafetyClassifier {
         +classify(text) tuple~SafetyFlag~
     }
-    class ClaimSpanVerifier {
-        +verify(draft, sources) SourceSupportReport
+    class SentenceSourceSupport {
+        +verify(draft, snippets) SourceSupportReport
     }
 
     LanguageModelPort <|.. OllamaLanguageModel
     PromptTemplatePort <|.. FixedPromptTemplate
-    GrammarCheckPort <|.. LanguageToolGrammar
-    SafetyClassifierPort <|.. RuleAndModelClassifier
-    SourceSupportPort <|.. ClaimSpanVerifier
+    GrammarCheckPort <|.. PatternGrammarCheck
+    SafetyClassifierPort <|.. CategorySafetyClassifier
+    SourceSupportPort <|.. SentenceSourceSupport
 ```
 
 `SourceSupportPort` implements REQ-ACCURACY's hallucination control: it verifies
-that key claims in a generated explanation are supported by retrieved sources
-and **flags unsupported spans for human review** rather than silently removing
-them.
+that key claims in a generated explanation are supported by the retrieved
+snippets and **flags unsupported spans for human review** rather than silently
+removing them. `verify` takes snippets because a `SourceRef` carries the URI
+and not the passage.
 
-`LanguageModelPort` takes a prompt and returns text. It has no retrieval method
-and no HTTP client, so a prompt-injected instruction to fetch external content
-has no reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications,
+`LanguageModelPort` takes a prompt and returns text. `complete` is async so
+the local runtime call does not block the event loop. It has no retrieval
+method, so a prompt-injected instruction to fetch external content has no
+reachable capability (REQ-ACCURACY; OWASP Top 10 for LLM Applications,
 tool-scoping). `revision()` supplies the pinned SHA written into every audit
 record.
+
+`PatternGrammarCheck` and `CategorySafetyClassifier` report findings from
+fixed patterns. A library grammar checker would move with its own release and
+break replay. `SentenceSourceSupport` marks a sentence supported only when a snippet
+states that sentence: the same normalised text, ignoring the final mark.
+Containment is not support, because a wrapping clause ("It is false
+that …") or a denying passage ("It is a myth that …") reverses the claim.
+A paraphrase is therefore unsupported and the drift gate holds it for the
+tutor; that is the intended fail-closed cost.
 
 `FixedPromptTemplate` carries the tone constraints and target proficiency level;
 `template_version()` is logged, because REQ-ACCURACY treats prompt formulation
@@ -815,7 +837,14 @@ sequenceDiagram
    columns are null when the model did not run, and that absence is part of the
    hashed record. A tutor action is a later insert into `human_action`. A turn
    is fully logged or it did not happen.
-8. `stop` terminates the session and **preserves state**.
+8. `stop` terminates the session and **preserves state**. A later turn on
+   that session is refused. The session must also belong to the learner on
+   the command: the check runs on the enlisted connection, before retrieval,
+   and a mismatch leaves no audit row. A stop that commits while a turn is
+   already generating is caught at the insert: the `turn_audit_open_session`
+   trigger takes a share lock on the session row and refuses the row when
+   `stopped_at` is set, so the turn rolls back with the same refusal. The
+   lock orders a turn and a stop; a stopped session never gains a row.
 
 ## 9. Compliance mapping
 

@@ -5,7 +5,11 @@ import pytest
 from tutor_api.adapters.persistence.schema import (
     ApplicationRole,
     AuditSchema,
+    LearnerHistoryColumnGrant,
+    LearnerHistoryEventIdGrant,
     RequestPathPrivileges,
+    TurnAuditOpenSession,
+    TutoringSessionColumnGrant,
 )
 from tutor_api.settings import ApplicationSettings
 
@@ -74,3 +78,83 @@ class TestRequestPathPrivileges:
             'REVOKE SELECT ON TABLE kb_chunk FROM "audit_writer"',
         )
         assert all("DROP" not in statement for statement in statements)
+
+
+class TestLearnerHistoryColumnGrant:
+    def test_grants_select_on_named_columns_and_never_the_pseudonym(self) -> None:
+        statements = LearnerHistoryColumnGrant(
+            ApplicationRole("audit_writer")
+        ).statements()
+        assert statements == (
+            'REVOKE ALL ON TABLE learner FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (learner_id, retain_until, proficiency_level) "
+            'ON TABLE learner TO "audit_writer"',
+            'REVOKE ALL ON TABLE learner_history_event FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (learner_id, item_id, correct, occurred_at, id) "
+            'ON TABLE learner_history_event TO "audit_writer"',
+        )
+        assert all("pseudonym" not in statement for statement in statements)
+
+    def test_downgrade_revokes_the_columns_by_name(self) -> None:
+        downgrade = LearnerHistoryColumnGrant(
+            ApplicationRole("audit_writer")
+        ).downgrade_statements()
+        assert downgrade == (
+            "REVOKE SELECT (learner_id, retain_until, proficiency_level) "
+            'ON TABLE learner FROM "audit_writer"',
+            "REVOKE SELECT (learner_id, item_id, correct, occurred_at, id) "
+            'ON TABLE learner_history_event FROM "audit_writer"',
+        )
+
+
+class TestSessionAndEventIdGrants:
+    def test_the_session_grant_is_three_columns_and_not_the_tutor(self) -> None:
+        statements = TutoringSessionColumnGrant(
+            ApplicationRole("audit_writer")
+        ).statements()
+        assert statements == (
+            'REVOKE ALL ON TABLE tutoring_session FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (id, learner_id, stopped_at) "
+            'ON TABLE tutoring_session TO "audit_writer"',
+        )
+        assert all("tutor_id" not in statement for statement in statements)
+        assert all("stop_reason" not in statement for statement in statements)
+        assert TutoringSessionColumnGrant(
+            ApplicationRole("audit_writer")
+        ).downgrade_statements() == (
+            "REVOKE SELECT (id, learner_id, stopped_at) "
+            'ON TABLE tutoring_session FROM "audit_writer"',
+        )
+
+    def test_the_event_id_repair_grants_id_and_its_downgrade_is_empty(self) -> None:
+        role = ApplicationRole("audit_writer")
+        assert LearnerHistoryEventIdGrant(role).statements() == (
+            'GRANT SELECT (id) ON TABLE learner_history_event TO "audit_writer"',
+        )
+        assert LearnerHistoryEventIdGrant(role).downgrade_statements() == ()
+
+
+class TestTurnAuditOpenSession:
+    def test_the_trigger_locks_the_session_row_and_refuses_a_stopped_one(
+        self,
+    ) -> None:
+        statements = TurnAuditOpenSession().statements()
+        joined = " ".join(statements)
+        assert "SECURITY DEFINER" in joined
+        assert "SET search_path = pg_catalog, public" in joined
+        assert "FOR SHARE" in joined
+        assert "SELECT stopped_at INTO stopped" in joined
+        assert "IF stopped IS NOT NULL THEN" in joined
+        assert f"ERRCODE = '{TurnAuditOpenSession.SQLSTATE}'" in joined
+        assert "BEFORE INSERT ON turn_audit" in joined
+        assert (
+            "REVOKE ALL ON FUNCTION reject_turn_in_stopped_session() FROM PUBLIC"
+            in statements
+        )
+        assert all("tutor_id" not in statement for statement in statements)
+
+    def test_the_downgrade_drops_the_trigger_then_the_function(self) -> None:
+        assert TurnAuditOpenSession().downgrade_statements() == (
+            "DROP TRIGGER IF EXISTS turn_audit_open_session ON turn_audit",
+            "DROP FUNCTION IF EXISTS reject_turn_in_stopped_session()",
+        )

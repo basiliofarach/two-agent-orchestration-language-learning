@@ -1,5 +1,6 @@
 """PostgresAuditSink writes one chained record and nothing else."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,9 +14,16 @@ from tutor_api.adapters.persistence.audit_sink import (
     AuditAppendRejected,
     PostgresAuditSink,
 )
+from tutor_api.adapters.persistence.schema import TurnAuditOpenSession
 from tutor_core.domain.audit.record_hash import AuditRecordHash
-from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.audit import (
+    GATE_ORDER,
+    ChainHead,
+    GateEvaluation,
+    TurnAuditRecord,
+)
 from tutor_core.domain.ports.cipher import CipherPort
+from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
 class ReversibleCipher(CipherPort):
@@ -26,6 +34,39 @@ class ReversibleCipher(CipherPort):
 
     def decrypt(self, envelope: bytes) -> bytes:
         return envelope.removeprefix(b"sealed:")
+
+
+class DriverError(Exception):
+    """What the database driver raises, carrying the SQLSTATE."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+class WrappedError(Exception):
+    """What SQLAlchemy raises around the driver's error."""
+
+    def __init__(self, orig: Exception) -> None:
+        super().__init__(str(orig))
+        self.orig = orig
+
+
+class RefusingConnection(RecordingConnection):
+    """The turn insert fails with the error it was given."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    async def execute(
+        self,
+        statement: str,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
+        if "INSERT INTO turn_audit" in statement:
+            raise self._error
+        await super().execute(statement, parameters)
 
 
 class BoundSink:
@@ -46,13 +87,13 @@ class BoundSink:
 
 
 class TestPostgresAuditSink:
-    def test_append_is_the_only_write_method_exposed(self) -> None:
+    def test_append_is_the_only_write_method_and_head_the_only_read(self) -> None:
         public = [
             name
             for name in dir(PostgresAuditSink)
             if not name.startswith("_") and callable(getattr(PostgresAuditSink, name))
         ]
-        assert public == ["append"]
+        assert public == ["append", "head"]
 
     async def test_recorded_at_comes_from_injected_clock(self) -> None:
         clock = FrozenClock(datetime(2026, 9, 21, 15, 30, tzinfo=UTC))
@@ -113,6 +154,34 @@ class TestPostgresAuditSink:
             await bound.sink.append(record)
         assert bound.connection.statements == []
         assert bound.connection.fetches == []
+
+    async def test_a_stopped_session_refused_by_the_database_is_a_rejection(
+        self,
+    ) -> None:
+        refusal = WrappedError(DriverError(TurnAuditOpenSession.SQLSTATE))
+        connection = RefusingConnection(refusal)
+        connection.rows.append(("held",))
+        hasher = AuditRecordHash()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), hasher)
+        record = SealedTurn(hasher).at(
+            Samples().stopped_audit_record(), AuditRecordHash.GENESIS
+        )
+        with pytest.raises(SessionRejected, match="session is stopped"):
+            await sink.append(record)
+
+    async def test_any_other_insert_failure_is_not_a_session_rejection(
+        self,
+    ) -> None:
+        refusal = WrappedError(DriverError("23505"))
+        connection = RefusingConnection(refusal)
+        connection.rows.append(("held",))
+        hasher = AuditRecordHash()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), hasher)
+        record = SealedTurn(hasher).at(
+            Samples().stopped_audit_record(), AuditRecordHash.GENESIS
+        )
+        with pytest.raises(WrappedError):
+            await sink.append(record)
 
     async def test_the_first_record_must_chain_to_genesis(self) -> None:
         bound = BoundSink()
@@ -209,3 +278,74 @@ class TestPostgresAuditSink:
             first.record_hash
         )
         assert bound.connection.parameters[0]["turn_index"] == 1
+
+
+class TestGateRowsAndHead:
+    async def test_each_gate_row_is_written_with_its_reason_sealed(self) -> None:
+        bound = BoundSink()
+        record = bound.seal(GatedRecord().stopped(), AuditRecordHash.GENESIS)
+        await bound.sink.append(record)
+        gates = [
+            parameters
+            for statement, parameters in zip(
+                bound.connection.statements, bound.connection.parameters, strict=True
+            )
+            if "gate_evaluation" in statement
+        ]
+        assert [row["decision"] for row in gates] == [
+            "stop",
+            "not_evaluated",
+            "not_evaluated",
+            "not_evaluated",
+        ]
+        assert [row["gate_name"] for row in gates] == list(GATE_ORDER)
+        assert bound.cipher.decrypt(gates[0]["reason"]) == b"scripted stop"
+        assert all(row["turn_id"] == record.turn_id for row in gates)
+
+    async def test_an_empty_session_attaches_at_genesis(self) -> None:
+        connection = RecordingConnection()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), AuditRecordHash())
+        head = await sink.head(Samples().audit_record().session_id)
+        assert head == ChainHead(
+            previous_record_hash=AuditRecordHash.GENESIS, turn_index=0
+        )
+
+    async def test_a_session_with_records_attaches_after_the_latest(self) -> None:
+        connection = RecordingConnection()
+        connection.rows.append(("c" * 64, 4))
+        sink = PostgresAuditSink(connection, ReversibleCipher(), AuditRecordHash())
+        head = await sink.head(Samples().audit_record().session_id)
+        assert head == ChainHead(previous_record_hash="c" * 64, turn_index=5)
+        assert connection.fetches[0][0].lstrip().upper().startswith("SELECT")
+        assert connection.statements == []
+
+
+class GatedRecord:
+    """A stopped record carrying its four gate rows."""
+
+    def stopped(self) -> TurnAuditRecord:
+        halting = "rule-context_and_permission-stop"
+        rows = (
+            GateEvaluation(
+                gate_name="context_and_permission",
+                decision="stop",
+                reason="scripted stop",
+                policy_rule_id=halting,
+                evaluated_at=Samples().when(),
+            ),
+            *(
+                GateEvaluation(
+                    gate_name=name,
+                    decision="not_evaluated",
+                    reason="Not reached.",
+                    policy_rule_id=halting,
+                    evaluated_at=Samples().when(),
+                )
+                for name in GATE_ORDER[1:]
+            ),
+        )
+        return (
+            Samples()
+            .stopped_audit_record()
+            .model_copy(update={"gate_evaluations": rows})
+        )

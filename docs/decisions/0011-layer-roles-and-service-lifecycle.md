@@ -2,6 +2,13 @@
 
 *Status:* Accepted · *Date:* 2026-09-21
 
+*Amended:* 2026-10-06 — `ExecuteHandler.run` and `Prepared.execute` are
+`async`: execution is where a use case does I/O, and the request path is
+async (DEC-0014). `prepare` and `finalise` stay synchronous. The router's
+one expression becomes `(await service.prepare(body).execute()).finalise()`.
+Each holder still exposes exactly one method, and `execute` still returns
+`Executed`, never the result.
+
 ## Context
 
 DEC-0001 requires an `abc.ABC` before any implementation. DEC-0005 already
@@ -135,7 +142,7 @@ no `finalise` on `ApplicationService`, and no `prepare` on `Prepared`.
 The router walks the chain in one expression and does nothing else:
 
 ```python
-return service.prepare(body).execute().finalise()
+return (await service.prepare(body).execute()).finalise()
 ```
 
 `Prepared` and `Executed` are continuation values, not collaborators.

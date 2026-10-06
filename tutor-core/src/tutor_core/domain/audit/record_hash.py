@@ -60,6 +60,10 @@ class AuditRecordHash:
         records produce one string. Absent generation fields are null, not
         omitted.
 
+        ``gate_evaluations`` is covered when present, so a gate row cannot be
+        edited without breaking the chain. An empty tuple is omitted, which
+        keeps the digest of a record sealed before gate rows existed.
+
         The prompt is written as the two fields the historical digest
         covered, ``learner_prompt_redacted`` and ``redacted_categories``.
         The domain model nests them on ``learner_prompt``; hashing that
@@ -68,6 +72,9 @@ class AuditRecordHash:
         payload = record.model_dump(
             mode="json", exclude={"record_hash", "learner_prompt"}
         )
+        if not record.gate_evaluations:
+            # Rows sealed before gate rows were recorded hashed no such key.
+            del payload["gate_evaluations"]
         prompt = HistoricalPrompt.from_stored(record.learner_prompt)
         payload.update(prompt.model_dump(mode="json"))
         return json.dumps(

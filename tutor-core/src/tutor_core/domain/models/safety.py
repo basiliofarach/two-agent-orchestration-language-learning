@@ -144,12 +144,14 @@ class GeneratedUnit(BaseModel):
     """Draft before and after checks, disclosure, refusal, and findings.
 
     ``ai_disclosure`` is present on every output, including a refusal
-    (REQ-MINOR, REQ-COMP).
+    (REQ-MINOR, REQ-COMP). ``output_before_checks`` is ``None`` when the
+    model was not called: a refusal before generation has no model output,
+    and the refusal text is not recorded as if the model had written it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    output_before_checks: str
+    output_before_checks: str | None
     output_after_checks: str
     ai_disclosure: str
     refused: bool
@@ -161,6 +163,9 @@ class GeneratedUnit(BaseModel):
     def disclosure_and_refusal(self) -> Self:
         if not self.ai_disclosure.strip():
             msg = "ai_disclosure is required on every output"
+            raise ValueError(msg)
+        if self.output_before_checks is None and not self.refused:
+            msg = "only a refusal has no model output"
             raise ValueError(msg)
         if self.refused:
             reason = self.refusal_reason

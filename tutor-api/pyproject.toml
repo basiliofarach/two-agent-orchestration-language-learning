@@ -12,7 +12,12 @@ dependencies = [
     "pydantic-settings>=2.8",
     "sqlalchemy[asyncio]>=2.0",
     "tutor-core",
+    "uvicorn>=0.30",
 ]
+
+[project.scripts]
+# `uv run tutor-api` serves the API. Uvicorn is the ASGI server inside it.
+tutor-api = "tutor_api.serve:ApiServer.main"
 
 [build-system]
 requires = ["hatchling"]

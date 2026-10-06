@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tutor_core.domain.models.learner import LearnerHistorySnapshot
 from tutor_core.domain.models.safety import RedactedText
 
 
@@ -77,3 +78,17 @@ class RetrievalResult(BaseModel):
                 msg = "every snippet source must appear in sources"
                 raise ValueError(msg)
         return self
+
+
+class RetrievedContext(BaseModel):
+    """Vetted snippets and the allowlisted history that came with them.
+
+    An empty ``knowledge`` result is valid. It is not an error and not
+    ``None`` (REQ-KB). History may withhold fields; that absence is on
+    the snapshot (REQ-HISTORY).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    knowledge: RetrievalResult
+    history: LearnerHistorySnapshot

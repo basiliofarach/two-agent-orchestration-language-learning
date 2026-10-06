@@ -18,7 +18,35 @@ persistence port enlists in the request's one connection.
 added. Retrieval stays read-only and policy selection stays read-only.
 Curation and publication are separate capabilities, so the agent that
 retrieves cannot ingest, and the reader of the policy cannot publish a
-version. The port set is otherwise unchanged.
+version.
+
+*Amended:* 2026-10-05 — `LearnerHistoryPort.read`, `OversightGatePort.evaluate`
+and `LanguageModelPort.complete` are async. History and the gates read on
+the request connection (DEC-0014); `complete` moves local model I/O off the
+event loop. `revision()` stays synchronous: it returns the stored SHA.
+`SourceSupportPort.verify` takes the retrieved snippets, because a
+`SourceRef` has no passage text. The port set is otherwise unchanged.
+
+*Amended:* 2026-10-06 — `LearnerHistoryPort.read(learner_id, requested)`
+reads exactly the fields the turn requested, which the permission gate has
+already judged; a requested field outside the allowlist raises. The gate
+and the adapter are bound to one `HistoryFieldSet`, so they cannot disagree.
+`AuditSinkPort` gains `head(session_id)`, a read of where the next record
+attaches; it still has no update, delete or upsert. The database grant on
+the history tables is column-level, so the application role cannot select
+`learner.pseudonym` at all.
+
+*Amended:* 2026-10-06 — `TutoringSessionPort.require_active(session_id, learner_id)`
+reads the session on the enlisted connection before retrieval. A missing
+session, a stopped session, or a session that belongs to another learner
+raises, and the turn rolls back: one learner's history is not retrieved
+into another's session, and no audit row is written there. The grant is
+column-level — `id`, `learner_id`, and `stopped_at` only. The model can run
+for minutes after that check, so the database checks again: a `BEFORE
+INSERT` trigger on `turn_audit` locks the session row `FOR SHARE` and
+refuses a stopped session. The trigger function is `SECURITY DEFINER`
+because a row lock needs UPDATE privilege the application role must not
+hold; it reads `stopped_at` only, with a fixed `search_path`.
 
 ## Context
 
@@ -54,15 +82,16 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `PiiRedactionPort` | Redact PII from learner input in real time | Runs at the boundary; nothing downstream sees raw text | REQ-MINOR |
 | `KnowledgeBasePort` | Retrieve vetted educational material | Vetted corpus only; no open web | REQ-KB, REQ-COMP |
 | `CorpusIngestionPort` | Record source, version, and review status | Curation only; no retrieval; no open web; no default review status | REQ-KB |
-| `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist | REQ-HISTORY |
+| `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist; reads only the requested fields; `read` is async | REQ-HISTORY |
+| `TutoringSessionPort` | Confirm the session is this learner's and still open | Read-only; no open, stop, or reassignment; on the enlisted connection before retrieval | REQ-MINOR, REQ-AUDIT |
 | `EmbeddingPort` | Text → vector | — | — |
-| `LanguageModelPort` | Prompt → completion | No tool access; no network | REQ-COMP |
+| `LanguageModelPort` | Prompt → completion | No retriever; `complete` is async local-model I/O; `revision` is the pinned SHA | REQ-COMP |
 | `PromptTemplatePort` | Build structured prompts; carry tone constraints | Fixed templates only | REQ-ACCURACY, REQ-MINOR |
-| `GrammarCheckPort` | Grammar findings on the draft | — | REQ-COMP |
-| `SafetyClassifierPort` | Flag unsafe or out-of-scope content | — | REQ-COMP |
-| `SourceSupportPort` | Verify claims against retrieved sources; flag unsupported spans | — | REQ-COMP, REQ-ACCURACY |
-| `OversightGatePort` | One gate in the graph | See DEC-0005 | REQ-GATES |
-| `AuditSinkPort` | Append one immutable turn record | Append-only; no update/delete | REQ-AUDIT |
+| `GrammarCheckPort` | Grammar findings on the draft | Reports; does not edit the draft | REQ-COMP |
+| `SafetyClassifierPort` | Flag unsafe or out-of-scope content | Reports; does not edit the draft | REQ-COMP |
+| `SourceSupportPort` | Verify claims against retrieved snippets; flag unsupported spans | `verify(draft, snippets)`; does not drop spans | REQ-COMP, REQ-ACCURACY |
+| `OversightGatePort` | One gate in the graph | Returns a verdict; `evaluate` is async; see DEC-0005 | REQ-GATES |
+| `AuditSinkPort` | Append one immutable turn record and its gate rows | Append-only; `head` reads the chain position; no update/delete | REQ-AUDIT |
 | `PolicyArtifactPort` | Supply the versioned machine-readable policy | Read-only; version logged per verdict | REQ-POLICY |
 | `PolicyPublicationPort` | Append one policy version | No update or delete; a changed rule meaning needs a new id | REQ-POLICY |
 | `ClockPort` | Current time | Injected for deterministic replay | — |
@@ -71,10 +100,11 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `TransactionConnection` | Commit, rollback, close, execute, and fetch one row or all rows on the enlisted transaction | No connect, no engine, no cursor; a holder cannot open a second transaction | REQ-AUDIT, DEC-0006 |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
-takes an explicit field allowlist at construction. `LanguageModelPort` is handed
-a prompt string and returns text — it holds no retriever and no HTTP client, so
-prompt-injected instructions to "search the web" have nothing to reach (OWASP
-LLM tool-scoping per the OWASP Top 10 for LLM Applications).
+takes an explicit field allowlist at construction and selects only those
+columns. `LanguageModelPort` is handed a rendered prompt and returns text —
+it holds no retriever. Local model I/O is the adapter's, addressed by the
+pinned SHA (DEC-0007), not a general HTTP client a prompt could aim at the
+open web.
 
 ## Consequences
 

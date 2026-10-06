@@ -267,6 +267,7 @@ class TestTurnState:
         state = TurnState(
             turn_id=samples.turn().turn_id,
             session_id=samples.turn().session_id,
+            learner_id=samples.learner_id(),
         )
         assert state.learner_prompt is None
         assert state.retrieved is None

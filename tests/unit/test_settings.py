@@ -23,6 +23,25 @@ class TestApplicationSettings:
         with pytest.raises(ValidationError):
             ApplicationSettings(_env_file=None, postgres_port="not-a-port")
 
+    def test_a_hosted_ollama_url_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="local machine"):
+            ApplicationSettings(
+                _env_file=None,  # type: ignore[call-arg]
+                ollama_base_url="https://api.example.com/v1",
+            )
+
+    def test_loopback_ollama_urls_are_accepted(self) -> None:
+        for base in (
+            "http://127.0.0.1:11434",
+            "http://localhost:11434/",
+            "http://[::1]:11434",
+        ):
+            settings = ApplicationSettings(
+                _env_file=None,  # type: ignore[call-arg]
+                ollama_base_url=base,
+            )
+            assert settings.ollama_base_url.rstrip("/") == base.rstrip("/")
+
     def test_is_mutable_configuration(self) -> None:
         settings = ApplicationSettings(_env_file=None)
         settings.postgres_port = 5433

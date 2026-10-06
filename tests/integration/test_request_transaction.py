@@ -16,6 +16,7 @@ from psycopg import sql
 from pydantic import SecretStr
 from tests.support.curation import Curator
 from tests.support.migrated_database import MigratedDatabase, PostgresUrl
+from tests.support.repository import RepositoryPaths
 from tests.support.samples import Samples
 from tests.support.sealed_turn import SealedTurn
 from tests.unit.test_container import FixedSettings
@@ -108,6 +109,9 @@ class Wired:
             application_database_url=self._login.async_url(),
             tutor_kek=SecretStr(base64.b64encode(_KEK).decode()),
             tutor_kek_id=UUID(int=1),
+            history_fields="proficiency_level,events",
+            conflict_confidence_threshold=0.5,
+            model_pin_path=RepositoryPaths().root() / "config" / "runtime.toml",
         )
         return ApplicationContainer(FixedSettings(settings)).build()
 

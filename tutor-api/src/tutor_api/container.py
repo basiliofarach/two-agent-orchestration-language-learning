@@ -5,10 +5,14 @@ reaches for its own container is not injected, it is coupled, and the
 capability-scoping argument in DEC-0001 rests on a collaborator holding only
 what it was handed.
 
-The request path is registered: redaction, retrieval, the policy in force, the
-audit sink, and the one connection they share (DEC-0014). Curation is not.
-``CorpusIngestionPort`` and ``PolicyPublicationPort`` have no provider, so no
-request can ingest a document or publish a policy version (DEC-0001).
+The request path is registered end to end: the ConductTurn use case and its
+three stage handlers, the LangGraph orchestrator, the four gates, both agents,
+redaction, retrieval, history, the session check, the fixed template, the pinned
+model, the three
+output checks, the policy in force, the audit sink, and the one connection
+they share (DEC-0014). Curation is not. ``CorpusIngestionPort`` and
+``PolicyPublicationPort`` have no provider, so no request can ingest a
+document or publish a policy version (DEC-0001).
 """
 
 import base64
@@ -16,8 +20,23 @@ import binascii
 from collections.abc import Mapping
 from typing import cast
 
+from tutor_api.adapters.checks.grammar import MinorGrammarPatterns, PatternGrammarCheck
 from tutor_api.adapters.checks.pii_redaction import RegexPiiRedactor, StandardPiiSteps
+from tutor_api.adapters.checks.safety import CategorySafetyClassifier, MinorSafetyRules
+from tutor_api.adapters.checks.source_support import (
+    SentenceSourceSupport,
+    SentenceSplitter,
+)
+from tutor_api.adapters.llm.fixed_prompt import FixedPromptTemplate
 from tutor_api.adapters.llm.local_embedding import LocalEmbedding
+from tutor_api.adapters.llm.ollama import (
+    ModelfileWeights,
+    ModelRevision,
+    OllamaLanguageModel,
+    PinnedModelName,
+    PinnedRevision,
+    UrllibOllamaEndpoint,
+)
 from tutor_api.adapters.persistence.aes_gcm_envelope import AesGcmEnvelope
 from tutor_api.adapters.persistence.audit_sink import PostgresAuditSink
 from tutor_api.adapters.persistence.database import DatabaseEngine, RequestConnection
@@ -28,7 +47,12 @@ from tutor_api.adapters.persistence.knowledge_base import (
     PgVectorKnowledgeBase,
     VectorLiteral,
 )
+from tutor_api.adapters.persistence.learner_history import (
+    HistoryOutcomeCodec,
+    PostgresLearnerHistory,
+)
 from tutor_api.adapters.persistence.schema import BaseSchema
+from tutor_api.adapters.persistence.tutoring_session import PostgresTutoringSession
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.adapters.persistence.versioned_policy import (
     PolicyCardCodec,
@@ -38,15 +62,53 @@ from tutor_api.adapters.system_clock import SystemClock
 from tutor_api.di.container import Container
 from tutor_api.di.lifetime import Lifetime
 from tutor_api.di.provider import Provider
+from tutor_api.prototype import PrototypeCopy
 from tutor_api.settings import ApplicationSettings
+from tutor_core.application.agents.generation import (
+    ContentGenerationAgent,
+    GenerationAgent,
+)
+from tutor_core.application.agents.retrieval import DataRetrievalAgent, RetrievalAgent
+from tutor_core.application.services.conduct_turn import (
+    ConductTurn,
+    ExecuteTurn,
+    FinaliseTurn,
+    PrepareTurn,
+)
+from tutor_core.application.turn.guarded_generation import (
+    GenerateIfConsistent,
+    GenerationGuard,
+)
+from tutor_core.application.turn.guarded_retrieval import (
+    RetrievalGuard,
+    RetrieveIfPermitted,
+)
+from tutor_core.application.turn.orchestrator import (
+    LangGraphTurnOrchestrator,
+    TurnNodes,
+    TurnOrchestrator,
+)
+from tutor_core.application.turn.record import GateRows, TurnRecordBuilder
 from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
+from tutor_core.domain.gates.context_permission import ContextPermissionGate
+from tutor_core.domain.gates.drift import DriftAnomalyGate
+from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
+from tutor_core.domain.models.learner import HistoryFieldSet
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
+from tutor_core.domain.ports.grammar_check import GrammarCheckPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
+from tutor_core.domain.ports.language_model import LanguageModelPort
+from tutor_core.domain.ports.learner_history import LearnerHistoryPort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
+from tutor_core.domain.ports.prompt_template import PromptTemplatePort
+from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
+from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
 
 
@@ -287,11 +349,483 @@ class PolicyProvider(Provider):
         )
 
 
+class HistoryFieldSetting:
+    """Parse ``HISTORY_FIELDS``. Unset is refused. Blank is the empty set."""
+
+    def parse(self, raw: str | None) -> HistoryFieldSet:
+        """Return the deployment's field set. ``None`` has no default."""
+        if raw is None:
+            msg = "HISTORY_FIELDS is not set. Export it."
+            raise ValueError(msg)
+        names = tuple(part.strip() for part in raw.split(",") if part.strip())
+        return HistoryFieldSet.model_validate({"fields": names})
+
+
+class HistoryFieldSetProvider(Provider):
+    """The history minimum, parsed once. The gate and the adapter share it."""
+
+    def provides(self) -> type:
+        return HistoryFieldSet
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (ApplicationSettings,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        settings = cast(ApplicationSettings, resolved[ApplicationSettings])
+        return HistoryFieldSetting().parse(settings.history_fields)
+
+
+class HistoryProvider(Provider):
+    """Allowlisted history on the request's connection (REQ-HISTORY)."""
+
+    def provides(self) -> type:
+        return LearnerHistoryPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection, CipherPort, ClockPort, HistoryFieldSet)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresLearnerHistory(
+            cast(TransactionConnection, resolved[TransactionConnection]),
+            cast(CipherPort, resolved[CipherPort]),
+            cast(ClockPort, resolved[ClockPort]),
+            cast(HistoryFieldSet, resolved[HistoryFieldSet]),
+            HistoryOutcomeCodec(),
+        )
+
+
+class SessionProvider(Provider):
+    """The session check, on the request's connection, before retrieval."""
+
+    def provides(self) -> type:
+        return TutoringSessionPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresTutoringSession(
+            cast(TransactionConnection, resolved[TransactionConnection])
+        )
+
+
+class PermissionGateProvider(Provider):
+    """The gate that runs before retrieval. Request-scoped with the policy."""
+
+    def provides(self) -> type:
+        return ContextPermissionGate
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PolicyArtifactPort, HistoryFieldSet)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ContextPermissionGate(
+            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
+            cast(HistoryFieldSet, resolved[HistoryFieldSet]),
+            PrototypeCopy().permission_rules(),
+        )
+
+
+class ConflictGateProvider(Provider):
+    """The gate that runs before generation. The threshold is not a default."""
+
+    def provides(self) -> type:
+        return ConflictAmbiguityGate
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PolicyArtifactPort, ApplicationSettings)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        settings = cast(ApplicationSettings, resolved[ApplicationSettings])
+        threshold = settings.conflict_confidence_threshold
+        if threshold is None:
+            msg = "CONFLICT_CONFIDENCE_THRESHOLD is not set. Export it."
+            raise ValueError(msg)
+        return ConflictAmbiguityGate(
+            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
+            threshold,
+            PrototypeCopy().conflict_rules(),
+        )
+
+
+class SensitivityGateProvider(Provider):
+    """The first gate after generation."""
+
+    def provides(self) -> type:
+        return SensitivityHighStakesGate
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PolicyArtifactPort,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        copy = PrototypeCopy()
+        return SensitivityHighStakesGate(
+            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
+            copy.flagged_categories(),
+            copy.sensitivity_rules(),
+        )
+
+
+class DriftGateProvider(Provider):
+    """The last gate before the tutor sees the turn."""
+
+    def provides(self) -> type:
+        return DriftAnomalyGate
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PolicyArtifactPort,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        copy = PrototypeCopy()
+        return DriftAnomalyGate(
+            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
+            copy.drift_envelope(),
+            copy.drift_rules(),
+        )
+
+
+class RetrievalAgentProvider(Provider):
+    """Knowledge and history only. No model (REQ-COMP)."""
+
+    def provides(self) -> type:
+        return RetrievalAgent
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (KnowledgeBasePort, LearnerHistoryPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return DataRetrievalAgent(
+            cast(KnowledgeBasePort, resolved[KnowledgeBasePort]),
+            cast(LearnerHistoryPort, resolved[LearnerHistoryPort]),
+        )
+
+
+class RetrievalGuardProvider(Provider):
+    """Permission, then retrieval. A non-pass verdict does not retrieve."""
+
+    def provides(self) -> type:
+        return RetrievalGuard
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (ContextPermissionGate, RetrievalAgent)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return RetrieveIfPermitted(
+            cast(ContextPermissionGate, resolved[ContextPermissionGate]),
+            cast(RetrievalAgent, resolved[RetrievalAgent]),
+        )
+
+
+class TemplateProvider(Provider):
+    """The fixed template. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PromptTemplatePort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        copy = PrototypeCopy()
+        return FixedPromptTemplate(
+            version=copy.template_version(),
+            role=copy.role(),
+            structure=copy.structure(),
+            tone=copy.tone(),
+            disclosure=copy.disclosure(),
+        )
+
+
+class LanguageModelProvider(Provider):
+    """The pinned local model. The SHA comes from the runtime pin, not a tag."""
+
+    def provides(self) -> type:
+        return LanguageModelPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (ApplicationSettings,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        settings = cast(ApplicationSettings, resolved[ApplicationSettings])
+        if settings.model_pin_path is None:
+            msg = "MODEL_PIN_PATH is not set. Point it at config/runtime.toml."
+            raise ValueError(msg)
+        return OllamaLanguageModel(
+            ModelRevision(PinnedRevision(settings.model_pin_path).sha()),
+            UrllibOllamaEndpoint(settings.ollama_base_url, ModelfileWeights()),
+            PrototypeCopy().decoding(),
+            PinnedModelName(),
+        )
+
+
+class GrammarProvider(Provider):
+    """Grammar findings. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return GrammarCheckPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PatternGrammarCheck(MinorGrammarPatterns().patterns())
+
+
+class SafetyProvider(Provider):
+    """Safety flags. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return SafetyClassifierPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return CategorySafetyClassifier(MinorSafetyRules().rules())
+
+
+class SourceSupportProvider(Provider):
+    """Unsupported spans stay on the report. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return SourceSupportPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return SentenceSourceSupport(SentenceSplitter())
+
+
+class GenerationAgentProvider(Provider):
+    """Template, model and the three checks. No retriever (REQ-COMP)."""
+
+    def provides(self) -> type:
+        return GenerationAgent
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (
+            PromptTemplatePort,
+            LanguageModelPort,
+            GrammarCheckPort,
+            SafetyClassifierPort,
+            SourceSupportPort,
+        )
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ContentGenerationAgent(
+            cast(PromptTemplatePort, resolved[PromptTemplatePort]),
+            cast(LanguageModelPort, resolved[LanguageModelPort]),
+            cast(GrammarCheckPort, resolved[GrammarCheckPort]),
+            cast(SafetyClassifierPort, resolved[SafetyClassifierPort]),
+            cast(SourceSupportPort, resolved[SourceSupportPort]),
+            PrototypeCopy().disclosure(),
+        )
+
+
+class GenerationGuardProvider(Provider):
+    """Conflict, then generation. A non-pass verdict does not call the model."""
+
+    def provides(self) -> type:
+        return GenerationGuard
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (ConflictAmbiguityGate, GenerationAgent)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return GenerateIfConsistent(
+            cast(ConflictAmbiguityGate, resolved[ConflictAmbiguityGate]),
+            cast(GenerationAgent, resolved[GenerationAgent]),
+        )
+
+
+class OrchestratorProvider(Provider):
+    """The LangGraph turn. Request-scoped: its gates read this request's card."""
+
+    def provides(self) -> type:
+        return TurnOrchestrator
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (
+            RetrievalGuard,
+            GenerationGuard,
+            SensitivityHighStakesGate,
+            DriftAnomalyGate,
+        )
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return LangGraphTurnOrchestrator(
+            TurnNodes(
+                cast(RetrievalGuard, resolved[RetrievalGuard]),
+                cast(GenerationGuard, resolved[GenerationGuard]),
+                cast(SensitivityHighStakesGate, resolved[SensitivityHighStakesGate]),
+                cast(DriftAnomalyGate, resolved[DriftAnomalyGate]),
+            )
+        )
+
+
+class RecordBuilderProvider(Provider):
+    """Seals the turn record. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return TurnRecordBuilder
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (AuditRecordHash,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return TurnRecordBuilder(
+            cast(AuditRecordHash, resolved[AuditRecordHash]), GateRows()
+        )
+
+
+class PrepareTurnProvider(Provider):
+    """Redaction and scope cues. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PrepareTurn
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (PiiRedactionPort, SafetyClassifierPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PrepareTurn(
+            cast(PiiRedactionPort, resolved[PiiRedactionPort]),
+            cast(SafetyClassifierPort, resolved[SafetyClassifierPort]),
+            PrototypeCopy().unvetted_source_categories(),
+        )
+
+
+class ExecuteTurnProvider(Provider):
+    """The turn's unit of work. Request-scoped: it holds the connection."""
+
+    def provides(self) -> type:
+        return ExecuteTurn
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (
+            UnitOfWorkPort,
+            TurnOrchestrator,
+            AuditSinkPort,
+            PolicyArtifactPort,
+            TurnRecordBuilder,
+            ClockPort,
+            TutoringSessionPort,
+        )
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ExecuteTurn(
+            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
+            cast(TurnOrchestrator, resolved[TurnOrchestrator]),
+            cast(AuditSinkPort, resolved[AuditSinkPort]),
+            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
+            cast(TurnRecordBuilder, resolved[TurnRecordBuilder]),
+            cast(ClockPort, resolved[ClockPort]),
+            cast(TutoringSessionPort, resolved[TutoringSessionPort]),
+        )
+
+
+class FinaliseTurnProvider(Provider):
+    """Maps the record to the dashboard's view. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return FinaliseTurn
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return FinaliseTurn()
+
+
+class ConductTurnProvider(Provider):
+    """The use case the router walks: prepare, execute, finalise (DEC-0011)."""
+
+    def provides(self) -> type:
+        return ConductTurn
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PrepareTurn, ExecuteTurn, FinaliseTurn)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ConductTurn(
+            cast(PrepareTurn, resolved[PrepareTurn]),
+            cast(ExecuteTurn, resolved[ExecuteTurn]),
+            cast(FinaliseTurn, resolved[FinaliseTurn]),
+        )
+
+
 class ApplicationContainer:
     """Build the object graph. Nothing is constructed at import.
 
-    ``settings`` is the one seam: a test hands in fixed configuration, and
-    every other registration is the one production uses.
+    ``build`` registers every provider and runs ``LifetimeValidation``, so a
+    singleton that captures request-scoped state refuses to boot.
     """
 
     def __init__(self, settings: SettingsProvider) -> None:
@@ -318,4 +852,26 @@ class ApplicationContainer:
             AuditSinkProvider(),
             KnowledgeBaseProvider(),
             PolicyProvider(),
+            HistoryFieldSetProvider(),
+            HistoryProvider(),
+            SessionProvider(),
+            PermissionGateProvider(),
+            ConflictGateProvider(),
+            SensitivityGateProvider(),
+            DriftGateProvider(),
+            RetrievalAgentProvider(),
+            RetrievalGuardProvider(),
+            TemplateProvider(),
+            LanguageModelProvider(),
+            GrammarProvider(),
+            SafetyProvider(),
+            SourceSupportProvider(),
+            GenerationAgentProvider(),
+            GenerationGuardProvider(),
+            OrchestratorProvider(),
+            RecordBuilderProvider(),
+            PrepareTurnProvider(),
+            ExecuteTurnProvider(),
+            FinaliseTurnProvider(),
+            ConductTurnProvider(),
         )
