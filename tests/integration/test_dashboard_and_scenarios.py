@@ -574,6 +574,34 @@ class TestOperatorCommands:
         assert (
             "Chain verification: intact" in (destination / "article-12.md").read_text()
         )
+        article_12 = (destination / "article-12.md").read_text()
+        exhibits = (destination / "exhibits.json").read_text()
+        assert "TurnAuditRecord" in article_12
+        assert "missing tail is not reported" in article_12
+        assert "LearnerHistoryPort" in (destination / "article-10.md").read_text()
+        assert "kb://spanish/greetings" in exhibits
+        assert "history_snapshot" not in exhibits
+        assert '"action": "approve"' in exhibits
+        assert (
+            "No comparison is invented" in (destination / "article-15.md").read_text()
+        )
+        assert manifest["field_comparison"] == "not_in_this_pack"
+        assert manifest["rubric_lines"] == 0
+
+    async def test_an_address_in_the_prompt_is_redacted_in_the_pack(
+        self, dashboard: Dashboard, tmp_path: Path
+    ) -> None:
+        address = "ada@example.com"
+        dashboard.turn(f"My email is {address}")
+        settings = TurnApp(dashboard.served.url).settings()
+        destination = tmp_path / "evidence"
+        code = await EvidenceMain(PackPaths(Path(__file__)).root(), destination).run(
+            settings
+        )
+        assert code == 0
+        packed = (destination / "exhibits.json").read_text()
+        assert address not in packed
+        assert "[REDACTED:email]" in packed
 
     async def test_a_missing_pin_is_reported_as_unpinned(self, tmp_path: Path) -> None:
         empty = tmp_path / "runtime.toml"

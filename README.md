@@ -69,6 +69,9 @@ make serve
 `make serve` binds `127.0.0.1:8000`; the OpenAPI page is at `/docs`.
 `make eval` runs the REQ-EVAL cases and writes their scores to
 `evidence/rubric-scores.jsonl`, paraphrase misses included.
+`make evidence` writes the compliance pack to `evidence/`. When that
+rubric file is already there, Article 15 includes it and labels it
+synthetic-only. The command does not invent tutor-sourced scores.
 
 There is **no dashboard UI yet**: `app/` does not exist, and every tutor
 action is reached through the API. The dashboard (DEC-0008) will live in

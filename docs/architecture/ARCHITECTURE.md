@@ -938,7 +938,7 @@ REQ-HISTORY). The gate count stays at four.
 | REQ-AUDIT hash chain | `previous_record_hash`, `record_hash` |
 | REQ-POLICY versioned policy artifact | `PolicyArtifactPort`, `policy_version` table |
 | REQ-POLICY rule version per verdict | `gate_evaluation.policy_rule_id` |
-| REQ-POLICY exportable trail | `routers/evidence.py` |
+| REQ-POLICY exportable trail | `tutor_api.evidence` (`make evidence`) |
 | REQ-GATES four gates | `domain/gates/`, four classes |
 | REQ-GATES / DEC-0004 deterministic backbone | LangGraph graph + checkpointer |
 | REQ-ACCURACY fixed prompt templates | `PromptTemplatePort`, `template_version()` |

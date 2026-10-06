@@ -2,13 +2,16 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from tests.support.dashboard_stubs import SESSION_ID, SealedRecords
 from tests.support.samples import Samples
 
 from tutor_api.adapters.frozen_clock import FrozenClock
+from tutor_api.evidence.body import PackBody
 from tutor_api.evidence.pack import EvidencePack, EvidenceSources
+from tutor_api.evidence.rubric_file import RubricScores
 from tutor_core.application.evaluation.rubric import (
     EvaluationReport,
     Rubric,
@@ -269,8 +272,8 @@ class TestEvidencePack:
         )
         early = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
         later = FrozenClock(datetime(2026, 1, 2, tzinfo=UTC))
-        first = EvidencePack(early).files(sources)
-        second = EvidencePack(later).files(sources)
+        first = EvidencePack(early).files(sources, PackBody.empty())
+        second = EvidencePack(later).files(sources, PackBody.empty())
         assert first.keys() == second.keys()
         for name in first:
             if name == "manifest.json":
@@ -279,8 +282,16 @@ class TestEvidencePack:
             else:
                 assert first[name] == second[name]
         assert "synthetic-only" in first["article-15.md"]
+        assert "No comparison is invented" in first["article-15.md"]
         assert "Chain verification: intact" in first["article-12.md"]
+        assert "TurnAuditRecord" in first["article-12.md"]
+        assert "missing tail is not reported" in first["article-12.md"]
+        assert "LearnerHistoryPort" in first["article-10.md"]
+        assert "HumanAction" in first["article-14.md"]
         assert "REQ-AUDIT" in first["article-12.md"]
+        manifest = json.loads(first["manifest.json"])
+        assert manifest["field_comparison"] == "not_in_this_pack"
+        assert manifest["rubric_lines"] == 0
 
     def test_the_manifest_is_json_even_when_a_value_has_a_quote(self) -> None:
         sources = EvidenceSources(
@@ -295,9 +306,51 @@ class TestEvidencePack:
             broken_sessions=("s-1",),
         )
         files = EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
-            sources
+            sources, PackBody.empty()
         )
         manifest = json.loads(files["manifest.json"])
         assert manifest["commit"] == 'abc"def'
         assert manifest["broken_sessions"] == ["s-1"]
         assert "Broken sessions: s-1" in files["article-12.md"]
+
+    def test_a_validated_label_is_rejected(self) -> None:
+        sources = EvidenceSources(
+            commit="abc",
+            lockfile_sha256="a" * 64,
+            model_revision="b" * 64,
+            runtime="3.12.0",
+            policy_version="prototype-1",
+            chain_status="intact",
+            field_label="validated",
+        )
+        with pytest.raises(ValueError, match="synthetic-only"):
+            EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
+                sources, PackBody.empty()
+            )
+
+    def test_supplied_scores_are_copied_and_a_comparison_is_not(
+        self, tmp_path: Path
+    ) -> None:
+        score = tmp_path / "rubric-scores.jsonl"
+        score.write_text('{"case": 1, "label": "synthetic-only"}\n', encoding="utf-8")
+        body = PackBody.empty().model_copy(
+            update={"rubric_lines": RubricScores(score).lines()}
+        )
+        sources = EvidenceSources(
+            commit="abc",
+            lockfile_sha256="a" * 64,
+            model_revision="b" * 64,
+            runtime="3.12.0",
+            policy_version="prototype-1",
+            chain_status="intact",
+            field_label="synthetic-only",
+        )
+        directory = tmp_path / "pack"
+        EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).write(
+            directory, sources, body
+        )
+        article = (directory / "article-15.md").read_text()
+        assert '"label":"synthetic-only"' in article
+        assert "No comparison is invented" in article
+        assert "validated" not in article
+        assert score.is_file()

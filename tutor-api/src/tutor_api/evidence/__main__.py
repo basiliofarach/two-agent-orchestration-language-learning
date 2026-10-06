@@ -18,12 +18,16 @@ from tutor_api.adapters.persistence.sealed import SealedValue
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.container import ApplicationContainer
 from tutor_api.curation.prototype_seed import FixedSettingsProvider
+from tutor_api.evidence.catalogue import ExhibitRead, ExhibitResult, PackRead
 from tutor_api.evidence.pack import EvidencePack, EvidenceSources, RepositoryPins
+from tutor_api.evidence.project import ExcerptProjector
+from tutor_api.evidence.rubric_file import RubricScores
 from tutor_api.evidence.survey import ChainSurvey, ChainSurveyResult
 from tutor_api.settings import ApplicationSettings
 from tutor_core.domain.audit.chain import ChainVerifier
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 
 
 class PackPaths:
@@ -72,8 +76,13 @@ class EvidenceMain:
         container = ApplicationContainer(FixedSettingsProvider(settings)).build()
         cipher = cast(CipherPort, container.resolve(CipherPort))
         clock = cast(ClockPort, container.resolve(ClockPort))
+        redactor = cast(PiiRedactionPort, container.resolve(PiiRedactionPort))
         verifier = cast(ChainVerifier, container.resolve(ChainVerifier))
-        survey = await self._survey(settings, cipher, verifier)
+        survey, exhibits = await self._read(settings, cipher, verifier)
+        body = ExcerptProjector(redactor).project(
+            exhibits,
+            RubricScores(self._destination / "rubric-scores.jsonl").lines(),
+        )
         pins = RepositoryPins(self._root)
         sources = EvidenceSources(
             commit=pins.commit(),
@@ -89,34 +98,38 @@ class EvidenceMain:
             unchained_actions=survey.unchained_actions,
             broken_sessions=tuple(str(item) for item in survey.broken_sessions),
         )
-        EvidencePack(clock).write(self._destination, sources)
+        EvidencePack(clock).write(self._destination, sources, body)
         sys.stdout.write(
             f"wrote {self._destination} chain_status={sources.chain_status}\n"
         )
         return 0
 
-    async def _survey(
+    async def _read(
         self,
         settings: ApplicationSettings,
         cipher: CipherPort,
         verifier: ChainVerifier,
-    ) -> ChainSurveyResult:
+    ) -> tuple[ChainSurveyResult, ExhibitResult]:
         owner = DriverSwap("postgresql+asyncpg").apply(
             MigrationDatabaseUrl(settings).value()
         )
         engine = DatabaseEngine(owner)
-        result = ChainSurveyResult()
+        survey = ChainSurveyResult()
+        exhibits = ExhibitResult()
         try:
             connection = await engine.connect()
             query = PostgresAuditQuery(
                 connection, AuditRecordDecoder(SealedValue(cipher))
             )
             await SqlAlchemyUnitOfWork(connection).run(
-                ChainSurvey(query, verifier, result)
+                PackRead(
+                    ChainSurvey(query, verifier, survey),
+                    ExhibitRead(query, exhibits),
+                )
             )
         finally:
             await engine.dispose()
-        return result
+        return survey, exhibits
 
 
 if __name__ == "__main__":  # pragma: no cover
