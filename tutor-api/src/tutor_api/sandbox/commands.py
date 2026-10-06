@@ -65,7 +65,7 @@ class SandboxEnvironment:
 
 
 class SandboxCommands:
-    """The four argv tuples, in the order the runner executes them."""
+    """The argv tuples the runner executes: down, up, migrate, check, down."""
 
     def __init__(
         self,
@@ -107,6 +107,9 @@ class SandboxCommands:
             "tests/integration",
             "-q",
             "--tb=short",
+            # The 100% gate is the whole suite's, under ``make test``. The
+            # integration tests alone cannot reach it and are not meant to.
+            "--no-cov",
             "-m",
             "not sandbox_lifecycle",
         )

@@ -1,5 +1,6 @@
 """The sandbox runner never points a command at the operator database."""
 
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -11,10 +12,11 @@ from tests.support.runtime_pin import RuntimePin
 from tutor_api.adapters.persistence.schema import (
     ApplicationRole,
     AuditSchema,
+    AuditSchemaUpgrade,
     BaseSchema,
     InstantColumn,
+    SupersededAuditSchema,
 )
-from tutor_api.adapters.persistence.versioned_policy import EffectiveInstant
 from tutor_api.sandbox.__main__ import SandboxModule
 from tutor_api.sandbox.commands import (
     ProcessEnvironment,
@@ -24,19 +26,22 @@ from tutor_api.sandbox.commands import (
 )
 from tutor_api.sandbox.identity import SandboxIdentity
 from tutor_api.sandbox.orchestrator import ProcessLaunch, SandboxOrchestrator
-from tutor_core.domain.models.audit import GateEvaluation, HumanAction, TurnAuditRecord
-from tutor_core.domain.models.learner import HistoryItem
-from tutor_core.domain.models.timestamps import Timestamped
 
 
 class ScriptedLaunch(ProcessLaunch):
-    """Records argv and returns a status keyed by a token in the command."""
+    """Records argv and returns a status keyed by a token in the command.
 
-    def __init__(self, codes: dict[str, int] | None = None) -> None:
+    A token maps to one status per call, in order; the last one repeats. The
+    clear before ``up`` and the teardown after it are the same ``down``, so a
+    test that fails only one of them scripts ``(0, 9)`` or ``(9, 0)``.
+    """
+
+    def __init__(self, codes: dict[str, tuple[int, ...]] | None = None) -> None:
         self.commands: list[tuple[str, ...]] = []
         self.directories: list[Path] = []
         self.environments: list[dict[str, str]] = []
         self._codes = {} if codes is None else codes
+        self._calls: dict[str, int] = {}
 
     def run(
         self,
@@ -47,16 +52,18 @@ class ScriptedLaunch(ProcessLaunch):
         self.commands.append(command)
         self.directories.append(cwd)
         self.environments.append(env)
-        for token, code in self._codes.items():
+        for token, codes in self._codes.items():
             if token in command:
-                return code
+                seen = self._calls.get(token, 0)
+                self._calls[token] = seen + 1
+                return codes[min(seen, len(codes) - 1)]
         return 0
 
 
 class Wired:
     """One orchestrator over a scripted launch and the real paths."""
 
-    def __init__(self, codes: dict[str, int] | None = None) -> None:
+    def __init__(self, codes: dict[str, tuple[int, ...]] | None = None) -> None:
         self.launch = ScriptedLaunch(codes)
         self.identity = SandboxIdentity()
         self.paths = SandboxPaths.from_here()
@@ -109,29 +116,44 @@ class TestSandboxRun:
         migrated = next(token for token in tokens if "alembic" in token)
         assert tokens.index(started) < tokens.index(migrated)
 
+    def test_a_leftover_project_is_removed_before_the_sandbox_starts(self) -> None:
+        wired = Wired()
+        wired.orchestrator.run()
+        tokens = [" ".join(command) for command in wired.launch.commands]
+        assert tokens[0].endswith("down -v --remove-orphans")
+        assert " up " in tokens[1]
+
+    def test_a_failed_clear_does_not_start_and_still_tears_down(self) -> None:
+        wired = Wired({"down": (6, 0)})
+        assert wired.orchestrator.run() == 6
+        joined = [" ".join(command) for command in wired.launch.commands]
+        assert not any(" up " in token for token in joined)
+        assert len(joined) == 2
+        assert "down -v" in joined[-1]
+
     def test_a_failed_migrate_still_removes_the_sandbox(self) -> None:
-        wired = Wired({"alembic": 2})
+        wired = Wired({"alembic": (2,)})
         assert wired.orchestrator.run() == 2
         joined = [" ".join(command) for command in wired.launch.commands]
         assert not any("pytest" in token for token in joined)
         assert "down -v" in joined[-1]
 
     def test_a_failed_start_still_removes_the_sandbox(self) -> None:
-        wired = Wired({"up": 3})
+        wired = Wired({"up": (3,)})
         assert wired.orchestrator.run() == 3
         joined = [" ".join(command) for command in wired.launch.commands]
         assert not any("alembic" in token for token in joined)
         assert "down -v" in joined[-1]
 
     def test_a_failing_check_is_the_status_and_the_volume_is_removed(self) -> None:
-        wired = Wired({"-c": 1})
+        wired = Wired({"-c": (1,)})
         code = wired.orchestrator.run((sys.executable, "-c", "import sys; sys.exit(1)"))
         assert code == 1
-        assert wired.launch.commands[2][1] == "-c"
+        assert wired.launch.commands[3][1] == "-c"
         assert "down -v" in " ".join(wired.launch.commands[-1])
 
     def test_a_failed_teardown_fails_a_run_whose_checks_passed(self) -> None:
-        wired = Wired({"down": 9})
+        wired = Wired({"down": (0, 9)})
         assert wired.orchestrator.run() == 9
 
     def test_commands_run_in_the_api_tree_and_pytest_in_the_repository(self) -> None:
@@ -139,7 +161,7 @@ class TestSandboxRun:
         wired.orchestrator.run()
         api = wired.paths.api_root()
         repo = wired.paths.repo_root()
-        assert wired.launch.directories == [api, api, repo, api]
+        assert wired.launch.directories == [api, api, api, repo, api]
 
     def test_the_environment_replaces_the_operator_database(self) -> None:
         wired = Wired()
@@ -163,6 +185,7 @@ class TestSandboxRun:
         )
         assert commands.check(("echo", "ok")) == ("echo", "ok")
         assert "not sandbox_lifecycle" in commands.check(None)
+        assert "--no-cov" in commands.check(None)
 
     def test_already_inside_reads_the_sandbox_variable(self) -> None:
         identity = SandboxIdentity()
@@ -180,24 +203,21 @@ class TestSandboxRun:
         assert paths.api_root() == RepositoryPaths().root() / "tutor-api"
         assert paths.compose_file().is_file()
 
-    def test_main_returns_the_launch_status(
+    def test_the_orchestrator_does_not_wire_itself(self) -> None:
+        assert not hasattr(SandboxOrchestrator, "main")
+
+    def test_the_module_entry_exits_with_the_launch_status(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def succeed(
+        def fail(
             self: ProcessLaunch,
             command: tuple[str, ...],
             env: dict[str, str],
             cwd: Path,
         ) -> int:
-            return 0
+            return 4
 
-        monkeypatch.setattr(ProcessLaunch, "run", succeed)
-        assert SandboxOrchestrator.main() == 0
-
-    def test_the_module_entry_exits_with_that_status(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(SandboxOrchestrator, "main", classmethod(lambda cls: 4))
+        monkeypatch.setattr(ProcessLaunch, "run", fail)
         with pytest.raises(SystemExit) as caught:
             SandboxModule.main()
         assert caught.value.code == 4
@@ -205,11 +225,13 @@ class TestSandboxRun:
     def test_python_m_runs_the_module_entry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            SandboxOrchestrator,
-            "main",
-            classmethod(lambda cls: 0),
-        )
+        def succeed(
+            self: SandboxOrchestrator,
+            check: tuple[str, ...] | None = None,
+        ) -> int:
+            return 0
+
+        monkeypatch.setattr(SandboxOrchestrator, "run", succeed)
         sys.modules.pop("tutor_api.sandbox.__main__", None)
         with pytest.raises(SystemExit) as caught:
             runpy.run_module("tutor_api.sandbox", run_name="__main__")
@@ -225,31 +247,40 @@ class TestSandboxRun:
         assert code == 5
 
 
+class SchemaText:
+    """Every DDL statement the schema classes emit, upgrade and downgrade."""
+
+    def all(self) -> str:
+        role = ApplicationRole("tutor_app")
+        upgrade = AuditSchemaUpgrade(role)
+        return "\n".join(
+            (
+                *BaseSchema().statements(),
+                *BaseSchema().downgrade_statements(),
+                *AuditSchema(role).statements(),
+                *upgrade.statements(),
+                *upgrade.downgrade_statements(),
+                *SupersededAuditSchema(role).statements(),
+            )
+        )
+
+
 class TestInstantColumn:
     def test_a_name_that_is_not_an_identifier_is_refused(self) -> None:
         with pytest.raises(ValueError, match="lowercase identifier"):
             InstantColumn("Recorded-At")
 
-    def test_base_tables_use_full_precision_timestamptz(self) -> None:
-        sql = "\n".join(BaseSchema().statements())
-        assert InstantColumn("occurred_at").required() in sql
-        assert InstantColumn("reviewed_at").optional() in sql
-        assert "timestamp without time zone" not in sql
-        assert "timestamptz(" not in sql
+    def test_no_statement_spells_timestamp_without_time_zone(self) -> None:
+        # ``timestamp`` alone is the zoneless type; ``\b`` stops before
+        # ``timestamptz``, so only the zoneless spelling matches.
+        assert re.search(r"\btimestamp\b", SchemaText().all()) is None
 
-    def test_audit_tables_keep_full_precision_timestamptz(self) -> None:
-        sql = "\n".join(AuditSchema(ApplicationRole("tutor_app")).statements())
-        assert "recorded_at timestamptz NOT NULL" in sql
-        assert "timestamptz(" not in sql
-        assert "timestamp without time zone" not in sql
+    def test_no_statement_reduces_timestamptz_precision(self) -> None:
+        assert re.search(r"timestamptz\s*\(", SchemaText().all()) is None
 
-
-class TestTimestampedRecords:
-    def test_instant_bearing_records_inherit_the_base(self) -> None:
-        assert issubclass(HistoryItem, Timestamped)
-        assert issubclass(GateEvaluation, Timestamped)
-        assert issubclass(HumanAction, Timestamped)
-        assert issubclass(TurnAuditRecord, Timestamped)
-        assert issubclass(EffectiveInstant, Timestamped)
-        assert HistoryItem.model_config.get("frozen") is True
-        assert HistoryItem.model_config.get("extra") == "forbid"
+    def test_every_recorded_instant_is_spelled_by_the_helper(self) -> None:
+        sql = SchemaText().all()
+        for name in ("recorded_at", "evaluated_at", "acted_at", "occurred_at"):
+            assert InstantColumn(name).required() in sql
+        for name in ("reviewed_at", "stopped_at"):
+            assert InstantColumn(name).optional() in sql

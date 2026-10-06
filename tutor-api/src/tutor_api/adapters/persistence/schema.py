@@ -208,6 +208,9 @@ class AuditSchema:
         role = self._role.identifier()
         rolname = self._role.literal()
         generation = TurnAuditGenerationCheck().expression()
+        recorded_at = InstantColumn("recorded_at").required()
+        evaluated_at = InstantColumn("evaluated_at").required()
+        acted_at = InstantColumn("acted_at").required()
         return (
             f"""
             DO $role$
@@ -239,7 +242,7 @@ class AuditSchema:
                 policy_version text NOT NULL REFERENCES policy_version (version),
                 previous_record_hash text NOT NULL,
                 record_hash text NOT NULL,
-                recorded_at timestamptz NOT NULL,
+                {recorded_at},
                 CONSTRAINT turn_audit_session_turn UNIQUE (session_id, turn_index),
                 CONSTRAINT turn_audit_generation_together CHECK ({generation}
                 )
@@ -254,7 +257,7 @@ class AuditSchema:
                 UNIQUE (turn_id, chunk_id)
             )
             """,
-            """
+            f"""
             CREATE TABLE gate_evaluation (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
@@ -262,7 +265,7 @@ class AuditSchema:
                 decision text NOT NULL,
                 reason ciphertext,
                 policy_rule_id text NOT NULL,
-                evaluated_at timestamptz NOT NULL,
+                {evaluated_at},
                 CONSTRAINT gate_evaluation_decision CHECK (
                     decision IN ('pass', 'pause', 'stop', 'not_evaluated')
                 ),
@@ -271,14 +274,14 @@ class AuditSchema:
                 )
             )
             """,
-            """
+            f"""
             CREATE TABLE human_action (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
                 tutor_id ciphertext NOT NULL,
                 action text NOT NULL,
                 edited_output ciphertext,
-                acted_at timestamptz NOT NULL,
+                {acted_at},
                 CONSTRAINT human_action_kind CHECK (
                     action IN ('approve', 'edit', 'override', 'stop')
                 ),
@@ -362,6 +365,7 @@ class AuditSchemaUpgrade:
     def statements(self) -> tuple[str, ...]:
         role = self._role.identifier()
         generation = TurnAuditGenerationCheck().expression()
+        acted_at = InstantColumn("acted_at").required()
         return (
             f"""
             DO $upgrade$
@@ -467,7 +471,7 @@ class AuditSchemaUpgrade:
                         tutor_id ciphertext NOT NULL,
                         action text NOT NULL,
                         edited_output ciphertext,
-                        acted_at timestamptz NOT NULL,
+                        {acted_at},
                         CONSTRAINT human_action_kind CHECK (
                             action IN ('approve', 'edit', 'override', 'stop')
                         ),
@@ -544,6 +548,7 @@ class AuditSchemaUpgrade:
             "Not personal data. Required in cleartext for evidence "
             "and replay (DEC-0012)."
         )
+        recorded_at = InstantColumn("recorded_at").required()
         return (
             f"""
             DO $downgrade$
@@ -612,7 +617,7 @@ class AuditSchemaUpgrade:
                     policy_version text NOT NULL REFERENCES policy_version (version),
                     previous_record_hash text NOT NULL,
                     record_hash text NOT NULL,
-                    recorded_at timestamptz NOT NULL
+                    {recorded_at}
                 );
 
                 INSERT INTO turn_audit_restored (
@@ -706,6 +711,8 @@ class SupersededAuditSchema:
     def statements(self) -> tuple[str, ...]:
         role = self._role.identifier()
         rolname = self._role.literal()
+        recorded_at = InstantColumn("recorded_at").required()
+        evaluated_at = InstantColumn("evaluated_at").required()
         return (
             f"""
             DO $role$
@@ -718,7 +725,7 @@ class SupersededAuditSchema:
             END
             $role$
             """,
-            """
+            f"""
             CREATE TABLE turn_audit (
                 turn_id uuid PRIMARY KEY,
                 session_id uuid NOT NULL REFERENCES tutoring_session (id),
@@ -739,10 +746,10 @@ class SupersededAuditSchema:
                 policy_version text NOT NULL REFERENCES policy_version (version),
                 previous_record_hash text NOT NULL,
                 record_hash text NOT NULL,
-                recorded_at timestamptz NOT NULL
+                {recorded_at}
             )
             """,
-            """
+            f"""
             CREATE TABLE gate_evaluation (
                 id uuid PRIMARY KEY,
                 turn_id uuid NOT NULL REFERENCES turn_audit (turn_id),
@@ -750,7 +757,7 @@ class SupersededAuditSchema:
                 decision text NOT NULL,
                 reason ciphertext,
                 policy_rule_id text NOT NULL,
-                evaluated_at timestamptz NOT NULL,
+                {evaluated_at},
                 CONSTRAINT gate_evaluation_decision CHECK (
                     decision IN ('pass', 'pause', 'stop', 'not_evaluated')
                 ),

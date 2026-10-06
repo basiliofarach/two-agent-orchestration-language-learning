@@ -95,10 +95,18 @@ A record that stores an instant inherits `Timestamped`
 names the column (`recorded_at`, `occurred_at`, `evaluated_at`,
 `acted_at`). Those names are not collapsed into one `created_at`, and
 there is no `updated_at`, because an audit row is append-only.
+`Timestamped` checks its subclass when the class is defined: a plain
+`datetime` field, or no `AwareDatetime` field at all, is a `TypeError`. A
+unit test walks every first-party `BaseModel` and fails on any naive
+`datetime` field, and on any `AwareDatetime` field outside a `Timestamped`
+subclass.
 
-In the schema, a new instant column is `InstantColumn`. It emits
+In the schema, every instant column is `InstantColumn`. It emits
 `timestamptz` at full precision, required or optional. It cannot emit
-`timestamp` or `timestamptz(n)`.
+`timestamp` or `timestamptz(n)`. The DDL text is a first check only. The
+guarantee is `tests/integration/test_instant_columns.py`, which reads the
+migrated catalogue, resolves domains to their base type, and fails on any
+`timestamp` column or any `timestamptz` with a reduced typmod.
 
 This is a replay-determinism rule, not an encryption one. `recorded_at` is a
 registered cleartext exemption under

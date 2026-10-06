@@ -1,6 +1,12 @@
-"""The sandbox compose project comes up, and it is not the operator database."""
+"""The sandbox compose project comes up, and it is not the operator database.
+
+Excluded from the default run by ``addopts``; ``make sandbox-lifecycle`` runs
+it. It starts the real compose project, so it needs docker and the sandbox
+port, and it must not share them with a ``make sandbox-test`` in progress.
+"""
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -13,6 +19,20 @@ from tutor_api.sandbox.commands import (
 )
 from tutor_api.sandbox.identity import SandboxIdentity
 from tutor_api.sandbox.orchestrator import ProcessLaunch, SandboxOrchestrator
+
+
+class DockerDaemon:
+    """Whether ``docker compose`` can reach a daemon from this process."""
+
+    def available(self) -> bool:
+        if shutil.which("docker") is None:
+            return False
+        completed = subprocess.run(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+        )
+        return completed.returncode == 0
 
 
 class ProjectContainers:
@@ -53,8 +73,14 @@ class TestSandboxLifecycle:
         identity = SandboxIdentity()
         if SandboxEnvironment(identity, dict(os.environ)).already_inside():
             pytest.skip("this process is already the sandbox suite")
+        if not DockerDaemon().available():
+            pytest.skip("no docker daemon")
         operator = ProjectContainers("tutor")
         sandbox = ProjectContainers(identity.project)
+        if sandbox.ids().strip():
+            # The runner clears the project before ``up``. Running now would
+            # remove the database another sandbox run is testing against.
+            pytest.skip("another sandbox run is using the project")
         before_ids = operator.ids()
         before_volumes = operator.volumes()
         paths = SandboxPaths.from_here()

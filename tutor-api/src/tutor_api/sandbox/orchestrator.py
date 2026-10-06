@@ -1,16 +1,13 @@
 """Bring up a throwaway Postgres, migrate it, test, and always remove it."""
 
 import subprocess
-import sys
 from pathlib import Path
 
 from tutor_api.sandbox.commands import (
-    ProcessEnvironment,
     SandboxCommands,
     SandboxEnvironment,
     SandboxPaths,
 )
-from tutor_api.sandbox.identity import SandboxIdentity
 
 
 class ProcessLaunch:
@@ -54,29 +51,31 @@ class SandboxOrchestrator:
         self._environment = environment
         self._paths = paths
 
-    @classmethod
-    def main(cls) -> int:
-        """The ``python -m tutor_api.sandbox`` entry."""
-        identity = SandboxIdentity()
-        paths = SandboxPaths.from_here()
-        return cls(
-            ProcessLaunch(),
-            SandboxCommands(identity, paths, sys.executable),
-            SandboxEnvironment(identity, ProcessEnvironment().values()),
-            paths,
-        ).run()
-
     def run(self, check: tuple[str, ...] | None = None) -> int:
-        """Up, migrate, run ``check`` or the integration suite, then down.
+        """Clear, up, migrate, run ``check`` or the integration suite, then down.
 
-        A failing step still removes the project and its volumes. The
-        status returned is the first failure, or the teardown's status
-        when the steps themselves passed.
+        The clear is the same ``down -v`` as the teardown. A run killed
+        before its ``finally`` leaves the volume behind; ``up`` would reuse
+        it, the init scripts would not run, and ``upgrade head`` would find
+        the database already at head and pass without having migrated a
+        fresh one. A failing step still removes the project and its
+        volumes. The status returned is the first failure, or the
+        teardown's status when the steps themselves passed.
         """
         env = self._environment.overlay()
         code = 1
         try:
-            code = self._launch.run(self._commands.up(), env, self._paths.api_root())
+            code = self._launch.run(
+                self._commands.down(),
+                env,
+                self._paths.api_root(),
+            )
+            if code == 0:
+                code = self._launch.run(
+                    self._commands.up(),
+                    env,
+                    self._paths.api_root(),
+                )
             if code == 0:
                 code = self._launch.run(
                     self._commands.migrate(),
