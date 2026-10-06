@@ -31,13 +31,24 @@ class CategorySafetyClassifier(SafetyClassifierPort):
         if not rules:
             msg = "safety classifier has no rules"
             raise ValueError(msg)
-        self._rules = rules
+        # Patterns are written in lowercase. Matching is case-insensitive so
+        # "Search the web" and "Diagnose" still flag (REQ-COMP). An invalid
+        # pattern fails here, at construction, rather than passing every draft.
+        compiled: list[tuple[SafetyRule, re.Pattern[str]]] = []
+        for rule in rules:
+            try:
+                pattern = re.compile(rule.pattern, re.IGNORECASE)
+            except re.error as exc:
+                msg = "safety rule pattern is not a regular expression"
+                raise ValueError(msg) from exc
+            compiled.append((rule, pattern))
+        self._compiled = tuple(compiled)
 
     def classify(self, text: str) -> tuple[SafetyFlag, ...]:
         """Return one flag per matching rule, in rule order."""
         flags: list[SafetyFlag] = []
-        for rule in self._rules:
-            if re.search(rule.pattern, text) is not None:
+        for rule, pattern in self._compiled:
+            if pattern.search(text) is not None:
                 flags.append(
                     SafetyFlag(
                         category=rule.category,

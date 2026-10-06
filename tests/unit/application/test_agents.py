@@ -18,6 +18,7 @@ from tests.support.turn_stubs import (
     ScriptedGate,
 )
 
+from tutor_api.adapters.checks.safety import CategorySafetyClassifier, MinorSafetyRules
 from tutor_core.application.agents.generation import ContentGenerationAgent
 from tutor_core.application.agents.retrieval import DataRetrievalAgent
 from tutor_core.application.turn.guarded_generation import GenerateIfConsistent
@@ -115,6 +116,20 @@ class TestContentGenerationAgent:
         assert draft.decoding_params is None
         assert draft.model_revision is None
         assert draft.template_version is None
+
+    async def test_mixed_case_medical_advice_refuses_before_the_model(self) -> None:
+        agent, language = self._agent(
+            CategorySafetyClassifier(MinorSafetyRules().rules())
+        )
+        draft = await agent.generate(
+            "Please Diagnose this",
+            Samples().retrieval(),
+            Samples().history(),
+        )
+        assert language.calls == 0
+        assert draft.unit.refused is True
+        assert draft.unit.output_before_checks is None
+        assert "medical advice" in (draft.unit.refusal_reason or "")
 
     async def test_a_high_severity_draft_refuses_and_keeps_the_draft(self) -> None:
         class DraftSafety(SafetyClassifierPort):

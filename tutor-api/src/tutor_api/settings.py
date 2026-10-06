@@ -5,9 +5,10 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tutor_api.adapters.llm.ollama import LocalOllamaUrl
 from tutor_api.di.dependency import Provide
 
 
@@ -40,6 +41,13 @@ class ApplicationSettings(BaseSettings):
     # this float against the policy card (REQ-GATES).
     conflict_confidence_threshold: float | None = None
     ollama_base_url: str = "http://127.0.0.1:11434"
+
+    @field_validator("ollama_base_url")
+    @classmethod
+    def ollama_stays_on_the_machine(cls, value: str) -> str:
+        """Reject a hosted runtime. The prompt must not leave the machine."""
+        return LocalOllamaUrl(value).value()
+
     # config/runtime.toml, which pins the weights SHA (DEC-0007). Unset is
     # refused when the model is first resolved; the path is not guessed from
     # where this package happens to be installed.

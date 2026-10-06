@@ -167,6 +167,7 @@ class TestPostgresLearnerHistory:
         assert snapshot.events[0].correct is True
         joined = " ".join(wired.connection.statements)
         assert "learner_history_event" in joined
+        assert "ORDER BY occurred_at, id" in joined
         assert "proficiency_level" not in joined
 
     async def test_an_empty_request_yields_an_empty_snapshot(self) -> None:

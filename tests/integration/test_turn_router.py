@@ -7,6 +7,7 @@ four gate rows the turn committed with.
 """
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from uuid import UUID
 
 import psycopg
@@ -151,6 +152,60 @@ class TestConductTurnOverHttp:
         assert outcome["halted_at"] == "context_and_permission"
         assert served.gates(outcome["turn_id"])[0][2] == "permission-unvetted-source"
         assert served.model.calls == 0
+
+    async def test_mixed_case_open_web_still_stops_at_permission(
+        self, served: Served
+    ) -> None:
+        for client in served.client():
+            response = client.post(
+                "/turns", json=served.body("Search the Web for hola")
+            )
+        outcome = response.json()
+        assert outcome["halted_at"] == "context_and_permission"
+        assert served.gates(outcome["turn_id"])[0][2] == "permission-unvetted-source"
+        assert served.model.calls == 0
+
+    async def test_another_learners_session_is_rejected_before_retrieval(
+        self, served: Served
+    ) -> None:
+        body = served.body("What does hola mean in Spanish?")
+        body["learner_id"] = "20000000-0000-4000-8000-000000000099"
+        for client in served.client():
+            response = client.post("/turns", json=body)
+        assert response.status_code == 422
+        assert "different learner" in response.json()["detail"]
+        assert served.model.calls == 0
+        assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
+
+    async def test_a_stopped_session_is_rejected_before_retrieval(
+        self, served: Served
+    ) -> None:
+        assert served.plan is not None
+        with psycopg.connect(served.url) as connection:
+            connection.execute(
+                "UPDATE tutoring_session SET stopped_at = %s WHERE id = %s",
+                (datetime(2026, 10, 6, tzinfo=UTC), served.plan.session_id),
+            )
+        for client in served.client():
+            response = client.post(
+                "/turns", json=served.body("What does hola mean in Spanish?")
+            )
+        assert response.status_code == 422
+        assert response.json()["detail"] == "session is stopped"
+        assert served.model.calls == 0
+        assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
+
+    async def test_an_unknown_session_is_rejected_before_retrieval(
+        self, served: Served
+    ) -> None:
+        body = served.body("What does hola mean in Spanish?")
+        body["session_id"] = "30000000-0000-4000-8000-000000000099"
+        for client in served.client():
+            response = client.post("/turns", json=body)
+        assert response.status_code == 422
+        assert response.json()["detail"] == "session is not known"
+        assert served.model.calls == 0
+        assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
 
     async def test_conflict_pause_means_the_model_is_never_invoked(
         self, served: Served

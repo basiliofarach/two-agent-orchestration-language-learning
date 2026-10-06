@@ -248,7 +248,11 @@ connection (DEC-0014), and only the fields the turn requested — the ones the
 permission gate judged. A requested field outside the allowlist raises. The
 database grant is column-level, so `learner.pseudonym` is not selectable by
 the application role. A learner whose `retain_until` has passed yields an
-empty snapshot before any history column is selected.
+empty snapshot before any history column is selected. Events are ordered
+by `occurred_at`, then by `id`, so two events recorded at one instant stay
+in one order. Before that read, `TutoringSessionPort` confirms the session
+exists, is not stopped, and belongs to this learner; a refusal rolls the
+turn back and writes no audit row.
 
 ### 4.2 Generation and output checks
 
@@ -829,7 +833,10 @@ sequenceDiagram
    columns are null when the model did not run, and that absence is part of the
    hashed record. A tutor action is a later insert into `human_action`. A turn
    is fully logged or it did not happen.
-8. `stop` terminates the session and **preserves state**.
+8. `stop` terminates the session and **preserves state**. A later turn on
+   that session is refused. The session must also belong to the learner on
+   the command: the check runs on the enlisted connection, before retrieval,
+   and a mismatch leaves no audit row.
 
 ## 9. Compliance mapping
 

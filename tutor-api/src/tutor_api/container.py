@@ -7,7 +7,8 @@ what it was handed.
 
 The request path is registered end to end: the ConductTurn use case and its
 three stage handlers, the LangGraph orchestrator, the four gates, both agents,
-redaction, retrieval, history, the fixed template, the pinned model, the three
+redaction, retrieval, history, the session check, the fixed template, the pinned
+model, the three
 output checks, the policy in force, the audit sink, and the one connection
 they share (DEC-0014). Curation is not. ``CorpusIngestionPort`` and
 ``PolicyPublicationPort`` have no provider, so no request can ingest a
@@ -51,6 +52,7 @@ from tutor_api.adapters.persistence.learner_history import (
     PostgresLearnerHistory,
 )
 from tutor_api.adapters.persistence.schema import BaseSchema
+from tutor_api.adapters.persistence.tutoring_session import PostgresTutoringSession
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.adapters.persistence.versioned_policy import (
     PolicyCardCodec,
@@ -106,6 +108,7 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
 
 
@@ -394,6 +397,24 @@ class HistoryProvider(Provider):
             cast(ClockPort, resolved[ClockPort]),
             cast(HistoryFieldSet, resolved[HistoryFieldSet]),
             HistoryOutcomeCodec(),
+        )
+
+
+class SessionProvider(Provider):
+    """The session check, on the request's connection, before retrieval."""
+
+    def provides(self) -> type:
+        return TutoringSessionPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresTutoringSession(
+            cast(TransactionConnection, resolved[TransactionConnection])
         )
 
 
@@ -749,6 +770,7 @@ class ExecuteTurnProvider(Provider):
             PolicyArtifactPort,
             TurnRecordBuilder,
             ClockPort,
+            TutoringSessionPort,
         )
 
     def create(self, resolved: Mapping[type, object]) -> object:
@@ -759,6 +781,7 @@ class ExecuteTurnProvider(Provider):
             cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
             cast(TurnRecordBuilder, resolved[TurnRecordBuilder]),
             cast(ClockPort, resolved[ClockPort]),
+            cast(TutoringSessionPort, resolved[TutoringSessionPort]),
         )
 
 
@@ -831,6 +854,7 @@ class ApplicationContainer:
             PolicyProvider(),
             HistoryFieldSetProvider(),
             HistoryProvider(),
+            SessionProvider(),
             PermissionGateProvider(),
             ConflictGateProvider(),
             SensitivityGateProvider(),

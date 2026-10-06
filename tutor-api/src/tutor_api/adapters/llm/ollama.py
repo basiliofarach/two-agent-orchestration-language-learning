@@ -1,10 +1,12 @@
 """Local Qwen3, addressed by the pinned SHA (DEC-0007)."""
 
 import asyncio
+import ipaddress
 import json
 import re
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -113,12 +115,71 @@ class PinnedModelName:
         return matches[0]
 
 
+class LocalOllamaUrl:
+    """A loopback base URL for the local runtime (DEC-0007).
+
+    The rendered prompt includes a minor's admitted history. A hosted URL
+    would send that off the machine, so the host must be loopback:
+    ``localhost``, ``127.0.0.0/8``, or ``::1``. A name that merely resolves
+    to loopback is rejected — it can be pointed elsewhere later. Userinfo
+    is rejected so the host cannot be hidden beside credentials.
+    """
+
+    def __init__(self, raw: str) -> None:
+        self._value = self._accept(raw)
+
+    def value(self) -> str:
+        """The normalised base URL, with no trailing slash."""
+        return self._value
+
+    def _accept(self, raw: str) -> str:
+        parsed = urllib.parse.urlsplit(raw.strip())
+        host = parsed.hostname
+        if parsed.scheme not in {"http", "https"} or host is None:
+            msg = "ollama base URL must be an http(s) loopback address"
+            raise ValueError(msg)
+        if parsed.username is not None or parsed.password is not None:
+            msg = "ollama base URL must not carry credentials"
+            raise ValueError(msg)
+        if not self._loopback(host):
+            msg = "ollama base URL must stay on the local machine"
+            raise ValueError(msg)
+        return raw.strip().rstrip("/")
+
+    def _loopback(self, host: str) -> bool:
+        if host.lower() == "localhost":
+            return True
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return address.is_loopback
+
+
+class RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """A local runtime that redirects would send the prompt to the new host."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        """Fail the turn. Do not follow ``newurl``."""
+        message = "ollama must not redirect"
+        raise ValueError(message)
+
+
 class UrllibOllamaEndpoint(OllamaEndpoint):
     """The local Ollama HTTP API, via the standard library."""
 
     def __init__(self, base_url: str, modelfile: ModelfileWeights) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = LocalOllamaUrl(base_url).value()
         self._modelfile = modelfile
+        self._opener = urllib.request.build_opener(RefuseRedirect())
 
     def names(self) -> tuple[str, ...]:
         """GET ``/api/tags`` and read each model's name."""
@@ -183,7 +244,7 @@ class UrllibOllamaEndpoint(OllamaEndpoint):
 
     def _read(self, request: urllib.request.Request) -> dict[str, object]:
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with self._opener.open(request, timeout=120) as response:
                 raw = response.read()
         except urllib.error.URLError as exc:
             msg = "ollama is not reachable"

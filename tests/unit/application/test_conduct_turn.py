@@ -1,5 +1,7 @@
 """ConductTurn's handlers and the record each turn seals."""
 
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 from tests.support.gate_card import CardPolicy, GateCard
@@ -8,6 +10,7 @@ from tests.support.scripted_connection import ScriptedConnection
 from tests.support.turn_stubs import FlaggingSafety, ScriptedGate
 
 from tutor_api.adapters.checks.pii_redaction import RegexPiiRedactor, StandardPiiSteps
+from tutor_api.adapters.checks.safety import CategorySafetyClassifier, MinorSafetyRules
 from tutor_api.adapters.frozen_clock import FrozenClock
 from tutor_core.application.services.conduct_turn import (
     ExecuteTurn,
@@ -21,10 +24,15 @@ from tutor_core.application.turn.state import TurnGraphState
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import ChainHead, TurnAuditRecord
 from tutor_core.domain.models.conduct import ExecutedTurn, PreparedTurn, TurnCommand
+from tutor_core.domain.models.learner import LearnerId
 from tutor_core.domain.models.pipeline import GeneratedDraft
 from tutor_core.domain.models.turn import TurnState
 from tutor_core.domain.models.verdict import GateDecision, GateVerdict
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
+from tutor_core.domain.ports.tutoring_session import (
+    SessionRejected,
+    TutoringSessionPort,
+)
 from tutor_core.domain.ports.unit_of_work import TransactionalWork, UnitOfWorkPort
 
 _GENESIS = AuditRecordHash.GENESIS
@@ -216,6 +224,19 @@ class TestPrepareTurn:
         assert prepared.turn.requested_history_fields == ("proficiency_level",)
         assert prepared.turn.requires_unvetted_source is False
 
+    def test_mixed_case_open_web_is_marked_and_a_diagnosis_is_not_unvetted(
+        self,
+    ) -> None:
+        prepare = PrepareTurn(
+            RegexPiiRedactor(StandardPiiSteps().steps()),
+            CategorySafetyClassifier(MinorSafetyRules().rules()),
+            ("out_of_scope",),
+        )
+        web = prepare.run(self._command("Search the Web for hola"))
+        diagnosis = prepare.run(self._command("Please Diagnose this"))
+        assert web.turn.requires_unvetted_source is True
+        assert diagnosis.turn.requires_unvetted_source is False
+
     def test_an_open_web_question_is_marked_as_needing_an_unvetted_source(
         self,
     ) -> None:
@@ -231,9 +252,26 @@ class TestPrepareTurn:
 class FixedOrchestrator(TurnOrchestrator):
     def __init__(self, state: TurnGraphState) -> None:
         self._state = state
+        self.calls = 0
 
     async def run(self, turn: TurnState) -> TurnGraphState:
+        self.calls += 1
         return self._state
+
+
+class AcceptingSession(TutoringSessionPort):
+    """The sample session is this learner's and still open."""
+
+    async def require_active(self, session_id: UUID, learner_id: LearnerId) -> None:
+        return None
+
+
+class RejectingSession(TutoringSessionPort):
+    """The session is not this learner's."""
+
+    async def require_active(self, session_id: UUID, learner_id: LearnerId) -> None:
+        msg = "session belongs to a different learner"
+        raise SessionRejected(msg)
 
 
 class MemorySink(AuditSinkPort):
@@ -263,15 +301,22 @@ class ScriptedUnit(UnitOfWorkPort):
 
 class Execute:
     def handler(
-        self, unit: UnitOfWorkPort, sink: AuditSinkPort | None = None
+        self,
+        unit: UnitOfWorkPort,
+        sink: AuditSinkPort | None = None,
+        sessions: TutoringSessionPort | None = None,
+        orchestrator: TurnOrchestrator | None = None,
     ) -> ExecuteTurn:
         return ExecuteTurn(
             unit,
-            FixedOrchestrator(States().passed()),
+            orchestrator
+            if orchestrator is not None
+            else FixedOrchestrator(States().passed()),
             sink if sink is not None else MemorySink(),
             CardPolicy(GateCard().build()),
             Builder().build(),
             FrozenClock(Samples().when()),
+            sessions if sessions is not None else AcceptingSession(),
         )
 
     def prepared(self) -> PreparedTurn:
@@ -298,6 +343,18 @@ class TestExecuteTurn:
     ) -> None:
         with pytest.raises(TurnFailed, match="without running the turn"):
             await Execute().handler(ScriptedUnit("skip")).run(Execute().prepared())
+
+    async def test_a_rejected_session_does_not_run_the_graph_or_append(self) -> None:
+        sink = MemorySink()
+        graph = FixedOrchestrator(States().passed())
+        with pytest.raises(SessionRejected, match="different learner"):
+            await (
+                Execute()
+                .handler(ScriptedUnit(), sink, RejectingSession(), graph)
+                .run(Execute().prepared())
+            )
+        assert graph.calls == 0
+        assert sink.records == []
 
 
 class TestFinaliseTurn:

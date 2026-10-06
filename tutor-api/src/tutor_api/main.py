@@ -5,8 +5,13 @@ from fastapi import FastAPI
 from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
 from tutor_api.routers.health import HealthRouter
-from tutor_api.routers.turns import TurnFailureHandler, TurnRouter
+from tutor_api.routers.turns import (
+    SessionRejectionHandler,
+    TurnFailureHandler,
+    TurnRouter,
+)
 from tutor_core.application.services.conduct_turn import TurnFailed
+from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
 class Application:
@@ -36,6 +41,7 @@ class Application:
         app.include_router(HealthRouter().router())
         app.include_router(TurnRouter().router())
         app.add_exception_handler(TurnFailed, TurnFailureHandler())
+        app.add_exception_handler(SessionRejected, SessionRejectionHandler())
         return app
 
 

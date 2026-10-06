@@ -25,6 +25,7 @@ from tutor_core.domain.ports import (
     SafetyClassifierPort,
     SourceSupportPort,
     TransactionalWork,
+    TutoringSessionPort,
     UnitOfWorkPort,
 )
 from tutor_core.domain.ports.unit_of_work import TransactionConnection
@@ -50,6 +51,7 @@ class PortCatalogue:
             GrammarCheckPort,
             SafetyClassifierPort,
             SourceSupportPort,
+            TutoringSessionPort,
             OversightGatePort,
             AuditSinkPort,
             PolicyArtifactPort,
@@ -123,6 +125,7 @@ class TestPortMethodSurface:
             PolicyArtifactPort.version,
             PolicyPublicationPort.publish,
             LearnerHistoryPort.read,
+            TutoringSessionPort.require_active,
             OversightGatePort.evaluate,
             LanguageModelPort.complete,
         ):
@@ -131,6 +134,9 @@ class TestPortMethodSurface:
     def test_knowledge_base_takes_redacted_text_only(self) -> None:
         hints = get_type_hints(KnowledgeBasePort.retrieve)
         assert hints["request"] is RedactedRetrievalRequest
+
+    def test_tutoring_session_confirms_and_does_not_open_or_stop(self) -> None:
+        assert TutoringSessionPort.__abstractmethods__ == frozenset({"require_active"})
 
     def test_learner_history_is_read_only(self) -> None:
         assert LearnerHistoryPort.__abstractmethods__ == frozenset({"read"})

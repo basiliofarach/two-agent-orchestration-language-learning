@@ -6,7 +6,9 @@ from tutor_api.adapters.persistence.schema import (
     ApplicationRole,
     AuditSchema,
     LearnerHistoryColumnGrant,
+    LearnerHistoryEventIdGrant,
     RequestPathPrivileges,
+    TutoringSessionColumnGrant,
 )
 from tutor_api.settings import ApplicationSettings
 
@@ -87,7 +89,7 @@ class TestLearnerHistoryColumnGrant:
             "GRANT SELECT (learner_id, retain_until, proficiency_level) "
             'ON TABLE learner TO "audit_writer"',
             'REVOKE ALL ON TABLE learner_history_event FROM PUBLIC, "audit_writer"',
-            "GRANT SELECT (learner_id, item_id, correct, occurred_at) "
+            "GRANT SELECT (learner_id, item_id, correct, occurred_at, id) "
             'ON TABLE learner_history_event TO "audit_writer"',
         )
         assert all("pseudonym" not in statement for statement in statements)
@@ -99,6 +101,33 @@ class TestLearnerHistoryColumnGrant:
         assert downgrade == (
             "REVOKE SELECT (learner_id, retain_until, proficiency_level) "
             'ON TABLE learner FROM "audit_writer"',
-            "REVOKE SELECT (learner_id, item_id, correct, occurred_at) "
+            "REVOKE SELECT (learner_id, item_id, correct, occurred_at, id) "
             'ON TABLE learner_history_event FROM "audit_writer"',
         )
+
+
+class TestSessionAndEventIdGrants:
+    def test_the_session_grant_is_three_columns_and_not_the_tutor(self) -> None:
+        statements = TutoringSessionColumnGrant(
+            ApplicationRole("audit_writer")
+        ).statements()
+        assert statements == (
+            'REVOKE ALL ON TABLE tutoring_session FROM PUBLIC, "audit_writer"',
+            "GRANT SELECT (id, learner_id, stopped_at) "
+            'ON TABLE tutoring_session TO "audit_writer"',
+        )
+        assert all("tutor_id" not in statement for statement in statements)
+        assert all("stop_reason" not in statement for statement in statements)
+        assert TutoringSessionColumnGrant(
+            ApplicationRole("audit_writer")
+        ).downgrade_statements() == (
+            "REVOKE SELECT (id, learner_id, stopped_at) "
+            'ON TABLE tutoring_session FROM "audit_writer"',
+        )
+
+    def test_the_event_id_repair_grants_id_and_its_downgrade_is_empty(self) -> None:
+        role = ApplicationRole("audit_writer")
+        assert LearnerHistoryEventIdGrant(role).statements() == (
+            'GRANT SELECT (id) ON TABLE learner_history_event TO "audit_writer"',
+        )
+        assert LearnerHistoryEventIdGrant(role).downgrade_statements() == ()

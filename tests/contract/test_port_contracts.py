@@ -48,6 +48,7 @@ from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import (
     TransactionalWork,
     TransactionConnection,
@@ -94,6 +95,20 @@ class LearnerHistoryPortContract:
         snapshot = await self.port().read(self.learner_id(), requested)
         assert isinstance(snapshot, LearnerHistorySnapshot)
         assert snapshot.learner_id == self.learner_id()
+
+
+class TutoringSessionPortContract:
+    """Every ``TutoringSessionPort`` accepts one active session for its learner."""
+
+    def port(self) -> TutoringSessionPort:
+        msg = "subclass must supply a TutoringSessionPort"
+        raise NotImplementedError(msg)
+
+    async def test_require_active_accepts_the_sample_session(self) -> None:
+        await self.port().require_active(
+            Samples().turn().session_id,
+            Samples().learner_id(),
+        )
 
 
 class EmbeddingPortContract:

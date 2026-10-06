@@ -25,6 +25,10 @@ from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
+from tutor_core.domain.ports.tutoring_session import (
+    SessionRejected,
+    TutoringSessionPort,
+)
 from tutor_core.domain.ports.unit_of_work import (
     TransactionalWork,
     TransactionConnection,
@@ -110,6 +114,7 @@ class TurnTransaction(TransactionalWork):
         policy: PolicyArtifactPort,
         builder: TurnRecordBuilder,
         clock: ClockPort,
+        sessions: TutoringSessionPort,
     ) -> None:
         self._prepared = prepared
         self._receipt = receipt
@@ -118,10 +123,18 @@ class TurnTransaction(TransactionalWork):
         self._policy = policy
         self._builder = builder
         self._clock = clock
+        self._sessions = sessions
 
     async def run(self, connection: TransactionConnection) -> None:
-        """Run the graph, then append the record that describes it."""
+        """Confirm the session, run the graph, then append its record.
+
+        The session check uses the enlisted connection and runs before the
+        graph, so a missing, stopped, or foreign session never reaches
+        retrieval (REQ-MINOR). ``connection`` is the same request connection
+        the session port holds (DEC-0014).
+        """
         turn = self._prepared.turn
+        await self._sessions.require_active(turn.session_id, turn.learner_id)
         state = await self._orchestrator.run(turn)
         head = await self._sink.head(turn.session_id)
         version = await self._policy.version()
@@ -150,6 +163,7 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
         policy: PolicyArtifactPort,
         builder: TurnRecordBuilder,
         clock: ClockPort,
+        sessions: TutoringSessionPort,
     ) -> None:
         self._unit = unit
         self._orchestrator = orchestrator
@@ -157,6 +171,7 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
         self._policy = policy
         self._builder = builder
         self._clock = clock
+        self._sessions = sessions
 
     async def run(self, prepared: PreparedTurn) -> ExecutedTurn:
         """Commit the turn and its record, or raise ``TurnFailed``."""
@@ -169,9 +184,12 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
             self._policy,
             self._builder,
             self._clock,
+            self._sessions,
         )
         try:
             await self._unit.run(work)
+        except SessionRejected:
+            raise
         except Exception as exc:
             msg = f"the turn did not complete ({type(exc).__name__}); nothing was kept"
             raise TurnFailed(msg) from exc

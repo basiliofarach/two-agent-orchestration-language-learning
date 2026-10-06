@@ -797,7 +797,8 @@ class LearnerHistoryColumnGrant:
     ``learner``, and nothing else there. ``pseudonym`` stays unreadable to
     the request path even if an adapter were changed to select it. The
     Python allowlist narrows a read further; this grant is the floor the
-    database enforces.
+    database enforces. ``learner_history_event.id`` is included so the
+    read can order ties by the primary key; it is not a history field.
 
     ``REVOKE ALL ON TABLE`` does not remove column privileges, so the
     downgrade revokes the columns by name.
@@ -805,7 +806,10 @@ class LearnerHistoryColumnGrant:
 
     _COLUMNS = (
         ("learner", ("learner_id", "retain_until", "proficiency_level")),
-        ("learner_history_event", ("learner_id", "item_id", "correct", "occurred_at")),
+        (
+            "learner_history_event",
+            ("learner_id", "item_id", "correct", "occurred_at", "id"),
+        ),
     )
 
     def __init__(self, role: ApplicationRole) -> None:
@@ -829,6 +833,60 @@ class LearnerHistoryColumnGrant:
             f"REVOKE SELECT ({', '.join(columns)}) ON TABLE {table} FROM {role}"
             for table, columns in self._COLUMNS
         )
+
+
+class LearnerHistoryEventIdGrant:
+    """SELECT on ``learner_history_event.id`` for catalogues already migrated.
+
+    The history grant class now includes ``id``. A database that applied
+    that revision before ``id`` was added does not re-run it, so this
+    grant repairs the privilege. Granting it again, on a fresh upgrade,
+    changes nothing. The downgrade leaves ``id`` in place: the history
+    grant owns that column, and its own downgrade revokes it.
+    """
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Grant SELECT on the event id. Idempotent if it is already held."""
+        role = self._role.identifier()
+        return (f"GRANT SELECT (id) ON TABLE learner_history_event TO {role}",)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Leave the id grant. The history grant's downgrade revokes it."""
+        return ()
+
+
+class TutoringSessionColumnGrant:
+    """SELECT on the session columns a turn must check before it reads.
+
+    Column-level: ``id``, ``learner_id`` and ``stopped_at`` only. The
+    request path confirms the session is this learner's and still open
+    (REQ-MINOR). ``tutor_id`` and ``stop_reason`` stay unreadable, so a
+    check cannot become a way to read the tutor's identity or the reason
+    the session was stopped.
+    """
+
+    _COLUMNS = ("id", "learner_id", "stopped_at")
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Revoke table privileges, then grant SELECT on the named columns."""
+        role = self._role.identifier()
+        columns = ", ".join(self._COLUMNS)
+        return (
+            f"REVOKE ALL ON TABLE tutoring_session FROM PUBLIC, {role}",
+            f"GRANT SELECT ({columns}) ON TABLE tutoring_session TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Revoke the column grant. The table stays."""
+        role = self._role.identifier()
+        columns = ", ".join(self._COLUMNS)
+        return (f"REVOKE SELECT ({columns}) ON TABLE tutoring_session FROM {role}",)
 
 
 class HistoryOutcomeEncryption:

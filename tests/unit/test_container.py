@@ -45,6 +45,7 @@ from tutor_core.domain.ports.policy_publication import PolicyPublicationPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
+from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
 
 
@@ -148,7 +149,14 @@ class TestRequestPathRegistration:
 
     @pytest.mark.parametrize(
         "port",
-        [KnowledgeBasePort, PolicyArtifactPort, AuditSinkPort, UnitOfWorkPort],
+        [
+            KnowledgeBasePort,
+            PolicyArtifactPort,
+            AuditSinkPort,
+            UnitOfWorkPort,
+            LearnerHistoryPort,
+            TutoringSessionPort,
+        ],
     )
     def test_connection_holders_are_request_scoped(self, port: type) -> None:
         """A singleton holding the connection would share it across learners."""
@@ -192,6 +200,7 @@ class TestTurnPathRegistration:
         "port",
         [
             LearnerHistoryPort,
+            TutoringSessionPort,
             ContextPermissionGate,
             ConflictAmbiguityGate,
             RetrievalAgent,

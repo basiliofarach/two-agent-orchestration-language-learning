@@ -89,6 +89,28 @@ class TestCategorySafetyClassifier:
             CategorySafetyClassifier(MinorSafetyRules().rules()).classify("hello") == ()
         )
 
+    def test_mixed_case_still_flags_the_open_web_and_a_diagnosis(self) -> None:
+        classifier = CategorySafetyClassifier(MinorSafetyRules().rules())
+        web = classifier.classify("Search the Web for hola")
+        diagnosis = classifier.classify("Please Diagnose this")
+        online = classifier.classify("LOOK THIS UP ONLINE")
+        assert [flag.category for flag in web] == ["out_of_scope"]
+        assert [flag.category for flag in diagnosis] == ["unsafe"]
+        assert diagnosis[0].severity == "high"
+        assert [flag.category for flag in online] == ["out_of_scope"]
+
+    def test_a_pattern_that_is_not_an_expression_is_refused_at_construction(
+        self,
+    ) -> None:
+        rule = SafetyRule(
+            category="unsafe",
+            pattern="(",
+            severity="high",
+            message="broken",
+        )
+        with pytest.raises(ValueError, match="not a regular expression"):
+            CategorySafetyClassifier((rule,))
+
     def test_a_rule_that_does_not_match_is_skipped(self) -> None:
         rule = SafetyRule(
             category="unsafe",

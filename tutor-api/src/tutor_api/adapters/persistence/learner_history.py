@@ -54,6 +54,10 @@ class PostgresLearnerHistory(LearnerHistoryPort):
     though the rows are still there (REQ-MINOR). ``retain_until`` is
     selected first because the check cannot run without it; it is not a
     history field and it is not returned.
+
+    Events are ordered by ``occurred_at``, then by ``id``. The prototype
+    seed writes several events at one instant; without the id the prompt
+    could list them in a different order on the next run.
     """
 
     _RETENTION = """
@@ -72,7 +76,7 @@ class PostgresLearnerHistory(LearnerHistoryPort):
         SELECT item_id, correct, occurred_at
         FROM learner_history_event
         WHERE learner_id = :learner_id
-        ORDER BY occurred_at
+        ORDER BY occurred_at, id
         """
 
     def __init__(

@@ -27,7 +27,10 @@ class ApplicationSession:
             )
             connection.execute(
                 "SELECT learner_id, item_id, correct, occurred_at "
-                "FROM learner_history_event"
+                "FROM learner_history_event ORDER BY occurred_at, id"
+            )
+            connection.execute(
+                "SELECT id, learner_id, stopped_at FROM tutoring_session"
             )
 
     def pseudonym_is_denied(self) -> None:
@@ -40,6 +43,21 @@ class ApplicationSession:
             self._assume(connection)
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 connection.execute("SELECT * FROM learner")
+
+    def session_secrets_are_denied(self) -> None:
+        """The session check cannot read the tutor or the stop reason."""
+        with psycopg.connect(self._url) as connection:
+            self._assume(connection)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("SELECT tutor_id FROM tutoring_session")
+            connection.rollback()
+            self._assume(connection)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("SELECT stop_reason FROM tutoring_session")
+            connection.rollback()
+            self._assume(connection)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("SELECT * FROM tutoring_session")
 
     def insert_is_denied(self) -> None:
         """INSERT on a request-path table is rejected for this role."""
@@ -87,4 +105,6 @@ class TestRequestPathPrivileges:
         self, fresh_database: str
     ) -> None:
         MigratedDatabase().upgrade(fresh_database)
-        ApplicationSession(fresh_database).pseudonym_is_denied()
+        session = ApplicationSession(fresh_database)
+        session.pseudonym_is_denied()
+        session.session_secrets_are_denied()

@@ -117,6 +117,25 @@ class HistoryDatabase:
                 ),
             )
 
+    def events(self, learner_id: UUID, rows: tuple[tuple[UUID, str], ...]) -> None:
+        """Insert events that share one instant, in the order given."""
+        with psycopg.connect(self._url) as connection:
+            for event_id, item_id in rows:
+                connection.execute(
+                    """
+                    INSERT INTO learner_history_event (
+                        id, learner_id, item_id, correct, occurred_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        event_id,
+                        learner_id,
+                        self.cipher.encrypt(item_id.encode("utf-8")),
+                        self.cipher.encrypt(HistoryOutcomeCodec().encode(True)),
+                        _OCCURRED,
+                    ),
+                )
+
     async def close(self) -> None:
         await self.connection.close()
         await self.engine.dispose()
@@ -175,3 +194,24 @@ class TestLearnerHistory:
         assert snapshot.events[0].item_id == "greet-1"
         assert snapshot.events[0].correct is True
         assert snapshot.proficiency_level is None
+
+    async def test_events_that_share_a_timestamp_are_ordered_by_id(
+        self, fresh_database: str
+    ) -> None:
+        database = HistoryDatabase(fresh_database)
+        learner = uuid4()
+        database.insert(learner, "A2", _FUTURE, None)
+        later = UUID("00000000-0000-4000-8000-000000000002")
+        earlier = UUID("00000000-0000-4000-8000-000000000001")
+        database.events(
+            learner,
+            ((later, "second"), (earlier, "first")),
+        )
+        try:
+            snapshot = await database.reader().read(
+                LearnerId(value=learner), database.fields("events")
+            )
+        finally:
+            await database.close()
+        assert snapshot.events is not None
+        assert [event.item_id for event in snapshot.events] == ["first", "second"]

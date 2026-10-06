@@ -36,6 +36,13 @@ attaches; it still has no update, delete or upsert. The database grant on
 the history tables is column-level, so the application role cannot select
 `learner.pseudonym` at all.
 
+*Amended:* 2026-10-06 — `TutoringSessionPort.require_active(session_id, learner_id)`
+reads the session on the enlisted connection before retrieval. A missing
+session, a stopped session, or a session that belongs to another learner
+raises, and the turn rolls back: one learner's history is not retrieved
+into another's session, and no audit row is written there. The grant is
+column-level — `id`, `learner_id`, and `stopped_at` only.
+
 ## Context
 
 The prototype must produce *evidence* that Articles 10, 12, 14 and 15 are
@@ -71,6 +78,7 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `KnowledgeBasePort` | Retrieve vetted educational material | Vetted corpus only; no open web | REQ-KB, REQ-COMP |
 | `CorpusIngestionPort` | Record source, version, and review status | Curation only; no retrieval; no open web; no default review status | REQ-KB |
 | `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist; reads only the requested fields; `read` is async | REQ-HISTORY |
+| `TutoringSessionPort` | Confirm the session is this learner's and still open | Read-only; no open, stop, or reassignment; on the enlisted connection before retrieval | REQ-MINOR, REQ-AUDIT |
 | `EmbeddingPort` | Text → vector | — | — |
 | `LanguageModelPort` | Prompt → completion | No retriever; `complete` is async local-model I/O; `revision` is the pinned SHA | REQ-COMP |
 | `PromptTemplatePort` | Build structured prompts; carry tone constraints | Fixed templates only | REQ-ACCURACY, REQ-MINOR |

@@ -46,6 +46,17 @@ class TurnRouter:
         return (await service.prepare(body).execute()).finalise()
 
 
+class SessionRejectionHandler:
+    """Map a rejected session to 422. Retrieval did not run; nothing was kept."""
+
+    async def __call__(self, request: Request, exc: Exception) -> JSONResponse:
+        """Return the refusal. The message names no other learner."""
+        return JSONResponse(
+            status_code=422,
+            content=TurnFailure(detail=str(exc)).model_dump(),
+        )
+
+
 class TurnFailureHandler:
     """Map ``TurnFailed`` to 503. The turn rolled back; nothing was recorded."""
 

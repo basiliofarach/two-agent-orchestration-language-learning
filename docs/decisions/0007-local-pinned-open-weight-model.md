@@ -10,6 +10,12 @@ located through `MODEL_PIN_PATH`, not inferred from the package's install
 location. The residual gap: Ollama generates by name, so the check brackets
 generation rather than binding it.
 
+*Amended:* 2026-10-06 — `OLLAMA_BASE_URL` is accepted only when its host is
+loopback (`localhost`, `127.0.0.0/8`, or `::1`). A hosted URL is rejected
+when settings load and again by the endpoint. The client does not follow
+redirects. A comparison run against a hosted model remains a second
+`LanguageModelPort` adapter, not a setting on this one.
+
 ## Context
 
 The Content Generation Agent needs one LLM. Constraints:

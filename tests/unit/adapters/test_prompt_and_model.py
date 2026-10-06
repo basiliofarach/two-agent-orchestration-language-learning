@@ -16,6 +16,7 @@ from tests.support.scripted_model import ScriptedLanguageModel
 
 from tutor_api.adapters.llm.fixed_prompt import FixedPromptTemplate
 from tutor_api.adapters.llm.ollama import (
+    LocalOllamaUrl,
     ModelfileWeights,
     ModelRevision,
     OllamaEndpoint,
@@ -278,6 +279,12 @@ class OllamaHandler(BaseHTTPRequestHandler):
         self._json(body, 200)
 
     def do_POST(self) -> None:  # noqa: N802
+        target = getattr(self.server, "redirect_to", None)
+        if isinstance(target, str):
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.end_headers()
+            return
         length = int(self.headers.get("Content-Length", "0"))
         sent = json.loads(self.rfile.read(length).decode("utf-8"))
         self.server.requests.append((self.path, sent))  # type: ignore[attr-defined]
@@ -393,6 +400,44 @@ class TestUrllibOllamaEndpoint:
     def test_an_unreachable_runtime_raises(self) -> None:
         with pytest.raises(ValueError, match="not reachable"):
             Endpoint().at("http://127.0.0.1:1").names()
+
+    def test_a_hosted_url_is_refused_before_any_request(self) -> None:
+        for base in (
+            "https://api.example.com",
+            "http://192.168.1.10:11434",
+            "http://user:secret@127.0.0.1:11434",
+            "http://2130706433",
+        ):
+            with pytest.raises(ValueError, match="ollama"):
+                Endpoint().at(base)
+
+    def test_a_redirect_is_not_followed(self) -> None:
+        server = LocalOllama()
+        base = server.start({"models": []}, {"response": "hola"})
+        server._server.redirect_to = "https://api.example.com/api/generate"  # type: ignore[attr-defined]
+        try:
+            with pytest.raises(ValueError, match="must not redirect"):
+                Endpoint().at(base).generate(
+                    "m", "a minor's history", Samples().decoding()
+                )
+        finally:
+            server.stop()
+
+
+class TestLocalOllamaUrl:
+    def test_loopback_names_and_addresses_are_accepted(self) -> None:
+        assert LocalOllamaUrl("http://127.0.0.1:11434/").value() == (
+            "http://127.0.0.1:11434"
+        )
+        assert (
+            LocalOllamaUrl("http://LOCALHOST:11434").value() == "http://LOCALHOST:11434"
+        )
+        assert "[::1]" in LocalOllamaUrl("http://[::1]:11434").value()
+
+    def test_a_non_http_url_and_a_url_without_a_host_are_refused(self) -> None:
+        for base in ("ftp://127.0.0.1:11434", "http://"):
+            with pytest.raises(ValueError, match="http\\(s\\) loopback"):
+                LocalOllamaUrl(base)
 
 
 class TestHistoryFieldSetting:
