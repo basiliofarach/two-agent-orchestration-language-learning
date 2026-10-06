@@ -41,7 +41,12 @@ reads the session on the enlisted connection before retrieval. A missing
 session, a stopped session, or a session that belongs to another learner
 raises, and the turn rolls back: one learner's history is not retrieved
 into another's session, and no audit row is written there. The grant is
-column-level — `id`, `learner_id`, and `stopped_at` only.
+column-level — `id`, `learner_id`, and `stopped_at` only. The model can run
+for minutes after that check, so the database checks again: a `BEFORE
+INSERT` trigger on `turn_audit` locks the session row `FOR SHARE` and
+refuses a stopped session. The trigger function is `SECURITY DEFINER`
+because a row lock needs UPDATE privilege the application role must not
+hold; it reads `stopped_at` only, with a fixed `search_path`.
 
 ## Context
 

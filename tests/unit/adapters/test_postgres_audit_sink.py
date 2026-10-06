@@ -1,5 +1,6 @@
 """PostgresAuditSink writes one chained record and nothing else."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from tutor_api.adapters.persistence.audit_sink import (
     AuditAppendRejected,
     PostgresAuditSink,
 )
+from tutor_api.adapters.persistence.schema import TurnAuditOpenSession
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import (
     GATE_ORDER,
@@ -21,6 +23,7 @@ from tutor_core.domain.models.audit import (
     TurnAuditRecord,
 )
 from tutor_core.domain.ports.cipher import CipherPort
+from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
 class ReversibleCipher(CipherPort):
@@ -31,6 +34,39 @@ class ReversibleCipher(CipherPort):
 
     def decrypt(self, envelope: bytes) -> bytes:
         return envelope.removeprefix(b"sealed:")
+
+
+class DriverError(Exception):
+    """What the database driver raises, carrying the SQLSTATE."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+class WrappedError(Exception):
+    """What SQLAlchemy raises around the driver's error."""
+
+    def __init__(self, orig: Exception) -> None:
+        super().__init__(str(orig))
+        self.orig = orig
+
+
+class RefusingConnection(RecordingConnection):
+    """The turn insert fails with the error it was given."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    async def execute(
+        self,
+        statement: str,
+        parameters: Mapping[str, object] | None = None,
+    ) -> None:
+        if "INSERT INTO turn_audit" in statement:
+            raise self._error
+        await super().execute(statement, parameters)
 
 
 class BoundSink:
@@ -118,6 +154,34 @@ class TestPostgresAuditSink:
             await bound.sink.append(record)
         assert bound.connection.statements == []
         assert bound.connection.fetches == []
+
+    async def test_a_stopped_session_refused_by_the_database_is_a_rejection(
+        self,
+    ) -> None:
+        refusal = WrappedError(DriverError(TurnAuditOpenSession.SQLSTATE))
+        connection = RefusingConnection(refusal)
+        connection.rows.append(("held",))
+        hasher = AuditRecordHash()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), hasher)
+        record = SealedTurn(hasher).at(
+            Samples().stopped_audit_record(), AuditRecordHash.GENESIS
+        )
+        with pytest.raises(SessionRejected, match="session is stopped"):
+            await sink.append(record)
+
+    async def test_any_other_insert_failure_is_not_a_session_rejection(
+        self,
+    ) -> None:
+        refusal = WrappedError(DriverError("23505"))
+        connection = RefusingConnection(refusal)
+        connection.rows.append(("held",))
+        hasher = AuditRecordHash()
+        sink = PostgresAuditSink(connection, ReversibleCipher(), hasher)
+        record = SealedTurn(hasher).at(
+            Samples().stopped_audit_record(), AuditRecordHash.GENESIS
+        )
+        with pytest.raises(WrappedError):
+            await sink.append(record)
 
     async def test_the_first_record_must_chain_to_genesis(self) -> None:
         bound = BoundSink()

@@ -423,6 +423,30 @@ class TestUrllibOllamaEndpoint:
         finally:
             server.stop()
 
+    def test_a_proxy_in_the_environment_does_not_receive_the_prompt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runtime = LocalOllama()
+        proxy = LocalOllama()
+        base = runtime.start({"models": []}, {"response": "hola"})
+        proxy_url = proxy.start({"models": []}, {"response": "intercepted"})
+        for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+            monkeypatch.setenv(name, proxy_url)
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        try:
+            text = (
+                Endpoint()
+                .at(base)
+                .generate("m", "a minor's history", Samples().decoding())
+            )
+        finally:
+            runtime.stop()
+            proxy.stop()
+        assert text == "hola"
+        assert proxy.requests() == []
+        assert [path for path, _ in runtime.requests()] == ["/api/generate"]
+
 
 class TestLocalOllamaUrl:
     def test_loopback_names_and_addresses_are_accepted(self) -> None:

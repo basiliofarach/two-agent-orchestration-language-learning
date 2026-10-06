@@ -13,7 +13,9 @@ generation rather than binding it.
 *Amended:* 2026-10-06 — `OLLAMA_BASE_URL` is accepted only when its host is
 loopback (`localhost`, `127.0.0.0/8`, or `::1`). A hosted URL is rejected
 when settings load and again by the endpoint. The client does not follow
-redirects. A comparison run against a hosted model remains a second
+redirects and ignores `HTTP_PROXY`/`HTTPS_PROXY`: urllib does not exempt
+loopback from a proxy, so an environment proxy would otherwise receive the
+prompt. A comparison run against a hosted model remains a second
 `LanguageModelPort` adapter, not a setting on this one.
 
 ## Context

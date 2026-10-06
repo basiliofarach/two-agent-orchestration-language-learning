@@ -889,6 +889,68 @@ class TutoringSessionColumnGrant:
         return (f"REVOKE SELECT ({columns}) ON TABLE tutoring_session FROM {role}",)
 
 
+class TurnAuditOpenSession:
+    """Refuse a ``turn_audit`` insert into a stopped session (ARCHITECTURE §8).
+
+    The request path checks the session before retrieval, but the model can
+    run for minutes after that. A stop committed in between would otherwise
+    see its session take one more turn. This trigger checks again at the
+    insert, in the database, so no request path can skip it.
+
+    ``FOR SHARE`` locks the session row until the turn commits. A stop that
+    is still uncommitted makes the insert wait and then see it; a stop that
+    arrives after the insert waits for the turn. Either way the turn and the
+    stop are ordered, and a stopped session never gains a row.
+
+    ``SECURITY DEFINER``: ``FOR SHARE`` needs UPDATE privilege, which the
+    application role must not hold on ``tutoring_session``. The function
+    runs as the migration owner with a fixed ``search_path``, reads
+    ``stopped_at`` only, and cannot be called except as this trigger.
+    """
+
+    SQLSTATE = "TS001"
+
+    def statements(self) -> tuple[str, ...]:
+        """Create the function and the trigger. The role gains no privilege."""
+        return (
+            f"""
+            CREATE FUNCTION reject_turn_in_stopped_session()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                stopped timestamptz;
+            BEGIN
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = NEW.session_id
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            "REVOKE ALL ON FUNCTION reject_turn_in_stopped_session() FROM PUBLIC",
+            """
+            CREATE TRIGGER turn_audit_open_session
+                BEFORE INSERT ON turn_audit
+                FOR EACH ROW EXECUTE FUNCTION reject_turn_in_stopped_session()
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the trigger, then its function."""
+        return (
+            "DROP TRIGGER IF EXISTS turn_audit_open_session ON turn_audit",
+            "DROP FUNCTION IF EXISTS reject_turn_in_stopped_session()",
+        )
+
+
 class HistoryOutcomeEncryption:
     """Convert ``learner_history_event.correct`` from boolean to ciphertext.
 

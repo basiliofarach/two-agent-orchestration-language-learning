@@ -836,7 +836,11 @@ sequenceDiagram
 8. `stop` terminates the session and **preserves state**. A later turn on
    that session is refused. The session must also belong to the learner on
    the command: the check runs on the enlisted connection, before retrieval,
-   and a mismatch leaves no audit row.
+   and a mismatch leaves no audit row. A stop that commits while a turn is
+   already generating is caught at the insert: the `turn_audit_open_session`
+   trigger takes a share lock on the session row and refuses the row when
+   `stopped_at` is set, so the turn rolls back with the same refusal. The
+   lock orders a turn and a stop; a stopped session never gains a row.
 
 ## 9. Compliance mapping
 

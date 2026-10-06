@@ -33,6 +33,24 @@ class FailingModel(RecordingModel):
         raise ValueError(msg)
 
 
+class StoppingModel(RecordingModel):
+    """The tutor stops the session while the model is generating."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__("Hola means hello in Spanish.")
+        self._url = url
+        self.session_id: UUID | None = None
+
+    async def complete(self, prompt: RenderedPrompt) -> ModelCompletion:
+        assert self.session_id is not None
+        with psycopg.connect(self._url) as connection:
+            connection.execute(
+                "UPDATE tutoring_session SET stopped_at = %s WHERE id = %s",
+                (datetime(2026, 10, 6, tzinfo=UTC), self.session_id),
+            )
+        return await super().complete(prompt)
+
+
 class Served:
     """One seeded database, the application over it, and the stubbed model."""
 
@@ -194,6 +212,24 @@ class TestConductTurnOverHttp:
         assert response.json()["detail"] == "session is stopped"
         assert served.model.calls == 0
         assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
+
+    async def test_a_session_stopped_during_generation_keeps_no_audit_row(
+        self, fresh_database: str
+    ) -> None:
+        model = StoppingModel(fresh_database)
+        served = Served(fresh_database, model)
+        await served.install()
+        assert served.plan is not None
+        model.session_id = served.plan.session_id
+        for client in served.client():
+            response = client.post(
+                "/turns", json=served.body("What does hola mean in Spanish?")
+            )
+        assert model.calls == 1
+        assert response.status_code == 422
+        assert response.json()["detail"] == "session is stopped"
+        assert served.rows("SELECT count(*) FROM turn_audit") == [(0,)]
+        assert served.rows("SELECT count(*) FROM gate_evaluation") == [(0,)]
 
     async def test_an_unknown_session_is_rejected_before_retrieval(
         self, served: Served

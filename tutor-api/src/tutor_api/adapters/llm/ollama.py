@@ -174,12 +174,20 @@ class RefuseRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class UrllibOllamaEndpoint(OllamaEndpoint):
-    """The local Ollama HTTP API, via the standard library."""
+    """The local Ollama HTTP API, via the standard library.
+
+    The opener has an empty proxy table. urllib's default reads
+    ``HTTP_PROXY`` and does not exempt loopback, so a proxy in the
+    environment would receive the prompt despite the loopback URL
+    (DEC-0007).
+    """
 
     def __init__(self, base_url: str, modelfile: ModelfileWeights) -> None:
         self._base_url = LocalOllamaUrl(base_url).value()
         self._modelfile = modelfile
-        self._opener = urllib.request.build_opener(RefuseRedirect())
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), RefuseRedirect()
+        )
 
     def names(self) -> tuple[str, ...]:
         """GET ``/api/tags`` and read each model's name."""

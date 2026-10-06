@@ -3,15 +3,33 @@
 import json
 from uuid import UUID, uuid4
 
+from tutor_api.adapters.persistence.schema import TurnAuditOpenSession
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import ChainHead, GateEvaluation, TurnAuditRecord
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
+from tutor_core.domain.ports.tutoring_session import SessionRejected
 from tutor_core.domain.ports.unit_of_work import TransactionConnection
 
 
 class AuditAppendRejected(Exception):
     """The record does not continue this session's hash chain."""
+
+
+class StoppedSessionInsert:
+    """Recognise the database refusing a turn for a stopped session.
+
+    ``TurnAuditOpenSession`` raises its SQLSTATE from the insert trigger.
+    The driver's error carries ``sqlstate``; SQLAlchemy wraps it as
+    ``orig``. Both async and sync drivers name the attribute the same.
+    """
+
+    def raised_by(self, error: BaseException) -> bool:
+        """Whether ``error``, or the driver error inside it, is that refusal."""
+        for candidate in (error, getattr(error, "orig", None), error.__cause__):
+            if getattr(candidate, "sqlstate", None) == TurnAuditOpenSession.SQLSTATE:
+                return True
+        return False
 
 
 class PostgresAuditSink(AuditSinkPort):
@@ -29,6 +47,11 @@ class PostgresAuditSink(AuditSinkPort):
 
     ``recorded_at`` is taken from the record. This class does not read a
     clock.
+
+    The database refuses the turn row when its session was stopped after
+    the request path checked it (``TurnAuditOpenSession``). That refusal is
+    raised as ``SessionRejected``, the same refusal the pre-retrieval check
+    raises, so the turn rolls back and nothing is kept.
     """
 
     _TURN = """
@@ -110,7 +133,13 @@ class PostgresAuditSink(AuditSinkPort):
         self._require_digest(record)
         await self._lock_session(record)
         await self._require_predecessor(record)
-        await self._connection.execute(self._TURN, self._turn_parameters(record))
+        try:
+            await self._connection.execute(self._TURN, self._turn_parameters(record))
+        except Exception as exc:
+            if StoppedSessionInsert().raised_by(exc):
+                msg = "session is stopped"
+                raise SessionRejected(msg) from exc
+            raise
         for evaluation in record.gate_evaluations:
             await self._connection.execute(
                 self._GATE, self._gate_parameters(record, evaluation)
