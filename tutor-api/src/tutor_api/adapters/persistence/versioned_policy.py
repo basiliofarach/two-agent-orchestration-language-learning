@@ -3,9 +3,9 @@
 import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 
-from tutor_core.domain.models.timestamps import AwareDatetime
+from tutor_core.domain.models.timestamps import AwareDatetime, Timestamped
 from tutor_core.domain.policy.lineage import PolicyRuleLineage
 from tutor_core.domain.policy.policy_card import (
     ArticleMapping,
@@ -27,10 +27,8 @@ class PolicyVersionUnreadable(Exception):
     """A stored version cannot be decrypted or does not validate."""
 
 
-class EffectiveInstant(BaseModel):
+class EffectiveInstant(Timestamped):
     """The instant a published version takes effect, normalised to UTC."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     instant: AwareDatetime
 

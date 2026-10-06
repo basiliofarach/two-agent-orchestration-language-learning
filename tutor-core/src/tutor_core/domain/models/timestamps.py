@@ -14,7 +14,7 @@ what the Article 12 chain verifies (DEC-0010).
 from datetime import UTC, datetime
 from typing import Annotated
 
-from pydantic import AfterValidator
+from pydantic import AfterValidator, BaseModel, ConfigDict
 
 
 class RequireTimezone:
@@ -39,3 +39,15 @@ AwareDatetime = Annotated[
     AfterValidator(RequireTimezone()),
     AfterValidator(NormaliseToUtc()),
 ]
+
+
+class Timestamped(BaseModel):
+    """Frozen record that stores its instants as ``AwareDatetime`` (DEC-0010).
+
+    Subclasses name the instant. ``recorded_at``, ``occurred_at``,
+    ``evaluated_at`` and ``acted_at`` are different columns, so they are not
+    one inherited field. What they share is this config. An audit row is
+    append-only, so this base has no ``updated_at``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")

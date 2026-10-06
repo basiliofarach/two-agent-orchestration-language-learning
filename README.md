@@ -31,6 +31,7 @@ workspace lockfile. It is not an operator cwd.
 | You want | Directory | Command |
 | --- | --- | --- |
 | Backend (sync, tests, Postgres, later the API) | `tutor-api/` | `make` |
+| Integration tests on a throwaway Postgres | `tutor-api/` | `make sandbox-test` |
 | Frontend dashboard (when it exists) | `app/` | `pnpm dev` |
 
 Cursor's multi-root workspace can open a terminal in `tutor-api`. Use that.

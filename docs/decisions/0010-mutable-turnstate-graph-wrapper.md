@@ -1,6 +1,6 @@
 # 0010. Working `TurnState` is a mutable Pydantic model; graph state wraps it
 
-*Status:* Accepted · *Date:* 2026-09-21 · *Amended:* 2026-09-21 (recorded instants)
+*Status:* Accepted · *Date:* 2026-09-21 · *Amended:* 2026-10-06 (timestamped base)
 
 Supersedes the frozen-`TurnState` clause of
 [DEC-0009](0009-langgraph-state-wraps-frozen-turnstate.md). The application-layer
@@ -89,6 +89,16 @@ rejected with the naive ones.
 `ClockPort` stays the only source of the current instant (rule 7). This
 amendment canonicalises what callers pass in; it does not license
 `datetime.now()`.
+
+A record that stores an instant inherits `Timestamped`
+(`domain/models/timestamps.py`): frozen, `extra="forbid"`. The subclass
+names the column (`recorded_at`, `occurred_at`, `evaluated_at`,
+`acted_at`). Those names are not collapsed into one `created_at`, and
+there is no `updated_at`, because an audit row is append-only.
+
+In the schema, a new instant column is `InstantColumn`. It emits
+`timestamptz` at full precision, required or optional. It cannot emit
+`timestamp` or `timestamptz(n)`.
 
 This is a replay-determinism rule, not an encryption one. `recorded_at` is a
 registered cleartext exemption under

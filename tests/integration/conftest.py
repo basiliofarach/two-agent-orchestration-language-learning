@@ -41,22 +41,46 @@ class ContainerUrl:
 
     def named(self, database: str) -> str:
         """The same server, pointed at ``database``."""
-        base, _, _ = self.plain().rpartition("/")
+        return PlainUrl(self.plain()).named(database)
+
+
+class PlainUrl:
+    """A maintenance URL whose database name can be replaced."""
+
+    def __init__(self, raw: str) -> None:
+        self._raw = raw
+
+    def plain(self) -> str:
+        """The maintenance URL this object was built from."""
+        return self._raw
+
+    def named(self, database: str) -> str:
+        """The same server, pointed at ``database``."""
+        base, _, _ = self._raw.rpartition("/")
         return f"{base}/{database}"
 
 
 @pytest.fixture(scope="session")
-def postgres_container() -> Iterator[PostgresContainer]:
-    """The one server every database-backed test shares."""
+def postgres_maintenance_url() -> Iterator[str]:
+    """The sandbox server when the runner set one, otherwise a container.
+
+    ``TUTOR_SANDBOX_URL`` is the throwaway compose project from
+    ``make sandbox-test``. It is not the database ``make up`` serves, and
+    this process does not start a second container beside it.
+    """
+    sandbox = os.environ.get("TUTOR_SANDBOX_URL")
+    if sandbox:
+        yield sandbox
+        return
     os.environ["TESTCONTAINERS_RYUK_DISABLED"] = "true"
     with PostgresContainer(image=RuntimePin().postgres_image()) as container:
-        yield container
+        yield ContainerUrl(container).plain()
 
 
 @pytest.fixture
-def fresh_database(postgres_container: PostgresContainer) -> Iterator[str]:
+def fresh_database(postgres_maintenance_url: str) -> Iterator[str]:
     """A database of this test's own, dropped when it finishes."""
-    url = ContainerUrl(postgres_container)
+    url = PlainUrl(postgres_maintenance_url)
     name = f"t_{uuid4().hex}"
     with psycopg.connect(url.plain(), autocommit=True) as admin:
         admin.execute(f'CREATE DATABASE "{name}"')

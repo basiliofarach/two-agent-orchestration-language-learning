@@ -11,7 +11,7 @@ from tutor_core.domain.models.safety import (
     SourceSupportReport,
     StoredLearnerPrompt,
 )
-from tutor_core.domain.models.timestamps import AwareDatetime
+from tutor_core.domain.models.timestamps import AwareDatetime, Timestamped
 from tutor_core.domain.models.verdict import GateStage
 
 TutorAction = Literal["approve", "edit", "override", "stop"]
@@ -41,7 +41,7 @@ class ChainHead(BaseModel):
     turn_index: int = Field(ge=0)
 
 
-class GateEvaluation(BaseModel):
+class GateEvaluation(Timestamped):
     """One gate's row in ``gate_evaluation`` (REQ-GATES, REQ-AUDIT).
 
     The log distinguishes *checked and passed* (``pass``), *checked and
@@ -50,8 +50,6 @@ class GateEvaluation(BaseModel):
     the turn before it, so every row names the policy that explains it.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
     gate_name: GateStage
     decision: GateOutcome
     reason: str = Field(min_length=1)
@@ -59,14 +57,12 @@ class GateEvaluation(BaseModel):
     evaluated_at: AwareDatetime
 
 
-class HumanAction(BaseModel):
+class HumanAction(Timestamped):
     """What the tutor did, appended after the turn row.
 
     ``edited_output`` is the third text state on an edit. The row references
     ``turn_id``; it is not written by updating ``turn_audit``.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     turn_id: UUID
     tutor_id: str = Field(min_length=1)
@@ -85,7 +81,7 @@ class HumanAction(BaseModel):
         return self
 
 
-class TurnAuditRecord(BaseModel):
+class TurnAuditRecord(Timestamped):
     """Frozen per-turn log record (DEC-0002, REQ-AUDIT).
 
     ``learner_prompt`` stores the redacted prompt itself, not a digest. It is
@@ -101,8 +97,6 @@ class TurnAuditRecord(BaseModel):
     a revision or an output. The tutor action is a separate
     :class:`HumanAction` append and is not part of this record.
     """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     turn_id: UUID
     session_id: UUID

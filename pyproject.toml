@@ -46,6 +46,7 @@ addopts = [
 asyncio_mode = "auto"
 markers = [
     "requires_ollama: reaches the local Ollama runtime (skipped if unavailable)",
+    "sandbox_lifecycle: starts the throwaway compose project; the sandbox runner excludes it",
 ]
 filterwarnings = [
     "ignore:testcontainers.postgres is deprecated:DeprecationWarning",
