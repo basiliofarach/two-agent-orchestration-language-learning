@@ -6,7 +6,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
-from tutor_core.domain.models.audit import TurnAuditRecord
+from tutor_core.domain.models.audit import HumanAction, TurnAuditRecord
 from tutor_core.domain.models.safety import StoredLearnerPrompt
 
 
@@ -63,6 +63,8 @@ class AuditRecordHash:
         ``gate_evaluations`` is covered when present, so a gate row cannot be
         edited without breaking the chain. An empty tuple is omitted, which
         keeps the digest of a record sealed before gate rows existed.
+        ``history_snapshot`` is covered when present and omitted when
+        ``None``, for the same reason.
 
         The prompt is written as the two fields the historical digest
         covered, ``learner_prompt_redacted`` and ``redacted_categories``.
@@ -75,8 +77,39 @@ class AuditRecordHash:
         if not record.gate_evaluations:
             # Rows sealed before gate rows were recorded hashed no such key.
             del payload["gate_evaluations"]
+        if record.history_snapshot is None:
+            # Rows sealed before the snapshot was recorded hashed no such key.
+            del payload["history_snapshot"]
         prompt = HistoricalPrompt.from_stored(record.learner_prompt)
         payload.update(prompt.model_dump(mode="json"))
+        return json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+
+class ActionRecordHash:
+    """SHA-256 of one canonical tutor action (REQ-AUDIT).
+
+    The action chain is built like the turn chain: ``GENESIS`` before the
+    first action of a session, and each later ``previous_action_hash`` is
+    its predecessor's ``action_hash``. Every field except ``action_hash``
+    itself is covered, ``tutor_id`` and ``edited_output`` included, so an
+    approval cannot be re-attributed or its released text changed without
+    breaking the chain.
+    """
+
+    GENESIS = "0" * 64
+
+    def digest(self, action: HumanAction) -> str:
+        """Return the hex digest of ``canonical(action)``."""
+        return hashlib.sha256(self.canonical(action).encode("utf-8")).hexdigest()
+
+    def canonical(self, action: HumanAction) -> str:
+        """Sorted keys, no whitespace, nulls kept: one string per action."""
+        payload = action.model_dump(mode="json", exclude={"action_hash"})
         return json.dumps(
             payload,
             sort_keys=True,

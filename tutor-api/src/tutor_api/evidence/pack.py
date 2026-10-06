@@ -1,6 +1,7 @@
 """Regenerate the compliance pack from records already in the log."""
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -22,6 +23,11 @@ class EvidenceSources(BaseModel):
     policy_version: str = Field(min_length=1)
     chain_status: Literal["intact", "broken", "not_checked"]
     field_label: str = Field(min_length=1)
+    sessions: int = Field(default=0, ge=0)
+    turns: int = Field(default=0, ge=0)
+    actions: int = Field(default=0, ge=0)
+    unchained_actions: int = Field(default=0, ge=0)
+    broken_sessions: tuple[str, ...] = ()
 
 
 class EvidencePack:
@@ -53,7 +59,12 @@ class EvidencePack:
             "article-12.md": (
                 "# Article 12\n\n"
                 "Cites REQ-AUDIT and REQ-POLICY. "
-                f"Chain verification: {chain}.\n"
+                f"Chain verification: {chain}. "
+                f"Sessions checked: {sources.sessions}; turns: {sources.turns}; "
+                f"tutor actions: {sources.actions} "
+                f"({sources.unchained_actions} written before the action "
+                "chain existed, listed but not chain-verified). "
+                f"Broken sessions: {self._listed(sources.broken_sessions)}.\n"
             ),
             "article-14.md": (
                 "# Article 14\n\n"
@@ -77,18 +88,11 @@ class EvidencePack:
             (directory / name).write_text(text, encoding="utf-8")
 
     def _manifest(self, sources: EvidenceSources, generated: str) -> str:
-        return (
-            "{\n"
-            f'  "commit": "{sources.commit}",\n'
-            f'  "lockfile_sha256": "{sources.lockfile_sha256}",\n'
-            f'  "model_revision": "{sources.model_revision}",\n'
-            f'  "runtime": "{sources.runtime}",\n'
-            f'  "policy_version": "{sources.policy_version}",\n'
-            f'  "chain_status": "{sources.chain_status}",\n'
-            f'  "field_label": "{sources.field_label}",\n'
-            f'  "generated_at": "{generated}"\n'
-            "}\n"
-        )
+        payload = {**sources.model_dump(mode="json"), "generated_at": generated}
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+    def _listed(self, values: tuple[str, ...]) -> str:
+        return ", ".join(values) if values else "none"
 
 
 class RepositoryPins:

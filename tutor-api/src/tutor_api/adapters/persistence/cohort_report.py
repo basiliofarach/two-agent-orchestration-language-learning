@@ -2,10 +2,11 @@
 
 from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_core.domain.models.cohort import CohortCount, CohortReport
+from tutor_core.domain.ports.cohort_report import CohortReportPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection
 
 
-class CohortAggregation(BaseRepository):
+class PostgresCohortReport(BaseRepository, CohortReportPort):
     """Count gate decisions and refusals (REQ-MINOR, REQ-HISTORY).
 
     The statements are selects. The result is a :class:`CohortReport`, which
@@ -32,8 +33,8 @@ class CohortAggregation(BaseRepository):
 
     async def report(self) -> CohortReport:
         """Return the counts. Do not classify a cohort as biased or fair."""
-        decisions = await self._fetch_all(self._DECISIONS, {})
-        totals = await self._fetch_one(self._TURNS, {})
+        decisions = await self._fetch_all(self._DECISIONS)
+        totals = await self._fetch_one(self._TURNS)
         turns = 0 if totals is None else int(str(totals[0]))
         refusals = 0 if totals is None else int(str(totals[1]))
         return CohortReport(

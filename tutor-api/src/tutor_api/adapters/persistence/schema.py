@@ -1165,3 +1165,321 @@ class RetentionPurgeLog:
             "DROP TRIGGER IF EXISTS retention_purge_append_only ON retention_purge",
             "DROP TABLE IF EXISTS retention_purge",
         )
+
+
+class OpenSessionFunction:
+    """Let the application role open a session without INSERT on the table.
+
+    The same shape as ``MarkSessionStopped``: a security-definer function
+    owns the write, so the role's grant on ``tutoring_session`` stays a
+    column-level SELECT. The function refuses, with ``OS001``, a learner
+    that is not known or whose ``retain_until`` has passed — a purged
+    learner cannot be given a new session (REQ-MINOR). ``tutor`` arrives
+    sealed; the database never sees the key (DEC-0012).
+    """
+
+    SQLSTATE = "OS001"
+
+    _SIGNATURE = "open_session(uuid, uuid, bytea, timestamptz)"
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Create the function and grant execute to the application role."""
+        role = self._role.identifier()
+        return (
+            f"""
+            CREATE FUNCTION open_session(
+                target_session uuid,
+                target_learner uuid,
+                tutor bytea,
+                started timestamptz
+            )
+            RETURNS void
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                retained timestamptz;
+            BEGIN
+                SELECT retain_until INTO retained
+                FROM public.learner
+                WHERE learner_id = target_learner;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'learner is not known'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                IF retained <= started THEN
+                    RAISE EXCEPTION 'learner retention has ended'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                INSERT INTO public.tutoring_session (
+                    id, tutor_id, learner_id, started_at
+                ) VALUES (
+                    target_session, tutor, target_learner, started
+                );
+            END;
+            $$
+            """,
+            f"REVOKE ALL ON FUNCTION {self._SIGNATURE} FROM PUBLIC",
+            f"GRANT EXECUTE ON FUNCTION {self._SIGNATURE} TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the function. Sessions it opened stay."""
+        return (f"DROP FUNCTION IF EXISTS {self._SIGNATURE}",)
+
+
+class SessionStartedAtGrant:
+    """SELECT on ``tutoring_session.started_at``, so the dashboard can order.
+
+    An instant, not personal data; ``tutor_id`` and ``stop_reason`` stay
+    unreadable. Without it the list could only be ordered by a random UUID.
+    """
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Grant the one column."""
+        role = self._role.identifier()
+        return (f"GRANT SELECT (started_at) ON TABLE tutoring_session TO {role}",)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Revoke the one column."""
+        role = self._role.identifier()
+        return (f"REVOKE SELECT (started_at) ON TABLE tutoring_session FROM {role}",)
+
+
+class HumanActionChain:
+    """Tutor actions get their own hash chain and database-enforced rules.
+
+    Before this, ``human_action`` was the one audit table outside a chain:
+    a row inserted later, or back-dated, left ``/audit`` reporting intact.
+    Each new row now carries ``session_id``, ``action_index``,
+    ``previous_action_hash`` and ``action_hash`` — the same construction as
+    ``turn_audit`` (REQ-AUDIT). Rows written before this revision keep the
+    four columns null and are reported as unchained, not rewritten: the
+    table is append-only.
+
+    The insert trigger refuses, with ``HA001``:
+
+    - a turn that is not known, or not in the row's session;
+    - a session that is stopped (the review found approve and edit were
+      accepted after a stop);
+    - approve or edit on a turn the model never ran on — there is no draft
+      to release.
+
+    ``human_action_one_decision`` allows one approve, edit or override per
+    turn; a stop may still follow it. ``FOR SHARE`` on the session row
+    orders the action against a concurrent stop, as ``TurnAuditOpenSession``
+    does for turns.
+    """
+
+    SQLSTATE = "HA001"
+
+    _DIGEST = (
+        "Digest, not plaintext. Encrypting it would make Article 12 "
+        "verification depend on key availability (DEC-0012)."
+    )
+
+    def statements(self) -> tuple[str, ...]:
+        """Register the digest exemptions, then add the columns and guards."""
+        return (
+            f"""
+            INSERT INTO protected_column_exemption (
+                schema_name, table_name, column_name, reason, decision_ref
+            ) VALUES
+                ('public', 'human_action', 'previous_action_hash',
+                 '{self._DIGEST}', 'DEC-0012'),
+                ('public', 'human_action', 'action_hash',
+                 '{self._DIGEST}', 'DEC-0012')
+            ON CONFLICT (schema_name, table_name, column_name) DO NOTHING
+            """,
+            """
+            ALTER TABLE human_action
+                ADD COLUMN session_id uuid REFERENCES tutoring_session (id),
+                ADD COLUMN action_index integer,
+                ADD COLUMN previous_action_hash text,
+                ADD COLUMN action_hash text
+            """,
+            """
+            ALTER TABLE human_action
+                ADD CONSTRAINT human_action_chained CHECK (
+                    session_id IS NOT NULL
+                    AND action_index IS NOT NULL
+                    AND action_index >= 0
+                    AND previous_action_hash IS NOT NULL
+                    AND action_hash IS NOT NULL
+                ) NOT VALID
+            """,
+            """
+            ALTER TABLE human_action
+                ADD CONSTRAINT human_action_session_index
+                UNIQUE (session_id, action_index)
+            """,
+            """
+            CREATE UNIQUE INDEX human_action_one_decision
+                ON human_action (turn_id)
+                WHERE action IN ('approve', 'edit', 'override')
+                  AND session_id IS NOT NULL
+            """,
+            f"""
+            CREATE FUNCTION guard_human_action()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                turn_session uuid;
+                generated boolean;
+                stopped timestamptz;
+            BEGIN
+                SELECT session_id, output_after_checks IS NOT NULL
+                INTO turn_session, generated
+                FROM public.turn_audit
+                WHERE turn_id = NEW.turn_id;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'turn is not known'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                IF NEW.session_id IS DISTINCT FROM turn_session THEN
+                    RAISE EXCEPTION 'turn is not in this session'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = turn_session
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                IF NEW.action IN ('approve', 'edit') AND NOT generated THEN
+                    RAISE EXCEPTION 'the model did not run on this turn'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            "REVOKE ALL ON FUNCTION guard_human_action() FROM PUBLIC",
+            """
+            CREATE TRIGGER human_action_guard
+                BEFORE INSERT ON human_action
+                FOR EACH ROW EXECUTE FUNCTION guard_human_action()
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the guards and the chain columns, then the exemptions."""
+        return (
+            "DROP TRIGGER IF EXISTS human_action_guard ON human_action",
+            "DROP FUNCTION IF EXISTS guard_human_action()",
+            "DROP INDEX IF EXISTS human_action_one_decision",
+            """
+            ALTER TABLE human_action
+                DROP CONSTRAINT IF EXISTS human_action_session_index,
+                DROP CONSTRAINT IF EXISTS human_action_chained,
+                DROP COLUMN IF EXISTS action_hash,
+                DROP COLUMN IF EXISTS previous_action_hash,
+                DROP COLUMN IF EXISTS action_index,
+                DROP COLUMN IF EXISTS session_id
+            """,
+            """
+            DELETE FROM protected_column_exemption
+            WHERE schema_name = 'public'
+              AND table_name = 'human_action'
+              AND column_name IN ('previous_action_hash', 'action_hash')
+            """,
+        )
+
+
+class StopRequiresAction:
+    """``mark_session_stopped`` refuses unless the stop was logged first.
+
+    The function is granted to the application role, so before this any
+    code on that role could stop a session with no ``human_action`` row
+    and "every tutor action produces an audit entry" rested on adapter
+    discipline (REQ-DASH). The replacement requires a ``stop`` row for the
+    session at the same instant, written earlier in the same transaction.
+    """
+
+    _SIGNATURE = "mark_session_stopped(uuid, timestamptz, bytea)"
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Replace the function body. The grant is kept."""
+        sqlstate = MarkSessionStopped.SQLSTATE
+        return (
+            f"""
+            CREATE OR REPLACE FUNCTION mark_session_stopped(
+                target uuid,
+                stopped timestamptz,
+                reason bytea
+            )
+            RETURNS void
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                existing timestamptz;
+            BEGIN
+                SELECT stopped_at INTO existing
+                FROM public.tutoring_session
+                WHERE id = target
+                FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'session is not known'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                IF existing IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM public.human_action
+                    WHERE session_id = target
+                      AND action = 'stop'
+                      AND acted_at = stopped
+                ) THEN
+                    RAISE EXCEPTION 'a stop is logged as a tutor action first'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                UPDATE public.tutoring_session
+                SET stopped_at = stopped,
+                    stop_reason = reason
+                WHERE id = target;
+            END;
+            $$
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Restore the body that did not require the logged stop."""
+        original = MarkSessionStopped(self._role).statements()[0]
+        return (original.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1),)
+
+
+class TurnAuditHistorySnapshot:
+    """The history a turn was generated with, sealed on its audit row.
+
+    Replay re-runs generation from the record. The prompt and the cited
+    chunks were already recorded; the allowlisted history snapshot was not,
+    so a replay could not render the same prompt. The column is ciphertext
+    (DEC-0012) and null when retrieval never ran.
+    """
+
+    def statements(self) -> tuple[str, ...]:
+        """Add the sealed column."""
+        return ("ALTER TABLE turn_audit ADD COLUMN history_snapshot ciphertext",)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the column."""
+        return ("ALTER TABLE turn_audit DROP COLUMN IF EXISTS history_snapshot",)

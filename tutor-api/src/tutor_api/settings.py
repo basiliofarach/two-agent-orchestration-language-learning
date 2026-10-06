@@ -1,15 +1,12 @@
 """Validated database configuration read by the composition root."""
 
 from pathlib import Path
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tutor_api.adapters.llm.ollama import LocalOllamaUrl
-from tutor_api.di.dependency import Provide
 
 
 class ApplicationSettings(BaseSettings):
@@ -56,11 +53,13 @@ class ApplicationSettings(BaseSettings):
     # has no authentication beyond a tutor identifier (ARCHITECTURE §13).
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    # Origins the dashboard is served from. The Vite dev server by default;
+    # a comma-separated list in CORS_ORIGINS overrides it. No wildcard: the
+    # API carries learner data, redacted or not.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-
-# A plain assignment is deliberate. FastAPI currently unwraps this transparent
-# alias, but not a Python 3.12 `type` alias (TypeAliasType).
-Settings = Annotated[
-    ApplicationSettings,
-    Depends(Provide(ApplicationSettings)),
-]
+    def allowed_origins(self) -> tuple[str, ...]:
+        """``cors_origins`` split into the origins CORS admits."""
+        return tuple(
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        )

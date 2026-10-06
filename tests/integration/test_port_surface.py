@@ -45,20 +45,26 @@ class PublicClasses:
 class TestPortSurface:
     def test_port_modules_are_abstract(self) -> None:
         modules = PortModules().load()
-        assert len(modules) == 21
+        assert len(modules) == 22
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        # 21 modules, 23 ports. unit_of_work.py also declares the work that
+        # 22 modules, 24 ports. unit_of_work.py also declares the work that
         # enlists in the port and the connection that work is given.
         # tutoring_session.py declares SessionRejected. human_action.py
-        # declares ActionRejected. Those refusals are not interfaces.
+        # declares ActionRejected. session_directory.py declares SessionNotFound
+        # and SessionOpenRejected; audit_query.py declares TurnNotFound and
+        # AuditRecordUnreadable. Those refusals are not interfaces.
         ports = [cls for cls in classes if issubclass(cls, ABC)]
-        assert len(ports) == 23
+        assert len(ports) == 24
         refusals = [cls for cls in classes if not issubclass(cls, ABC)]
         assert {cls.__name__ for cls in refusals} == {
             "SessionRejected",
             "ActionRejected",
+            "SessionNotFound",
+            "SessionOpenRejected",
+            "TurnNotFound",
+            "AuditRecordUnreadable",
         }
         for cls in ports:
             assert cls.__abstractmethods__

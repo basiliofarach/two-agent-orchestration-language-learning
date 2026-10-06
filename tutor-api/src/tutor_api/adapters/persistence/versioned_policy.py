@@ -5,6 +5,7 @@ from datetime import datetime
 
 from pydantic import ValidationError
 
+from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_core.domain.models.timestamps import AwareDatetime, Timestamped
 from tutor_core.domain.policy.lineage import PolicyRuleLineage
 from tutor_core.domain.policy.policy_card import (
@@ -100,7 +101,7 @@ class PolicyCardCodec:
         ).encode("utf-8")
 
 
-class VersionedPolicyCard(PolicyArtifactPort):
+class VersionedPolicyCard(BaseRepository, PolicyArtifactPort):
     """The policy version in force at the injected clock (REQ-POLICY).
 
     The first ``current()`` selects the latest row whose ``effective_from``
@@ -128,7 +129,7 @@ class VersionedPolicyCard(PolicyArtifactPort):
         clock: ClockPort,
         codec: PolicyCardCodec,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._clock = clock
         self._codec = codec
         self._selected: PolicyCard | None = None
@@ -147,9 +148,7 @@ class VersionedPolicyCard(PolicyArtifactPort):
 
     async def _select(self) -> PolicyCard:
         """Read the card in force. A failure is not cached."""
-        row = await self._connection.fetch_one(
-            self._LATEST, {"as_of": self._clock.now()}
-        )
+        row = await self._fetch_one(self._LATEST, {"as_of": self._clock.now()})
         if row is None:
             raise PolicyVersionMissing("no policy version is in force")
         try:
@@ -158,7 +157,7 @@ class VersionedPolicyCard(PolicyArtifactPort):
             raise PolicyVersionUnreadable("policy version cannot be read") from exc
 
 
-class PolicyVersionWriter(PolicyPublicationPort):
+class PolicyVersionWriter(BaseRepository, PolicyPublicationPort):
     """Insert one policy version. Rows already stored are not updated.
 
     The lineage check reads every stored version and runs in Python, so no
@@ -199,15 +198,15 @@ class PolicyVersionWriter(PolicyPublicationPort):
         codec: PolicyCardCodec,
         lineage: PolicyRuleLineage,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._codec = codec
         self._lineage = lineage
 
     async def publish(self, card: PolicyCard, effective_from: datetime) -> None:
         """Insert ``card`` if its rule ids still mean what they meant."""
         stamped = EffectiveInstant(instant=effective_from).instant
-        await self._connection.execute(self._SERIALIZABLE)
-        rows = await self._connection.fetch_all(self._EVERY, {})
+        await self._execute(self._SERIALIZABLE)
+        rows = await self._fetch_all(self._EVERY, {})
         try:
             existing = tuple(self._codec.open(row) for row in rows)
         except (ValueError, ValidationError) as exc:
@@ -215,6 +214,4 @@ class PolicyVersionWriter(PolicyPublicationPort):
                 "stored policy version cannot be read"
             ) from exc
         self._lineage.require_stable(existing, card)
-        await self._connection.execute(
-            self._INSERT, self._codec.insert_parameters(card, stamped)
-        )
+        await self._execute(self._INSERT, self._codec.insert_parameters(card, stamped))

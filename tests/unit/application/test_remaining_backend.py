@@ -1,25 +1,24 @@
-"""Registry order, replay, rubric, and event frames."""
+"""Registry order, rubric, session events, frames, and the evidence pack."""
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from tests.support.dashboard_stubs import SESSION_ID, SealedRecords
 from tests.support.samples import Samples
-from tests.support.scripted_model import ScriptedLanguageModel
 
 from tutor_api.adapters.frozen_clock import FrozenClock
 from tutor_api.evidence.pack import EvidencePack, EvidenceSources
 from tutor_core.application.evaluation.rubric import (
+    EvaluationReport,
     Rubric,
-    ScenarioResult,
-    SyntheticBaseline,
+    ScenarioCase,
+    ScenarioCatalogue,
+    ScenarioObservation,
 )
-from tutor_core.application.services.session_surface import SseEncoder
-from tutor_core.application.turn.replay import ReplayRejected, TurnReplay
-from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.application.services.session_surface import SessionEvents, SseEncoder
 from tutor_core.domain.gates.registry import GateRegistry
-from tutor_core.domain.models.audit import GATE_ORDER
-from tutor_core.domain.models.safety import DecodingParams
-from tutor_core.domain.models.stream import TurnStreamEvent
+from tutor_core.domain.models.audit import GATE_ORDER, GateEvaluation
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
 
 
@@ -43,6 +42,11 @@ class TestGateRegistry:
         assert tuple(gate.name() for gate in registry.ordered()) == GATE_ORDER
         assert registry.at("drift_and_anomaly") is gates[3]
 
+    def test_an_unregistered_stage_is_a_key_error(self) -> None:
+        registry = GateRegistry(tuple(NamedGate(stage) for stage in GATE_ORDER))
+        with pytest.raises(KeyError, match="no gate is registered"):
+            registry.at("not_a_stage")  # type: ignore[arg-type]
+
     def test_a_gate_out_of_order_is_refused(self) -> None:
         swapped = (
             NamedGate(GATE_ORDER[1]),
@@ -54,87 +58,160 @@ class TestGateRegistry:
             GateRegistry(swapped)
 
 
-class TestReplay:
-    def test_a_matching_clock_and_revision_reproduce_the_output(self) -> None:
-        hasher = AuditRecordHash()
-        unsealed = (
-            Samples().audit_record().model_copy(update={"record_hash": "unsealed"})
-        )
-        record = unsealed.model_copy(update={"record_hash": hasher.digest(unsealed)})
-        clock = FrozenClock(record.recorded_at)
-        model = ScriptedLanguageModel(
-            "unused",
-            record.model_revision or "missing",
-            DecodingParams(temperature=0.0, top_p=1.0, max_tokens=16),
-        )
-        replay = TurnReplay(model, clock, hasher)
-        output = replay.output(record)
-        assert output.turn_output == record.output_after_checks
-        assert replay.resolve(output.checkpoint_id, (record,)) is record
-
-    def test_a_revision_mismatch_fails_closed(self) -> None:
-        record = Samples().audit_record()
-        model = ScriptedLanguageModel(
-            "unused",
-            "b" * 64,
-            DecodingParams(temperature=0.0, top_p=1.0, max_tokens=16),
-        )
-        replay = TurnReplay(model, FrozenClock(record.recorded_at), AuditRecordHash())
-        with pytest.raises(ReplayRejected, match="revision"):
-            replay.output(record)
-
-    def test_a_clock_mismatch_fails_closed(self) -> None:
-        record = Samples().audit_record()
-        model = ScriptedLanguageModel(
-            "unused",
-            record.model_revision or "missing",
-            DecodingParams(temperature=0.0, top_p=1.0, max_tokens=16),
-        )
-        replay = TurnReplay(
-            model,
-            FrozenClock(datetime(1999, 1, 1, tzinfo=UTC)),
-            AuditRecordHash(),
-        )
-        with pytest.raises(ReplayRejected, match="clock"):
-            replay.output(record)
+def observation(case: ScenarioCase, **changes: object) -> ScenarioObservation:
+    """What a correct pipeline does on ``case``, with ``changes`` applied."""
+    held = case.expected_gate is not None
+    released = not held and not case.expect_refused
+    fields: dict[str, object] = {
+        "case_number": case.number,
+        "halted_at": case.expected_gate,
+        "status": "held_for_review" if held else "awaiting_tutor_approval",
+        "refused": case.expect_refused,
+        "model_calls": case.expect_model_calls,
+        "reply_present": released,
+        "disclosure_present": released,
+        "unsupported_claims": 0,
+        "sources": 1 if released else 0,
+        "halt_reason_present": held,
+    }
+    fields.update(changes)
+    return ScenarioObservation.model_validate(fields)
 
 
 class TestRubric:
-    def test_two_runs_match_and_the_judge_is_secondary(self) -> None:
-        baseline = SyntheticBaseline().rows()
-        again = SyntheticBaseline().rows()
-        assert baseline == again
-        assert {row.judge_signal for row in baseline} == {"secondary"}
-        assert [row.correctness for row in baseline] == [1] * 8
+    def test_a_correct_pipeline_scores_full_marks_on_every_case(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        assert [case.number for case in cases] == list(range(1, 9))
+        scores = tuple(Rubric().score(case, observation(case)) for case in cases)
+        assert EvaluationReport(scores=scores).passed()
+        assert {score.judge_signal for score in scores} == {"secondary"}
 
-    def test_a_missed_gate_scores_zero(self) -> None:
+    def test_two_runs_on_the_same_observations_match(self) -> None:
+        case = ScenarioCatalogue().cases()[0]
+        assert Rubric().score(case, observation(case)) == Rubric().score(
+            case, observation(case)
+        )
+
+    def test_halting_at_the_wrong_gate_scores_zero_correctness(self) -> None:
+        case = ScenarioCatalogue().cases()[3]
         score = Rubric().score(
-            ScenarioResult(
-                case_number=4,
-                name="ambiguous",
-                gate="context_and_permission",
-                model_calls=0,
-                refused=False,
-                status="held_for_review",
-            ),
-            "conflict_and_ambiguity",
+            case, observation(case, halted_at="context_and_permission")
         )
         assert score.correctness == 0
 
+    def test_an_injection_that_reaches_the_model_scores_zero_safety(self) -> None:
+        case = ScenarioCatalogue().cases()[7]
+        assert case.name == "prompt_injection"
+        score = Rubric().score(case, observation(case, model_calls=1))
+        assert score.safety == 0
+
+    def test_an_unsupported_claim_scores_zero_source_support(self) -> None:
+        case = ScenarioCatalogue().cases()[0]
+        score = Rubric().score(case, observation(case, unsupported_claims=1))
+        assert score.source_support == 0
+
+    def test_a_reply_without_disclosure_fails_clarity_and_age(self) -> None:
+        case = ScenarioCatalogue().cases()[0]
+        score = Rubric().score(case, observation(case, disclosure_present=False))
+        assert score.clarity == 0
+        assert score.age_appropriateness == 0
+
+    def test_a_sensitive_case_released_unheld_fails_age_appropriateness(
+        self,
+    ) -> None:
+        case = ScenarioCatalogue().cases()[5]
+        score = Rubric().score(
+            case, observation(case, status="awaiting_tutor_approval")
+        )
+        assert score.age_appropriateness == 0
+
+    def test_an_observation_of_another_case_is_refused(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        with pytest.raises(ValueError, match="different case"):
+            Rubric().score(cases[0], observation(cases[1]))
+
+    def test_the_report_is_synthetic_until_tutor_sourced(self) -> None:
+        assert EvaluationReport(scores=()).label == "synthetic-only"
+
+
+class TestSessionEvents:
+    def test_a_paused_turn_does_not_hide_the_turns_after_it(self) -> None:
+        paused = SealedRecords().halted(0)
+        later = SealedRecords().generated(1, paused.record_hash)
+        events = SessionEvents().events(SESSION_ID, (paused, later), ())
+        turns = [event.turn_id for event in events]
+        assert later.turn_id in turns
+        assert events[-1].kind == "draft"
+
+    def test_each_gate_state_has_its_own_kind(self) -> None:
+        record = SealedRecords().generated()
+        gates = (
+            GateEvaluation(
+                gate_name=name,
+                decision=decision,
+                reason="r",
+                policy_rule_id="p",
+                evaluated_at=record.recorded_at,
+            )
+            for name, decision in zip(
+                GATE_ORDER,
+                ("pass", "pause", "not_evaluated", "not_evaluated"),
+                strict=True,
+            )
+        )
+        record = record.model_copy(update={"gate_evaluations": tuple(gates)})
+        kinds = [
+            event.kind
+            for event in SessionEvents().events(SESSION_ID, (record,), ())
+            if event.gate_name is not None
+        ]
+        assert kinds == ["gate", "halt", "skipped", "skipped"]
+
+    def test_a_late_action_on_an_early_turn_comes_after_later_turns(self) -> None:
+        first = SealedRecords().generated(0)
+        second = SealedRecords().generated(1, first.record_hash)
+        late = (
+            Samples()
+            .human_action()
+            .model_copy(
+                update={
+                    "turn_id": first.turn_id,
+                    "acted_at": second.recorded_at + timedelta(minutes=5),
+                }
+            )
+        )
+        events = SessionEvents().events(SESSION_ID, (first, second), (late,))
+        assert events[-1].kind == "action"
+        assert events[-1].turn_id == first.turn_id
+
+    def test_a_cursor_resumes_after_the_frame_already_seen(self) -> None:
+        record = SealedRecords().generated()
+        stream = SessionEvents()
+        events = stream.events(SESSION_ID, (record,), ())
+        resumed = stream.after(events, events[1].event_id)
+        assert resumed == events[2:]
+
+    def test_an_unknown_cursor_replays_everything(self) -> None:
+        record = SealedRecords().generated()
+        stream = SessionEvents()
+        events = stream.events(SESSION_ID, (record,), ())
+        assert stream.after(events, "not-an-id") == events
+
+    def test_the_prompt_frame_carries_the_redacted_text(self) -> None:
+        record = SealedRecords().generated()
+        first = SessionEvents().events(SESSION_ID, (record,), ())[0]
+        assert first.kind == "prompt"
+        assert first.text == record.learner_prompt.text
+
 
 class TestEventFrames:
-    def test_a_reconnect_omits_the_frame_already_seen(self) -> None:
-        event = TurnStreamEvent(
-            event_id="turn:gate",
-            kind="gate",
-            turn_id=Samples().audit_record().turn_id,
-            session_id=Samples().audit_record().session_id,
-            gate_name="context_and_permission",
-            decision="pass",
-        )
-        body = SseEncoder().encode((event,))
-        assert body.startswith("id: turn:gate\nevent: gate\n")
-        assert "data: " in body
+    def test_frames_carry_id_kind_and_a_retry_hint(self) -> None:
+        record = SealedRecords().generated()
+        events = SessionEvents().events(SESSION_ID, (record,), ())
+        body = SseEncoder().encode(events)
+        assert body.startswith(f"retry: {SseEncoder.RETRY_MILLISECONDS}\n\n")
+        assert f"id: {record.turn_id}:prompt\nevent: prompt\n" in body
+        assert body.count("data: ") == len(events)
 
 
 class TestEvidencePack:
@@ -162,3 +239,23 @@ class TestEvidencePack:
         assert "synthetic-only" in first["article-15.md"]
         assert "Chain verification: intact" in first["article-12.md"]
         assert "REQ-AUDIT" in first["article-12.md"]
+
+    def test_the_manifest_is_json_even_when_a_value_has_a_quote(self) -> None:
+        sources = EvidenceSources(
+            commit='abc"def',
+            lockfile_sha256="a" * 64,
+            model_revision="b" * 64,
+            runtime="3.12.0",
+            policy_version="prototype-1",
+            chain_status="broken",
+            field_label="synthetic-only",
+            sessions=2,
+            broken_sessions=("s-1",),
+        )
+        files = EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
+            sources
+        )
+        manifest = json.loads(files["manifest.json"])
+        assert manifest["commit"] == 'abc"def'
+        assert manifest["broken_sessions"] == ["s-1"]
+        assert "Broken sessions: s-1" in files["article-12.md"]

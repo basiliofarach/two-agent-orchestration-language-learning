@@ -1,27 +1,26 @@
 """ASGI entrypoint. The object graph is built here and nowhere else."""
 
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
+from tutor_api.routers.errors import ProblemMapping
 from tutor_api.routers.health import HealthRouter
+from tutor_api.routers.reports import ReportRouter
 from tutor_api.routers.sessions import (
     ActionRouter,
     AuditRouter,
     EventRouter,
+    LearnerRouter,
     SessionRouter,
 )
-from tutor_api.routers.turns import (
-    SessionRejectionHandler,
-    TurnFailureHandler,
-    TurnRouter,
-)
-from tutor_core.application.services.conduct_turn import TurnFailed
-from tutor_core.domain.ports.human_action import ActionRejected
-from tutor_core.domain.ports.tutoring_session import SessionRejected
+from tutor_api.routers.turns import TurnRouter
+from tutor_api.settings import ApplicationSettings
 
 
 class RequestScopeCloser:
@@ -66,16 +65,30 @@ class Application:
         # back off the request, so two applications in one process — which the
         # test suite creates — never share a graph.
         app.state.container = self._container
-        app.include_router(HealthRouter().router())
-        app.include_router(TurnRouter().router())
-        app.include_router(SessionRouter().router())
-        app.include_router(AuditRouter().router())
-        app.include_router(ActionRouter().router())
-        app.include_router(EventRouter().router())
-        app.add_exception_handler(TurnFailed, TurnFailureHandler())
-        app.add_exception_handler(SessionRejected, SessionRejectionHandler())
-        app.add_exception_handler(ActionRejected, SessionRejectionHandler())
+        for router in (
+            HealthRouter(),
+            TurnRouter(),
+            SessionRouter(),
+            LearnerRouter(),
+            AuditRouter(),
+            ActionRouter(),
+            EventRouter(),
+            ReportRouter(),
+        ):
+            app.include_router(router.router())
+        ProblemMapping().install(app)
         app.middleware("http")(RequestScopeCloser())
+        # Registered last, so it wraps everything above and a refused
+        # request still carries the CORS headers the browser needs to read it.
+        settings = cast(
+            ApplicationSettings, self._container.resolve(ApplicationSettings)
+        )
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.allowed_origins()),
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "Last-Event-ID"],
+        )
         return app
 
 

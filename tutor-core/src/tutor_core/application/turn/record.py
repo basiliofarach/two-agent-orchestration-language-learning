@@ -97,6 +97,7 @@ class TurnRecordBuilder:
             "learner_prompt": StoredLearnerPrompt.model_validate(turn.learner_prompt),
             "retrieved_context_ids": context_ids,
             "gate_evaluations": self._gates.rows(state.verdicts, recorded_at),
+            "history_snapshot": turn.history,
             "policy_version": policy_version,
             "previous_record_hash": head.previous_record_hash,
             "record_hash": "unsealed",

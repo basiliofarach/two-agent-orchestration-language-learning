@@ -1,41 +1,42 @@
-"""Sessions, the audit log, tutor actions, and the event stream."""
+"""Sessions, learners, the audit log, tutor actions, and the event stream."""
 
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from tutor_api.di.dependency import Provide
-from tutor_core.application.services.read_audit import (
-    AuditCommand,
-    AuditView,
-    ReadAudit,
+from tutor_api.routers.deps import (
+    Actions,
+    Audits,
+    Learners,
+    Openings,
+    SessionReads,
+    Sessions,
+    Streams,
 )
+from tutor_api.routers.errors import ProblemMapping
+from tutor_core.application.services.read_audit import AuditCommand, AuditView
 from tutor_core.application.services.record_human_action import (
+    HumanActionBody,
     HumanActionCommand,
     RecordedAction,
-    RecordHumanAction,
 )
 from tutor_core.application.services.session_surface import (
-    ListSessions,
+    LearnerListCommand,
+    OpenSessionCommand,
+    SessionCommand,
     SessionListCommand,
     StreamCommand,
-    StreamSession,
 )
-from tutor_core.domain.models.session import SessionSummary
-
-Sessions = Annotated[ListSessions, Depends(Provide(ListSessions))]
-Audits = Annotated[ReadAudit, Depends(Provide(ReadAudit))]
-Actions = Annotated[RecordHumanAction, Depends(Provide(RecordHumanAction))]
-Streams = Annotated[StreamSession, Depends(Provide(StreamSession))]
+from tutor_core.domain.models.session import LearnerSummary, SessionSummary
 
 
 class SessionRouter:
-    """The dashboard's session list. The handler holds no logic."""
+    """List, open and read sessions. Each handler is one chain expression."""
 
     def router(self) -> APIRouter:
         """Return the session routes."""
+        problems = ProblemMapping()
         router = APIRouter(tags=["sessions"])
         router.add_api_route(
             "/sessions",
@@ -43,12 +44,54 @@ class SessionRouter:
             methods=["GET"],
             response_model=tuple[SessionSummary, ...],
         )
+        router.add_api_route(
+            "/sessions",
+            self.open,
+            methods=["POST"],
+            status_code=201,
+            response_model=SessionSummary,
+            responses=problems.responses(422),
+        )
+        router.add_api_route(
+            "/sessions/{session_id}",
+            self.read,
+            methods=["GET"],
+            response_model=SessionSummary,
+            responses=problems.responses(404),
+        )
         return router
 
     async def listed(self, service: Sessions) -> tuple[SessionSummary, ...]:
-        """Return the sessions the request role can see."""
-        command = SessionListCommand()
+        """Return the sessions the request role can see, newest first."""
+        return (await service.prepare(SessionListCommand()).execute()).finalise()
+
+    async def open(self, body: OpenSessionCommand, service: Openings) -> SessionSummary:
+        """Open a session for a retained learner."""
+        return (await service.prepare(body).execute()).finalise()
+
+    async def read(self, session_id: UUID, service: SessionReads) -> SessionSummary:
+        """Return one session, or 404."""
+        command = SessionCommand(session_id=session_id)
         return (await service.prepare(command).execute()).finalise()
+
+
+class LearnerRouter:
+    """The learner ids a session can be opened for. No pseudonym (REQ-MINOR)."""
+
+    def router(self) -> APIRouter:
+        """Return the learner route."""
+        router = APIRouter(tags=["learners"])
+        router.add_api_route(
+            "/learners",
+            self.listed,
+            methods=["GET"],
+            response_model=tuple[LearnerSummary, ...],
+        )
+        return router
+
+    async def listed(self, service: Learners) -> tuple[LearnerSummary, ...]:
+        """Return every learner id and whether retention still holds."""
+        return (await service.prepare(LearnerListCommand()).execute()).finalise()
 
 
 class AuditRouter:
@@ -62,6 +105,7 @@ class AuditRouter:
             self.read,
             methods=["GET"],
             response_model=AuditView,
+            responses=ProblemMapping().responses(404),
         )
         return router
 
@@ -72,7 +116,7 @@ class AuditRouter:
 
 
 class ActionRouter:
-    """Approve, edit, override, or stop. Each one is a logged insert."""
+    """Approve, edit, override, or stop. Each one is a chained, logged insert."""
 
     def router(self) -> APIRouter:
         """Return the action route."""
@@ -82,6 +126,7 @@ class ActionRouter:
             self.record,
             methods=["POST"],
             response_model=RecordedAction,
+            responses=ProblemMapping().responses(404, 409),
         )
         return router
 
@@ -89,22 +134,31 @@ class ActionRouter:
         self,
         session_id: UUID,
         turn_id: UUID,
-        body: HumanActionCommand,
+        body: HumanActionBody,
         service: Actions,
     ) -> RecordedAction:
-        """Append the action. The path ids are the ones that are logged."""
-        command = body.model_copy(update={"session_id": session_id, "turn_id": turn_id})
+        """Append the action. The path names the session and the turn."""
+        command = HumanActionCommand(session_id=session_id, turn_id=turn_id, body=body)
         return (await service.prepare(command).execute()).finalise()
 
 
 class EventRouter:
-    """One session's gate and draft events, as ``text/event-stream``."""
+    """One session's events, as ``text/event-stream``.
+
+    Each response is the committed log after ``Last-Event-ID``; the
+    ``retry`` hint makes ``EventSource`` reconnect for what is new.
+    """
+
+    _HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
     def router(self) -> APIRouter:
         """Return the event route."""
         router = APIRouter(tags=["events"])
         router.add_api_route(
-            "/sessions/{session_id}/events", self.stream, methods=["GET"]
+            "/sessions/{session_id}/events",
+            self.stream,
+            methods=["GET"],
+            responses=ProblemMapping().responses(404),
         )
         return router
 
@@ -117,4 +171,6 @@ class EventRouter:
             after=request.headers.get("last-event-id"),
         )
         body = (await service.prepare(command).execute()).finalise()
-        return Response(content=body, media_type="text/event-stream")
+        return Response(
+            content=body, media_type="text/event-stream", headers=self._HEADERS
+        )

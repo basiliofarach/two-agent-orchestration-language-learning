@@ -7,7 +7,7 @@ REPO := $(abspath ..)
 # prek and CI all resolve. Do not relocate it per-member.
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
-	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence
+	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence purge eval
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
@@ -31,6 +31,8 @@ help:
 	@echo "  make seed          publish the policy card, ingest the demo KB, enrol a learner"
 	@echo "  make serve         the API on http://127.0.0.1:8000 (docs at /docs)"
 	@echo "  make evidence      write the compliance pack to ../evidence"
+	@echo "  make purge         remove history of learners past retain_until, and log it"
+	@echo "  make eval          run the eight REQ-EVAL cases; scores to ../evidence/rubric-scores.jsonl"
 
 sync:
 	$(UV) --directory "$(REPO)" sync --frozen --group dev
@@ -89,3 +91,12 @@ down:
 
 smoke-model:
 	PYTHONPATH="$(REPO)" $(UV) --directory "$(REPO)" run python "$(REPO)/infra/ollama/smoke.py"
+
+purge:
+	$(RUN) python -m tutor_api.retention
+
+# The eight scripted cases on a throwaway database, scored on observed
+# behaviour. One JSON line per case; the file is rewritten each run.
+eval: sync
+	rm -f "$(REPO)/evidence/rubric-scores.jsonl"
+	RUBRIC_REPORT="$(REPO)/evidence/rubric-scores.jsonl" $(UV) --directory "$(REPO)" run pytest --no-cov -q "tests/integration/test_dashboard_and_scenarios.py::TestScriptedScenarios"

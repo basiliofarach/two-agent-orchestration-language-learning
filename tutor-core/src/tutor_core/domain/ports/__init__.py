@@ -4,6 +4,7 @@ from tutor_core.domain.ports.audit_query import AuditQueryPort
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_core.domain.ports.cohort_report import CohortReportPort
 from tutor_core.domain.ports.corpus_ingestion import CorpusIngestionPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
@@ -31,6 +32,7 @@ __all__ = [
     "AuditSinkPort",
     "CipherPort",
     "ClockPort",
+    "CohortReportPort",
     "CorpusIngestionPort",
     "EmbeddingPort",
     "GrammarCheckPort",

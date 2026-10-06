@@ -56,6 +56,15 @@ function so the request role gains no UPDATE on `tutoring_session`. The
 audit read and the session list are separate ports, so the generation
 agent is not handed the log or the directory.
 
+*Amended:* 2026-10-07 — `SessionDirectoryPort` gains `open` and `learners`;
+a session is opened through the security-definer `open_session`, which
+refuses a learner past `retain_until`, so the role still holds no INSERT
+on `tutoring_session`. `HumanActionPort` gains `head(session_id)` and
+`append(action)` takes a chained action: tutor actions get a per-session
+hash chain like turns. `AuditQueryPort` gains `session_actions` and
+`citations` (curated chunk text, not learner text). `CohortReportPort`
+added: read-only counts for the periodic review, with no verdict method.
+
 ## Context
 
 The prototype must produce *evidence* that Articles 10, 12, 14 and 15 are
@@ -92,9 +101,10 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `CorpusIngestionPort` | Record source, version, and review status | Curation only; no retrieval; no open web; no default review status | REQ-KB |
 | `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist; reads only the requested fields; `read` is async | REQ-HISTORY |
 | `TutoringSessionPort` | Confirm the session is this learner's and still open | Read-only; no open, stop, or reassignment; on the enlisted connection before retrieval | REQ-MINOR, REQ-AUDIT |
-| `HumanActionPort` | Append approve, edit, override, or stop | Append-only; a stop marks the session in the same transaction; no update of `turn_audit` | REQ-DASH, REQ-AUDIT |
-| `AuditQueryPort` | Read sealed turn records and tutor actions | Read-only; not held by the generation agent | REQ-AUDIT |
-| `SessionDirectoryPort` | List sessions the dashboard can open | Read-only; `id`, `learner_id`, `stopped_at` only | REQ-DASH, REQ-MINOR |
+| `HumanActionPort` | Append approve, edit, override, or stop | Append-only; chained per session; `head` reads the chain position; a stop marks the session in the same transaction; no update of `turn_audit` | REQ-DASH, REQ-AUDIT |
+| `AuditQueryPort` | Read sealed turn records, tutor actions, and the chunks a turn cited | Read-only; not held by the generation agent | REQ-AUDIT |
+| `CohortReportPort` | Count gate decisions and refusals for the periodic review | Read-only aggregates; no row-level data; no verdict | REQ-MINOR |
+| `SessionDirectoryPort` | List, read and open sessions; list learner ids | `id`, `learner_id`, `started_at`, `stopped_at` only; opens through `open_session`, no INSERT grant; cannot stop | REQ-DASH, REQ-MINOR |
 | `EmbeddingPort` | Text → vector | — | — |
 | `LanguageModelPort` | Prompt → completion | No retriever; `complete` is async local-model I/O; `revision` is the pinned SHA | REQ-COMP |
 | `PromptTemplatePort` | Build structured prompts; carry tone constraints | Fixed templates only | REQ-ACCURACY, REQ-MINOR |

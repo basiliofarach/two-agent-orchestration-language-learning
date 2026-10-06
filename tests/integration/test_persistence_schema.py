@@ -221,7 +221,7 @@ class TestPersistenceSchema:
             ("drift_and_anomaly", "not_evaluated"),
             ("sensitivity_and_high_stakes", "not_evaluated"),
         ]
-        assert action == ("edit",)
+        assert action == ("override",)
 
     def test_a_revision_without_outputs_is_rejected(self, fresh_database: str) -> None:
         with psycopg.connect(fresh_database) as connection:
@@ -251,6 +251,11 @@ class TestPersistenceSchema:
         with psycopg.connect(fresh_database) as connection:
             AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             self._insert_stopped_turn(connection)
+            # The guard would refuse first (the model never ran on this
+            # turn); disabled here so the CHECK itself is what is tested.
+            connection.execute(
+                "ALTER TABLE human_action DISABLE TRIGGER human_action_guard"
+            )
             with (
                 connection.cursor() as cursor,
                 pytest.raises(psycopg.Error, match="human_action_edit_has_output"),
@@ -258,14 +263,17 @@ class TestPersistenceSchema:
                 cursor.execute(
                     """
                     INSERT INTO human_action (
-                        id, turn_id, tutor_id, action, edited_output, acted_at
+                        id, turn_id, tutor_id, action, edited_output, acted_at,
+                        session_id, action_index, previous_action_hash,
+                        action_hash
                     ) VALUES (
                         '00000000-0000-4000-8000-000000000051',
                         '00000000-0000-4000-8000-000000000021',
-                        %s, 'edit', NULL, '2026-01-01T00:00:00Z'
+                        %s, 'edit', NULL, '2026-01-01T00:00:00Z',
+                        '00000000-0000-4000-8000-000000000012', 0, %s, %s
                     )
                     """,
-                    (self._envelope(),),
+                    (self._envelope(), "0" * 64, "a" * 64),
                 )
 
     def test_one_session_cannot_store_two_rows_at_the_same_turn_index(
@@ -617,19 +625,23 @@ class TestPersistenceSchema:
                 )
 
     def _insert_tutor_edit(self, connection: psycopg.Connection) -> None:
+        # The model never ran on the stopped turn, so the guard admits an
+        # override, not an edit (HumanActionChain). The row is chained.
         with connection.cursor() as cursor:
             cursor.execute(
                 """
                 INSERT INTO human_action (
-                    id, turn_id, tutor_id, action, edited_output, acted_at
+                    id, turn_id, tutor_id, action, edited_output, acted_at,
+                    session_id, action_index, previous_action_hash, action_hash
                 ) VALUES (
                     '00000000-0000-4000-8000-000000000051',
                     '00000000-0000-4000-8000-000000000021',
-                    %s, 'edit', %s, '2026-01-01T00:00:00Z'
+                    %s, 'override', NULL, '2026-01-01T00:00:00Z',
+                    '00000000-0000-4000-8000-000000000012', 0, %s, %s
                 )
                 ON CONFLICT (id) DO NOTHING
                 """,
-                (self._envelope(), self._envelope()),
+                (self._envelope(), "0" * 64, "a" * 64),
             )
 
     def _insert_chunk(self, connection: psycopg.Connection) -> None:

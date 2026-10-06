@@ -7,7 +7,7 @@ from tests.support.samples import Samples
 from tests.support.sealed_turn import SealedTurn
 
 from tutor_core.domain.audit.chain import ChainVerifier
-from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
 from tutor_core.domain.models.safety import (
     DecodingParams,
     SourceSupportReport,
@@ -107,7 +107,7 @@ class TestChainVerifier:
         )
         changed = StoredLearnerPrompt(text="changed", redacted_categories=())
         tampered = sealed.model_copy(update={"learner_prompt": changed})
-        found = ChainVerifier(hasher).find_break((tampered,))
+        found = ChainVerifier(hasher, ActionRecordHash()).find_break((tampered,))
         assert found is not None
         assert found.reason == "tampered"
         assert found.turn_id == tampered.turn_id
@@ -127,9 +127,12 @@ class TestChainVerifier:
             ),
             first.record_hash,
         )
-        found = ChainVerifier(hasher).find_break((second,))
+        found = ChainVerifier(hasher, ActionRecordHash()).find_break((second,))
         assert found is not None
         assert found.reason == "excised"
         assert found.turn_id == second.turn_id
-        assert ChainVerifier(hasher).find_break((first, second)) is None
-        assert ChainVerifier(hasher).find_break(()) is None
+        assert (
+            ChainVerifier(hasher, ActionRecordHash()).find_break((first, second))
+            is None
+        )
+        assert ChainVerifier(hasher, ActionRecordHash()).find_break(()) is None

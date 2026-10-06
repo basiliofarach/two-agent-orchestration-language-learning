@@ -3,6 +3,7 @@
 import json
 from uuid import UUID, uuid4
 
+from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_api.adapters.persistence.schema import TurnAuditOpenSession
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import ChainHead, GateEvaluation, TurnAuditRecord
@@ -16,23 +17,7 @@ class AuditAppendRejected(Exception):
     """The record does not continue this session's hash chain."""
 
 
-class StoppedSessionInsert:
-    """Recognise the database refusing a turn for a stopped session.
-
-    ``TurnAuditOpenSession`` raises its SQLSTATE from the insert trigger.
-    The driver's error carries ``sqlstate``; SQLAlchemy wraps it as
-    ``orig``. Both async and sync drivers name the attribute the same.
-    """
-
-    def raised_by(self, error: BaseException) -> bool:
-        """Whether ``error``, or the driver error inside it, is that refusal."""
-        for candidate in (error, getattr(error, "orig", None), error.__cause__):
-            if getattr(candidate, "sqlstate", None) == TurnAuditOpenSession.SQLSTATE:
-                return True
-        return False
-
-
-class PostgresAuditSink(AuditSinkPort):
+class PostgresAuditSink(BaseRepository, AuditSinkPort):
     """Write ``turn_audit``, its gate rows and citations on the caller's connection.
 
     The caller constructs this sink with the connection the unit of work
@@ -61,14 +46,16 @@ class PostgresAuditSink(AuditSinkPort):
             model_revision, template_version, decoding_params,
             output_before_checks, output_after_checks, ai_disclosure,
             refused, safety_flags, source_support,
-            policy_version, previous_record_hash, record_hash, recorded_at
+            policy_version, previous_record_hash, record_hash, recorded_at,
+            history_snapshot
         ) VALUES (
             :turn_id, :session_id, :turn_index,
             :learner_prompt_redacted, :redacted_categories,
             :model_revision, :template_version, :decoding_params,
             :output_before_checks, :output_after_checks, :ai_disclosure,
             :refused, :safety_flags, :source_support,
-            :policy_version, :previous_record_hash, :record_hash, :recorded_at
+            :policy_version, :previous_record_hash, :record_hash, :recorded_at,
+            :history_snapshot
         )
         """
 
@@ -111,13 +98,13 @@ class PostgresAuditSink(AuditSinkPort):
         cipher: CipherPort,
         hasher: AuditRecordHash,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._cipher = cipher
         self._hasher = hasher
 
     async def head(self, session_id: UUID) -> ChainHead:
         """Where the next record of ``session_id`` attaches. Read only."""
-        row = await self._connection.fetch_one(
+        row = await self._fetch_one(
             self._PREDECESSOR,
             {"session_id": session_id},
         )
@@ -134,18 +121,16 @@ class PostgresAuditSink(AuditSinkPort):
         await self._lock_session(record)
         await self._require_predecessor(record)
         try:
-            await self._connection.execute(self._TURN, self._turn_parameters(record))
+            await self._execute(self._TURN, self._turn_parameters(record))
         except Exception as exc:
-            if StoppedSessionInsert().raised_by(exc):
+            if self._raised_sqlstate(exc, TurnAuditOpenSession.SQLSTATE):
                 msg = "session is stopped"
                 raise SessionRejected(msg) from exc
             raise
         for evaluation in record.gate_evaluations:
-            await self._connection.execute(
-                self._GATE, self._gate_parameters(record, evaluation)
-            )
+            await self._execute(self._GATE, self._gate_parameters(record, evaluation))
         for ordinal, chunk_id in enumerate(record.retrieved_context_ids):
-            await self._connection.execute(
+            await self._execute(
                 self._CITATION,
                 {
                     "turn_id": record.turn_id,
@@ -160,7 +145,7 @@ class PostgresAuditSink(AuditSinkPort):
             raise AuditAppendRejected(msg)
 
     async def _lock_session(self, record: TurnAuditRecord) -> None:
-        await self._connection.fetch_one(
+        await self._fetch_one(
             self._LOCK_SESSION,
             {
                 "namespace": self._CHAIN_LOCK_NAMESPACE,
@@ -169,7 +154,7 @@ class PostgresAuditSink(AuditSinkPort):
         )
 
     async def _require_predecessor(self, record: TurnAuditRecord) -> None:
-        row = await self._connection.fetch_one(
+        row = await self._fetch_one(
             self._PREDECESSOR,
             {"session_id": record.session_id},
         )
@@ -221,6 +206,7 @@ class PostgresAuditSink(AuditSinkPort):
             "previous_record_hash": record.previous_record_hash,
             "record_hash": record.record_hash,
             "recorded_at": record.recorded_at,
+            "history_snapshot": self._optional_json(payload["history_snapshot"]),
         }
 
     def _gate_parameters(
