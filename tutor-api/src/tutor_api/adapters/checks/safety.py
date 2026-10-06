@@ -83,4 +83,13 @@ class MinorSafetyRules:
                 severity="medium",
                 message="This talks about an assessed proficiency level.",
             ),
+            SafetyRule(
+                category="prompt_injection",
+                pattern=(
+                    r"ignore (all |any )?(previous|prior) instructions"
+                    r"|reveal your (system )?prompt"
+                ),
+                severity="high",
+                message="This tries to change the tutor's instructions.",
+            ),
         )

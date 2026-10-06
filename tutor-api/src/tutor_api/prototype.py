@@ -69,7 +69,7 @@ class PrototypeCopy:
 
     def flagged_categories(self) -> tuple[str, ...]:
         """Safety categories the sensitivity gate holds for the tutor."""
-        return ("proficiency", "unsafe", "out_of_scope")
+        return ("proficiency", "unsafe", "out_of_scope", "prompt_injection")
 
     def unvetted_source_categories(self) -> tuple[str, ...]:
         """Safety categories meaning a question needs the open web."""

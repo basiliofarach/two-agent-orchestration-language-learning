@@ -19,7 +19,7 @@ from tutor_api.adapters.persistence.audit_sink import (
 from tutor_api.adapters.persistence.database import DatabaseEngine
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_core.domain.audit.chain import ChainVerifier
-from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
 from tutor_core.domain.models.audit import TurnAuditRecord
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
@@ -294,7 +294,10 @@ class TestAuditSinkTransaction:
             (0, AuditRecordHash.GENESIS, first.record_hash, None),
             (1, first.record_hash, second.record_hash, None),
         ]
-        assert ChainVerifier(hasher).find_break((first, second)) is None
+        assert (
+            ChainVerifier(hasher, ActionRecordHash()).find_break((first, second))
+            is None
+        )
 
     async def test_a_second_append_waits_until_the_session_lock_releases(
         self, fresh_database: str

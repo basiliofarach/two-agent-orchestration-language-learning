@@ -38,9 +38,15 @@ from tutor_api.adapters.llm.ollama import (
     UrllibOllamaEndpoint,
 )
 from tutor_api.adapters.persistence.aes_gcm_envelope import AesGcmEnvelope
+from tutor_api.adapters.persistence.audit_query import (
+    AuditRecordDecoder,
+    PostgresAuditQuery,
+)
 from tutor_api.adapters.persistence.audit_sink import PostgresAuditSink
+from tutor_api.adapters.persistence.cohort_report import PostgresCohortReport
 from tutor_api.adapters.persistence.database import DatabaseEngine, RequestConnection
 from tutor_api.adapters.persistence.database_url import ApplicationDatabaseUrl
+from tutor_api.adapters.persistence.human_action import PostgresHumanAction
 from tutor_api.adapters.persistence.knowledge_base import (
     CitedSources,
     CosineConfidence,
@@ -52,6 +58,8 @@ from tutor_api.adapters.persistence.learner_history import (
     PostgresLearnerHistory,
 )
 from tutor_api.adapters.persistence.schema import BaseSchema
+from tutor_api.adapters.persistence.sealed import SealedValue
+from tutor_api.adapters.persistence.session_directory import PostgresSessionDirectory
 from tutor_api.adapters.persistence.tutoring_session import PostgresTutoringSession
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.adapters.persistence.versioned_policy import (
@@ -62,6 +70,11 @@ from tutor_api.adapters.system_clock import SystemClock
 from tutor_api.di.container import Container
 from tutor_api.di.lifetime import Lifetime
 from tutor_api.di.provider import Provider
+from tutor_api.di.registration import (
+    ConstructorProvider,
+    ServiceProvider,
+    StatelessProvider,
+)
 from tutor_api.prototype import PrototypeCopy
 from tutor_api.settings import ApplicationSettings
 from tutor_core.application.agents.generation import (
@@ -74,6 +87,59 @@ from tutor_core.application.services.conduct_turn import (
     ExecuteTurn,
     FinaliseTurn,
     PrepareTurn,
+)
+from tutor_core.application.services.read_audit import (
+    ExecuteAudit,
+    ExecuteTurnRead,
+    FinaliseAudit,
+    FinaliseTurnRead,
+    PrepareAudit,
+    PrepareTurnRead,
+    ReadAudit,
+    ReadTurn,
+)
+from tutor_core.application.services.record_human_action import (
+    ActionRules,
+    ExecuteAction,
+    FinaliseAction,
+    PrepareAction,
+    RecordHumanAction,
+)
+from tutor_core.application.services.replay_turn import (
+    DraftComparison,
+    ExecuteReplay,
+    FinaliseReplay,
+    PrepareReplay,
+    ReplayTurn,
+)
+from tutor_core.application.services.report_cohort import (
+    ExecuteCohort,
+    FinaliseCohort,
+    PrepareCohort,
+    ReportCohort,
+)
+from tutor_core.application.services.session_surface import (
+    ExecuteLearnerList,
+    ExecuteOpenSession,
+    ExecuteSession,
+    ExecuteSessionList,
+    ExecuteStream,
+    FinaliseLearnerList,
+    FinaliseSession,
+    FinaliseSessionList,
+    FinaliseStream,
+    ListLearners,
+    ListSessions,
+    OpenSession,
+    PrepareLearnerList,
+    PrepareOpenSession,
+    PrepareSession,
+    PrepareSessionList,
+    PrepareStream,
+    ReadSession,
+    SessionEvents,
+    SseEncoder,
+    StreamSession,
 )
 from tutor_core.application.turn.guarded_generation import (
     GenerateIfConsistent,
@@ -89,17 +155,22 @@ from tutor_core.application.turn.orchestrator import (
     TurnOrchestrator,
 )
 from tutor_core.application.turn.record import GateRows, TurnRecordBuilder
-from tutor_core.domain.audit.record_hash import AuditRecordHash
+from tutor_core.domain.audit.chain import ChainVerifier
+from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
 from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
 from tutor_core.domain.gates.context_permission import ContextPermissionGate
 from tutor_core.domain.gates.drift import DriftAnomalyGate
+from tutor_core.domain.gates.registry import GateRegistry
 from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
 from tutor_core.domain.models.learner import HistoryFieldSet
+from tutor_core.domain.ports.audit_query import AuditQueryPort
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_core.domain.ports.cohort_report import CohortReportPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
+from tutor_core.domain.ports.human_action import HumanActionPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
 from tutor_core.domain.ports.language_model import LanguageModelPort
 from tutor_core.domain.ports.learner_history import LearnerHistoryPort
@@ -107,6 +178,7 @@ from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
+from tutor_core.domain.ports.session_directory import SessionDirectoryPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
 from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
@@ -698,19 +770,29 @@ class OrchestratorProvider(Provider):
 
     def requires(self) -> tuple[type, ...]:
         return (
+            ContextPermissionGate,
             RetrievalGuard,
+            ConflictAmbiguityGate,
             GenerationGuard,
             SensitivityHighStakesGate,
             DriftAnomalyGate,
         )
 
     def create(self, resolved: Mapping[type, object]) -> object:
+        registry = GateRegistry(
+            (
+                cast(ContextPermissionGate, resolved[ContextPermissionGate]),
+                cast(ConflictAmbiguityGate, resolved[ConflictAmbiguityGate]),
+                cast(SensitivityHighStakesGate, resolved[SensitivityHighStakesGate]),
+                cast(DriftAnomalyGate, resolved[DriftAnomalyGate]),
+            )
+        )
         return LangGraphTurnOrchestrator(
             TurnNodes(
                 cast(RetrievalGuard, resolved[RetrievalGuard]),
                 cast(GenerationGuard, resolved[GenerationGuard]),
-                cast(SensitivityHighStakesGate, resolved[SensitivityHighStakesGate]),
-                cast(DriftAnomalyGate, resolved[DriftAnomalyGate]),
+                registry.at("sensitivity_and_high_stakes"),
+                registry.at("drift_and_anomaly"),
             )
         )
 
@@ -826,6 +908,12 @@ class ApplicationContainer:
 
     ``build`` registers every provider and runs ``LifetimeValidation``, so a
     singleton that captures request-scoped state refuses to boot.
+
+    The request path above is written out provider by provider. The
+    dashboard's use cases below repeat one shape — three stage handlers and
+    the service that holds them — so they are registered through the base
+    providers in ``di/registration.py``. Each still names its concrete
+    class and the exact types it requires, here and nowhere else.
     """
 
     def __init__(self, settings: SettingsProvider) -> None:
@@ -839,6 +927,13 @@ class ApplicationContainer:
 
     def providers(self) -> tuple[Provider, ...]:
         """Every registration, so the lifetime of each is inspectable."""
+        return (
+            *self._request_path(),
+            *self._audit_read(),
+            *self._dashboard(),
+        )
+
+    def _request_path(self) -> tuple[Provider, ...]:
         return (
             self._settings,
             ClockProvider(),
@@ -874,4 +969,147 @@ class ApplicationContainer:
             ExecuteTurnProvider(),
             FinaliseTurnProvider(),
             ConductTurnProvider(),
+        )
+
+    def _audit_read(self) -> tuple[Provider, ...]:
+        """The adapters and stateless helpers the dashboard reads through."""
+        singleton = Lifetime.SINGLETON
+        request = Lifetime.REQUEST
+        connection = TransactionConnection
+        return (
+            ConstructorProvider(SealedValue, singleton, (CipherPort,)),
+            ConstructorProvider(AuditRecordDecoder, singleton, (SealedValue,)),
+            StatelessProvider(ActionRecordHash),
+            ConstructorProvider(
+                ChainVerifier, singleton, (AuditRecordHash, ActionRecordHash)
+            ),
+            StatelessProvider(ActionRules),
+            StatelessProvider(SessionEvents),
+            StatelessProvider(SseEncoder),
+            StatelessProvider(DraftComparison),
+            ConstructorProvider(
+                PostgresAuditQuery,
+                request,
+                (connection, AuditRecordDecoder),
+                provides=AuditQueryPort,
+            ),
+            ConstructorProvider(
+                PostgresHumanAction,
+                request,
+                (connection, SealedValue, ActionRecordHash),
+                provides=HumanActionPort,
+            ),
+            ConstructorProvider(
+                PostgresSessionDirectory,
+                request,
+                (connection, SealedValue, ClockPort),
+                provides=SessionDirectoryPort,
+            ),
+            ConstructorProvider(
+                PostgresCohortReport,
+                request,
+                (connection,),
+                provides=CohortReportPort,
+            ),
+        )
+
+    def _dashboard(self) -> tuple[Provider, ...]:
+        """Each dashboard use case: prepare, execute, finalise, service."""
+        request = Lifetime.REQUEST
+        unit = UnitOfWorkPort
+        audit = AuditQueryPort
+        directory = SessionDirectoryPort
+        return (
+            # Record a tutor action (REQ-DASH).
+            StatelessProvider(PrepareAction),
+            ConstructorProvider(
+                ExecuteAction,
+                request,
+                (
+                    unit,
+                    audit,
+                    directory,
+                    HumanActionPort,
+                    ClockPort,
+                    ActionRecordHash,
+                    ActionRules,
+                ),
+            ),
+            StatelessProvider(FinaliseAction),
+            ServiceProvider(
+                RecordHumanAction, PrepareAction, ExecuteAction, FinaliseAction
+            ),
+            # One session's audit chain.
+            StatelessProvider(PrepareAudit),
+            ConstructorProvider(
+                ExecuteAudit, request, (unit, audit, directory, ChainVerifier)
+            ),
+            StatelessProvider(FinaliseAudit),
+            ServiceProvider(ReadAudit, PrepareAudit, ExecuteAudit, FinaliseAudit),
+            # One turn's audit page.
+            StatelessProvider(PrepareTurnRead),
+            ConstructorProvider(
+                ExecuteTurnRead, request, (unit, audit, directory, AuditRecordHash)
+            ),
+            StatelessProvider(FinaliseTurnRead),
+            ServiceProvider(
+                ReadTurn, PrepareTurnRead, ExecuteTurnRead, FinaliseTurnRead
+            ),
+            # Session list, one session, opening, learners.
+            StatelessProvider(PrepareSessionList),
+            ConstructorProvider(ExecuteSessionList, request, (unit, directory)),
+            StatelessProvider(FinaliseSessionList),
+            ServiceProvider(
+                ListSessions,
+                PrepareSessionList,
+                ExecuteSessionList,
+                FinaliseSessionList,
+            ),
+            StatelessProvider(PrepareSession),
+            ConstructorProvider(ExecuteSession, request, (unit, directory)),
+            StatelessProvider(FinaliseSession),
+            ServiceProvider(
+                ReadSession, PrepareSession, ExecuteSession, FinaliseSession
+            ),
+            StatelessProvider(PrepareOpenSession),
+            ConstructorProvider(
+                ExecuteOpenSession, request, (unit, directory, ClockPort)
+            ),
+            ServiceProvider(
+                OpenSession, PrepareOpenSession, ExecuteOpenSession, FinaliseSession
+            ),
+            StatelessProvider(PrepareLearnerList),
+            ConstructorProvider(ExecuteLearnerList, request, (unit, directory)),
+            StatelessProvider(FinaliseLearnerList),
+            ServiceProvider(
+                ListLearners,
+                PrepareLearnerList,
+                ExecuteLearnerList,
+                FinaliseLearnerList,
+            ),
+            # The session event stream.
+            StatelessProvider(PrepareStream),
+            ConstructorProvider(
+                ExecuteStream,
+                request,
+                (unit, audit, directory, SessionEvents, SseEncoder),
+            ),
+            StatelessProvider(FinaliseStream),
+            ServiceProvider(
+                StreamSession, PrepareStream, ExecuteStream, FinaliseStream
+            ),
+            # Replay a recorded turn (rule 7).
+            StatelessProvider(PrepareReplay),
+            ConstructorProvider(
+                ExecuteReplay,
+                request,
+                (unit, audit, GenerationAgent, AuditRecordHash, DraftComparison),
+            ),
+            StatelessProvider(FinaliseReplay),
+            ServiceProvider(ReplayTurn, PrepareReplay, ExecuteReplay, FinaliseReplay),
+            # Cohort counts for the periodic review.
+            StatelessProvider(PrepareCohort),
+            ConstructorProvider(ExecuteCohort, request, (unit, CohortReportPort)),
+            StatelessProvider(FinaliseCohort),
+            ServiceProvider(ReportCohort, PrepareCohort, ExecuteCohort, FinaliseCohort),
         )

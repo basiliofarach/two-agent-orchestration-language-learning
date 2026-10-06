@@ -1,7 +1,6 @@
 """Read allowlisted learner history on the request connection (REQ-HISTORY)."""
 
-from datetime import datetime
-
+from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_core.domain.models.learner import (
     HistoryFieldSet,
     HistoryItem,
@@ -40,7 +39,7 @@ class HistoryOutcomeCodec:
         raise ValueError(msg)
 
 
-class PostgresLearnerHistory(LearnerHistoryPort):
+class PostgresLearnerHistory(BaseRepository, LearnerHistoryPort):
     """Read history. There is no insert, update or delete.
 
     ``allowlist`` is the deployment's field set, fixed at construction. A
@@ -87,7 +86,7 @@ class PostgresLearnerHistory(LearnerHistoryPort):
         allowlist: HistoryFieldSet,
         outcomes: HistoryOutcomeCodec,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._cipher = cipher
         self._clock = clock
         self._allowlist = allowlist
@@ -115,35 +114,35 @@ class PostgresLearnerHistory(LearnerHistoryPort):
         )
 
     async def _retained(self, learner_id: LearnerId) -> bool:
-        row = await self._connection.fetch_one(
+        row = await self._fetch_one(
             self._RETENTION,
             {"learner_id": learner_id.value},
         )
         if row is None:
             msg = "learner is not known"
             raise ValueError(msg)
-        return self._timestamp(row[0]) > self._clock.now()
+        return self._instant(row[0]) > self._clock.now()
 
     async def _proficiency(
         self, learner_id: LearnerId, requested: HistoryFieldSet
     ) -> str | None:
         if not requested.admits("proficiency_level"):
             return None
-        row = await self._connection.fetch_one(
+        row = await self._fetch_one(
             self._PROFICIENCY,
             {"learner_id": learner_id.value},
         )
         if row is None:
             msg = "learner is not known"
             raise ValueError(msg)
-        return self._cipher.decrypt(self._bytes(row[0])).decode("utf-8")
+        return self._cipher.decrypt(self._ciphertext(row[0])).decode("utf-8")
 
     async def _events(
         self, learner_id: LearnerId, requested: HistoryFieldSet
     ) -> tuple[HistoryItem, ...] | None:
         if not requested.admits("events"):
             return None
-        rows = await self._connection.fetch_all(
+        rows = await self._fetch_all(
             self._EVENTS,
             {"learner_id": learner_id.value},
         )
@@ -151,9 +150,11 @@ class PostgresLearnerHistory(LearnerHistoryPort):
 
     def _event(self, row: tuple[object, ...]) -> HistoryItem:
         return HistoryItem(
-            item_id=self._cipher.decrypt(self._bytes(row[0])).decode("utf-8"),
-            correct=self._outcomes.decode(self._cipher.decrypt(self._bytes(row[1]))),
-            occurred_at=self._timestamp(row[2]),
+            item_id=self._cipher.decrypt(self._ciphertext(row[0])).decode("utf-8"),
+            correct=self._outcomes.decode(
+                self._cipher.decrypt(self._ciphertext(row[1]))
+            ),
+            occurred_at=self._instant(row[2]),
         )
 
     def _empty(self, learner_id: LearnerId) -> LearnerHistorySnapshot:
@@ -162,20 +163,3 @@ class PostgresLearnerHistory(LearnerHistoryPort):
             proficiency_level=None,
             events=None,
         )
-
-    def _timestamp(self, value: object) -> datetime:
-        if isinstance(value, datetime):
-            if value.utcoffset() is None:
-                msg = "timestamp must be timezone-aware"
-                raise ValueError(msg)
-            return value
-        msg = "timestamp is missing"
-        raise ValueError(msg)
-
-    def _bytes(self, value: object) -> bytes:
-        if isinstance(value, bytes):
-            return value
-        if isinstance(value, bytearray | memoryview):
-            return bytes(value)
-        msg = "history value is not ciphertext"
-        raise ValueError(msg)

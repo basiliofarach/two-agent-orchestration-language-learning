@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tutor_core.domain.models.learner import LearnerHistorySnapshot
 from tutor_core.domain.models.safety import (
     DecodingParams,
     SafetyFlag,
@@ -57,11 +58,34 @@ class GateEvaluation(Timestamped):
     evaluated_at: AwareDatetime
 
 
+# Decisions on a turn's draft. A turn takes at most one; a stop may follow.
+DECISIONS: frozenset[TutorAction] = frozenset({"approve", "edit", "override"})
+
+
+class ActionChainHead(BaseModel):
+    """Where the next tutor action in one session's chain attaches.
+
+    The action chain runs beside the turn chain: one per session, starting
+    at the genesis value, so an inserted, removed or back-dated action
+    breaks it (REQ-AUDIT).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    previous_action_hash: str = Field(min_length=1)
+    action_index: int = Field(ge=0)
+
+
 class HumanAction(Timestamped):
     """What the tutor did, appended after the turn row.
 
     ``edited_output`` is the third text state on an edit. The row references
     ``turn_id``; it is not written by updating ``turn_audit``.
+
+    ``session_id``, ``action_index``, ``previous_action_hash`` and
+    ``action_hash`` place the action in its session's action chain. They
+    are present together. A row written before the chain existed carries
+    none of them and is reported as unchained, not as tampered.
     """
 
     turn_id: UUID
@@ -69,6 +93,10 @@ class HumanAction(Timestamped):
     action: TutorAction
     edited_output: str | None = None
     acted_at: AwareDatetime
+    session_id: UUID | None = None
+    action_index: int | None = Field(default=None, ge=0)
+    previous_action_hash: str | None = Field(default=None, min_length=1)
+    action_hash: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def edit_carries_output(self) -> Self:
@@ -79,6 +107,29 @@ class HumanAction(Timestamped):
             msg = "edited_output is required when the tutor edits"
             raise ValueError(msg)
         return self
+
+    @model_validator(mode="after")
+    def chain_fields_agree(self) -> Self:
+        """The four chain fields are present together, or absent together."""
+        fields = (
+            self.session_id,
+            self.action_index,
+            self.previous_action_hash,
+            self.action_hash,
+        )
+        present = tuple(field is not None for field in fields)
+        if any(present) and not all(present):
+            msg = "an action is chained with all four fields, or with none"
+            raise ValueError(msg)
+        return self
+
+    def chained(self) -> bool:
+        """Whether this row is in an action chain (written after the chain)."""
+        return self.action_hash is not None
+
+    def decides(self) -> bool:
+        """Whether this action is the turn's decision, rather than a stop."""
+        return self.action in DECISIONS
 
 
 class TurnAuditRecord(Timestamped):
@@ -96,6 +147,11 @@ class TurnAuditRecord(Timestamped):
     ``None`` and stays in the record the hash covers; a stop does not invent
     a revision or an output. The tutor action is a separate
     :class:`HumanAction` append and is not part of this record.
+
+    ``history_snapshot`` is the allowlisted history the turn was generated
+    with, kept so a replay renders the same prompt. It is ``None`` when
+    retrieval never ran, and it was ``None`` on every record sealed before
+    it was recorded.
     """
 
     turn_id: UUID
@@ -113,6 +169,7 @@ class TurnAuditRecord(Timestamped):
     safety_flags: tuple[SafetyFlag, ...] | None = None
     source_support: SourceSupportReport | None = None
     gate_evaluations: tuple[GateEvaluation, ...] = ()
+    history_snapshot: LearnerHistorySnapshot | None = None
     policy_version: str = Field(min_length=1)
     previous_record_hash: str = Field(min_length=1)
     record_hash: str = Field(min_length=1)

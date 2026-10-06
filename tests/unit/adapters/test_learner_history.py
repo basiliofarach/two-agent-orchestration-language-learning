@@ -251,7 +251,7 @@ class TestPostgresLearnerHistory:
 
     async def test_a_value_that_is_not_ciphertext_raises(self) -> None:
         wired = Wired(("proficiency_level",), ((_LATER,), ("not-bytes",)))
-        with pytest.raises(ValueError, match="not ciphertext"):
+        with pytest.raises(ValueError, match="ciphertext column is not bytes"):
             await wired.read()
 
     async def test_a_naive_timestamp_raises(self) -> None:
@@ -261,7 +261,7 @@ class TestPostgresLearnerHistory:
 
     async def test_a_missing_timestamp_raises(self) -> None:
         wired = Wired(("proficiency_level",), (("not-a-time",),))
-        with pytest.raises(ValueError, match="timestamp is missing"):
+        with pytest.raises(ValueError, match="not a timestamp"):
             await wired.read()
 
     def test_the_adapter_exposes_no_write_method(self) -> None:

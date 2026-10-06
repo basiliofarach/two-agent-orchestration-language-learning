@@ -13,7 +13,12 @@ from tests.unit.di.test_lifetime_validation import (
 )
 
 from tutor_api.di.container import Container
-from tutor_api.di.lifetime import Lifetime, ScopeLeak, UnregisteredDependency
+from tutor_api.di.lifetime import (
+    Lifetime,
+    ScopeClosed,
+    ScopeLeak,
+    UnregisteredDependency,
+)
 
 
 class TestContainer:
@@ -157,3 +162,22 @@ class TestRequestScope:
     def test_an_unregistered_type_is_refused_in_a_scope(self) -> None:
         with pytest.raises(UnregisteredDependency):
             Container(()).scope().resolve(PolicyCard)
+
+    def test_one_request_reuses_the_request_scoped_instance(self) -> None:
+        scope = self._container().scope()
+        assert scope.resolve(Connection) is scope.resolve(Connection)
+
+    def test_the_next_request_gets_a_new_instance(self) -> None:
+        container = self._container()
+        assert container.scope().resolve(Connection) is not container.scope().resolve(
+            Connection
+        )
+
+    def test_closing_the_scope_drops_the_cache(self) -> None:
+        container = self._container()
+        scope = container.scope()
+        first = scope.resolve(Connection)
+        scope.close()
+        with pytest.raises(ScopeClosed):
+            scope.resolve(Connection)
+        assert container.scope().resolve(Connection) is not first

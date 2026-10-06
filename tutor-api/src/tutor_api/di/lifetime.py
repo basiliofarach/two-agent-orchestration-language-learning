@@ -44,3 +44,40 @@ class UnregisteredDependency(Exception):
             f"{holder.__name__} requires {missing.__name__}, "
             "which no provider registers."
         )
+
+
+class RegistrationCycle(Exception):
+    """Providers require each other in a loop.
+
+    Resolution would recurse until the stack overflowed. The message names
+    every type on the loop so the registration can be broken at startup.
+    """
+
+    def __init__(self, loop: tuple[type, ...]) -> None:
+        names = " -> ".join(item.__name__ for item in loop)
+        super().__init__(f"provider cycle: {names}")
+        self.loop = loop
+
+
+class DuplicateRegistration(Exception):
+    """Two providers claim the same type.
+
+    The second would silently replace the first, and a request would not
+    be able to tell which one it resolved.
+    """
+
+    def __init__(self, duplicated: type) -> None:
+        super().__init__(
+            f"{duplicated.__name__} is registered twice. One type has one provider."
+        )
+
+
+class ScopeClosed(Exception):
+    """A request scope was closed and then asked to resolve again.
+
+    The cache was dropped with the request. A later resolve is the next
+    request’s scope, not this one.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("the request scope is closed")

@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from tutor_api.settings import Settings
+from tutor_api.routers.deps import Settings
 
 
 class HealthStatus(BaseModel):

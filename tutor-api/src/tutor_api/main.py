@@ -1,17 +1,44 @@
 """ASGI entrypoint. The object graph is built here and nowhere else."""
 
-from fastapi import FastAPI
+from collections.abc import Awaitable, Callable
+from typing import cast
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
+from tutor_api.routers.errors import ProblemMapping
 from tutor_api.routers.health import HealthRouter
-from tutor_api.routers.turns import (
-    SessionRejectionHandler,
-    TurnFailureHandler,
-    TurnRouter,
+from tutor_api.routers.reports import ReportRouter
+from tutor_api.routers.sessions import (
+    ActionRouter,
+    AuditRouter,
+    EventRouter,
+    LearnerRouter,
+    SessionRouter,
 )
-from tutor_core.application.services.conduct_turn import TurnFailed
-from tutor_core.domain.ports.tutoring_session import SessionRejected
+from tutor_api.routers.turns import TurnRouter
+from tutor_api.settings import ApplicationSettings
+
+
+class RequestScopeCloser:
+    """Drop the request's scope after the response. Services have no dispose."""
+
+    async def __call__(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Close the scope the dependencies opened, then return the response."""
+        try:
+            response = await call_next(request)
+        finally:
+            scope = getattr(request.state, "scope", None)
+            if scope is not None:
+                scope.close()
+        return response
 
 
 class Application:
@@ -38,10 +65,30 @@ class Application:
         # back off the request, so two applications in one process — which the
         # test suite creates — never share a graph.
         app.state.container = self._container
-        app.include_router(HealthRouter().router())
-        app.include_router(TurnRouter().router())
-        app.add_exception_handler(TurnFailed, TurnFailureHandler())
-        app.add_exception_handler(SessionRejected, SessionRejectionHandler())
+        for router in (
+            HealthRouter(),
+            TurnRouter(),
+            SessionRouter(),
+            LearnerRouter(),
+            AuditRouter(),
+            ActionRouter(),
+            EventRouter(),
+            ReportRouter(),
+        ):
+            app.include_router(router.router())
+        ProblemMapping().install(app)
+        app.middleware("http")(RequestScopeCloser())
+        # Registered last, so it wraps everything above and a refused
+        # request still carries the CORS headers the browser needs to read it.
+        settings = cast(
+            ApplicationSettings, self._container.resolve(ApplicationSettings)
+        )
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.allowed_origins()),
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", "Last-Event-ID"],
+        )
         return app
 
 

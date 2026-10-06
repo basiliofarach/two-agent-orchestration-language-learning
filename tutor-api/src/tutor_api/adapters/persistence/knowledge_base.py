@@ -2,6 +2,7 @@
 
 from uuid import UUID, uuid4
 
+from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_core.domain.models.corpus import CorpusDocument, IngestedDocument
 from tutor_core.domain.models.retrieval import (
     RedactedRetrievalRequest,
@@ -76,7 +77,7 @@ class ChunkIdentifiers:
         return uuid4()
 
 
-class PgVectorKnowledgeBase(KnowledgeBasePort):
+class PgVectorKnowledgeBase(BaseRepository, KnowledgeBasePort):
     """Retrieve approved chunks only. The filter is in the SQL (REQ-KB).
 
     Unreviewed documents are excluded by ``review_status``, not by a pass
@@ -107,7 +108,7 @@ class PgVectorKnowledgeBase(KnowledgeBasePort):
         confidence: CosineConfidence,
         sources: CitedSources,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._embedding = embedding
         self._cipher = cipher
         self._vectors = vectors
@@ -117,7 +118,7 @@ class PgVectorKnowledgeBase(KnowledgeBasePort):
     async def retrieve(self, request: RedactedRetrievalRequest) -> RetrievalResult:
         """Return sourced snippets, or an empty result when nothing matches."""
         literal = self._vectors.render(self._embedding.embed(request.prompt.text))
-        rows = await self._connection.fetch_all(
+        rows = await self._fetch_all(
             self._RETRIEVE,
             {"embedding": literal, "limit": request.limit},
         )
@@ -149,27 +150,14 @@ class PgVectorKnowledgeBase(KnowledgeBasePort):
         )
         snippet = Snippet(
             chunk_id=self._uuid(row[0]),
-            content=self._cipher.decrypt(self._bytes(row[2])).decode("utf-8"),
+            content=self._cipher.decrypt(self._ciphertext(row[2])).decode("utf-8"),
             source=source,
             ordinal=int(str(row[1])),
         )
         return snippet, float(str(row[7]))
 
-    def _uuid(self, value: object) -> UUID:
-        if isinstance(value, UUID):
-            return value
-        return UUID(str(value))
 
-    def _bytes(self, value: object) -> bytes:
-        if isinstance(value, bytes):
-            return value
-        if isinstance(value, bytearray | memoryview):
-            return bytes(value)
-        msg = "chunk content is not ciphertext"
-        raise ValueError(msg)
-
-
-class PostgresCorpusIngestion(CorpusIngestionPort):
+class PostgresCorpusIngestion(BaseRepository, CorpusIngestionPort):
     """Insert a document and its chunks. There is no update statement.
 
     Chunk text is ciphertext. The embedding stays a vector so nearest
@@ -199,7 +187,7 @@ class PostgresCorpusIngestion(CorpusIngestionPort):
         passages: PassageSplitter,
         vectors: VectorLiteral,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._embedding = embedding
         self._cipher = cipher
         self._identifiers = identifiers
@@ -209,7 +197,7 @@ class PostgresCorpusIngestion(CorpusIngestionPort):
     async def ingest(self, document: CorpusDocument) -> IngestedDocument:
         """Insert a new document row and one chunk row per passage."""
         passages = self._passages.split(document.content)
-        await self._connection.execute(
+        await self._execute(
             self._DOCUMENT,
             {
                 "id": document.document_id,
@@ -230,7 +218,7 @@ class PostgresCorpusIngestion(CorpusIngestionPort):
         self, document: CorpusDocument, ordinal: int, passage: str
     ) -> UUID:
         chunk_id = self._identifiers.next()
-        await self._connection.execute(
+        await self._execute(
             self._CHUNK,
             {
                 "id": chunk_id,

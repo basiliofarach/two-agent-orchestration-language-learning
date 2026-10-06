@@ -188,7 +188,7 @@ class TestPgVectorKnowledgeBase:
     async def test_content_that_is_not_ciphertext_is_rejected(self) -> None:
         row = ChunkRow("a", 0.2)._row()
         broken = (row[0], row[1], "clear", *row[3:])
-        with pytest.raises(ValueError, match="not ciphertext"):
+        with pytest.raises(ValueError, match="ciphertext column is not bytes"):
             await (
                 Wired()
                 .knowledge(ScriptedConnection((broken,)))
