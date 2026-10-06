@@ -47,7 +47,7 @@ class PostgresAuditSink(BaseRepository, AuditSinkPort):
             output_before_checks, output_after_checks, ai_disclosure,
             refused, safety_flags, source_support,
             policy_version, previous_record_hash, record_hash, recorded_at,
-            history_snapshot
+            history_snapshot, prompt_safety_flags, context_digest
         ) VALUES (
             :turn_id, :session_id, :turn_index,
             :learner_prompt_redacted, :redacted_categories,
@@ -55,7 +55,7 @@ class PostgresAuditSink(BaseRepository, AuditSinkPort):
             :output_before_checks, :output_after_checks, :ai_disclosure,
             :refused, :safety_flags, :source_support,
             :policy_version, :previous_record_hash, :record_hash, :recorded_at,
-            :history_snapshot
+            :history_snapshot, :prompt_safety_flags, :context_digest
         )
         """
 
@@ -207,6 +207,8 @@ class PostgresAuditSink(BaseRepository, AuditSinkPort):
             "record_hash": record.record_hash,
             "recorded_at": record.recorded_at,
             "history_snapshot": self._optional_json(payload["history_snapshot"]),
+            "prompt_safety_flags": self._optional_json(payload["prompt_safety_flags"]),
+            "context_digest": record.context_digest,
         }
 
     def _gate_parameters(

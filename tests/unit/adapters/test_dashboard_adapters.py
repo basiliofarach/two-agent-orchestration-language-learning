@@ -172,6 +172,8 @@ class TestAuditRecordDecoder:
             record.record_hash,
             WHEN,
             None,
+            None,
+            None,
         )
 
     def gate(self, name: str) -> tuple[object, ...]:

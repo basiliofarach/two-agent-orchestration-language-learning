@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+from tests.support.dashboard_stubs import MemoryAuditQuery, SealedRecords
 from tests.support.gate_card import CardPolicy, GateCard
 from tests.support.samples import Samples
 from tests.support.scripted_connection import ScriptedConnection
@@ -18,9 +19,11 @@ from tutor_core.application.services.conduct_turn import (
     PrepareTurn,
     TurnFailed,
 )
+from tutor_core.application.turn.baseline import SessionBaselineCalculator
 from tutor_core.application.turn.orchestrator import TurnOrchestrator
 from tutor_core.application.turn.record import GateRows, TurnRecordBuilder
 from tutor_core.application.turn.state import TurnGraphState
+from tutor_core.domain.audit.context_digest import CitedContextDigest
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import ChainHead, TurnAuditRecord
 from tutor_core.domain.models.conduct import ExecutedTurn, PreparedTurn, TurnCommand
@@ -83,7 +86,7 @@ class States:
 
 class Builder:
     def build(self) -> TurnRecordBuilder:
-        return TurnRecordBuilder(AuditRecordHash(), GateRows())
+        return TurnRecordBuilder(AuditRecordHash(), GateRows(), CitedContextDigest())
 
     def record(self, state: TurnGraphState) -> TurnAuditRecord:
         return self.build().build(
@@ -139,7 +142,10 @@ class TestTurnRecordBuilder:
         assert record.output_before_checks is None
         assert record.retrieved_context_ids == ()
 
-    def test_a_refusal_before_the_model_records_no_generation(self) -> None:
+    def test_a_refusal_before_the_model_records_the_refusal_and_its_flags(
+        self,
+    ) -> None:
+        flag = Samples().safety_flag().model_copy(update={"severity": "high"})
         state = States().passed()
         state.draft = GeneratedDraft(
             unit=Samples()
@@ -147,15 +153,51 @@ class TestTurnRecordBuilder:
             .model_copy(
                 update={
                     "output_before_checks": None,
+                    "output_after_checks": "open web",
                     "refused": True,
                     "refusal_reason": "open web",
                 }
             ),
-            safety_flags=(),
+            safety_flags=(flag,),
         )
         record = Builder().record(state)
         assert record.model_revision is None
-        assert record.ai_disclosure is None
+        assert record.output_before_checks is None
+        assert record.refused is True
+        assert record.output_after_checks == "open web"
+        assert record.safety_flags == (flag,)
+        assert record.ai_disclosure == Samples().generated().ai_disclosure
+        assert record.record_hash == AuditRecordHash().digest(record)
+
+    def test_the_record_binds_the_text_of_the_chunks_it_cites(self) -> None:
+        state = States().passed()
+        record = Builder().record(state)
+        assert state.turn.retrieved is not None
+        expected = CitedContextDigest().digest(state.turn.retrieved.snippets)
+        assert record.context_digest == expected
+        assert Builder().record(States().stopped_at_permission()).context_digest is None
+
+    def test_the_context_digest_is_covered_by_the_record_hash(self) -> None:
+        record = Builder().record(States().passed())
+        edited = record.model_copy(update={"context_digest": "f" * 64})
+        assert AuditRecordHash().digest(edited) != record.record_hash
+
+    def test_the_prompt_flags_are_recorded_even_when_permission_stops(
+        self,
+    ) -> None:
+        state = States().stopped_at_permission()
+        flag = Samples().safety_flag()
+        state.turn.prompt_safety_flags = (flag,)
+        record = Builder().record(state)
+        assert record.prompt_safety_flags == (flag,)
+        assert record.refused is None
+
+    def test_prompt_flags_are_covered_by_the_digest(self) -> None:
+        state = States().passed()
+        state.turn.prompt_safety_flags = (Samples().safety_flag(),)
+        record = Builder().record(state)
+        edited = record.model_copy(update={"prompt_safety_flags": ()})
+        assert AuditRecordHash().digest(edited) != record.record_hash
 
     def test_the_record_is_a_snapshot_not_the_live_turn(self) -> None:
         state = States().passed()
@@ -243,6 +285,11 @@ class TestPrepareTurn:
         prepared = self._prepare().run(self._command("Search the web for hola"))
         assert prepared.turn.requires_unvetted_source is True
 
+    def test_the_prompt_flags_stay_on_the_turn_for_the_record(self) -> None:
+        prepared = self._prepare().run(self._command("Please search the web"))
+        categories = [flag.category for flag in prepared.turn.prompt_safety_flags]
+        assert categories == ["out_of_scope"]
+
     def test_each_turn_gets_its_own_identifier(self) -> None:
         first = self._prepare().run(self._command("hola"))
         second = self._prepare().run(self._command("hola"))
@@ -253,9 +300,11 @@ class FixedOrchestrator(TurnOrchestrator):
     def __init__(self, state: TurnGraphState) -> None:
         self._state = state
         self.calls = 0
+        self.seen: list[TurnState] = []
 
     async def run(self, turn: TurnState) -> TurnGraphState:
         self.calls += 1
+        self.seen.append(turn.model_copy(deep=True))
         return self._state
 
 
@@ -306,6 +355,7 @@ class Execute:
         sink: AuditSinkPort | None = None,
         sessions: TutoringSessionPort | None = None,
         orchestrator: TurnOrchestrator | None = None,
+        earlier: tuple[TurnAuditRecord, ...] = (),
     ) -> ExecuteTurn:
         return ExecuteTurn(
             unit,
@@ -317,6 +367,8 @@ class Execute:
             Builder().build(),
             FrozenClock(Samples().when()),
             sessions if sessions is not None else AcceptingSession(),
+            MemoryAuditQuery(earlier),
+            SessionBaselineCalculator(),
         )
 
     def prepared(self) -> PreparedTurn:
@@ -324,6 +376,17 @@ class Execute:
 
 
 class TestExecuteTurn:
+    async def test_the_graph_sees_the_session_norm_of_earlier_turns(self) -> None:
+        earlier = SealedRecords().generated(0)
+        orchestrator = FixedOrchestrator(States().passed())
+        handler = Execute().handler(
+            ScriptedUnit(), orchestrator=orchestrator, earlier=(earlier,)
+        )
+        await handler.run(Execute().prepared())
+        baseline = orchestrator.seen[0].session_baseline
+        assert baseline.prior_turns == 1
+        assert baseline.generated_turns == 1
+
     async def test_the_record_is_appended_and_returned(self) -> None:
         sink = MemorySink()
         executed = (

@@ -19,6 +19,19 @@ envelope (confidence, source support, length, grammar findings). A gate not
 reached is stored as `not_evaluated`, citing the rule of the verdict that
 halted the turn.
 
+*Amended:* 2026-10-08 — A non-pass verdict now changes what the tutor can
+release, not only what is logged. `approve` releases the draft as it stands
+and needs four `pass` rows and a draft the agent did not refuse; the
+`guard_human_action` trigger enforces the same rule (revision
+`5e1f0c7a9b23`). A held draft leaves only as the tutor's `edit`, which is
+PII-redacted and refused on a high-severity safety flag, or is set aside by
+`override` (Art. 14(4)(d)). Drift is scoped to the session, as REQ-GATES
+states: beside the per-turn envelope, a turn is held when it leaves its
+session's norm (support, length) or follows repeated high-severity prompts.
+The session norm is summarised onto the turn before the graph runs, so the
+gate still reads only the turn. A not-evaluated row still cites the halting
+verdict's rule. Gate order and graph topology are unchanged.
+
 ## Context
 
 REQ-GATES specifies four oversight gates. Their positions in the pipeline are

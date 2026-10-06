@@ -61,6 +61,7 @@ from tutor_core.application.services.session_surface import (
     StreamCommand,
 )
 from tutor_core.domain.audit.chain import ChainVerifier
+from tutor_core.domain.audit.context_digest import CitedContextDigest
 from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
 from tutor_core.domain.ports.audit_query import TurnNotFound
 from tutor_core.domain.ports.human_action import ActionRejected
@@ -161,6 +162,7 @@ class TestUnfilledReceipts:
             Agents().generation(),
             AuditRecordHash(),
             DraftComparison(),
+            CitedContextDigest(),
         )
         with pytest.raises(ValueError, match="turn was not read"):
             await execute.run(ReplayCommand(turn_id=UUID(int=1)))
@@ -178,6 +180,7 @@ class TestMissingRows:
             Agents().generation(),
             AuditRecordHash(),
             DraftComparison(),
+            CitedContextDigest(),
         )
         with pytest.raises(TurnNotFound):
             await execute.run(ReplayCommand(turn_id=UUID(int=1)))

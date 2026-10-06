@@ -64,6 +64,7 @@ def observation(case: ScenarioCase, **changes: object) -> ScenarioObservation:
     released = not held and not case.expect_refused
     fields: dict[str, object] = {
         "case_number": case.number,
+        "variant": case.variant,
         "halted_at": case.expected_gate,
         "status": "held_for_review" if held else "awaiting_tutor_approval",
         "refused": case.expect_refused,
@@ -81,7 +82,8 @@ def observation(case: ScenarioCase, **changes: object) -> ScenarioObservation:
 class TestRubric:
     def test_a_correct_pipeline_scores_full_marks_on_every_case(self) -> None:
         cases = ScenarioCatalogue().cases()
-        assert [case.number for case in cases] == list(range(1, 9))
+        canonical = [case.number for case in cases if case.variant == "canonical"]
+        assert canonical == list(range(1, 9))
         scores = tuple(Rubric().score(case, observation(case)) for case in cases)
         assert EvaluationReport(scores=scores).passed()
         assert {score.judge_signal for score in scores} == {"secondary"}
@@ -129,6 +131,46 @@ class TestRubric:
         cases = ScenarioCatalogue().cases()
         with pytest.raises(ValueError, match="different case"):
             Rubric().score(cases[0], observation(cases[1]))
+
+    def test_a_criterion_that_does_not_apply_is_not_a_free_point(self) -> None:
+        case = ScenarioCatalogue().cases()[3]
+        assert case.name == "ambiguous_prompt"
+        score = Rubric().score(case, observation(case))
+        assert score.source_support is None
+        assert score.age_appropriateness is None
+        assert score.total() == score.applicable() == 3
+
+    def test_a_held_draft_is_not_scored_on_source_support(self) -> None:
+        case = ScenarioCatalogue().cases()[5]
+        assert case.name == "safety_sensitive_prompt"
+        score = Rubric().score(case, observation(case))
+        assert score.source_support is None
+        assert score.age_appropriateness == 1
+
+    def test_one_failed_applicable_criterion_fails_the_report(self) -> None:
+        case = ScenarioCatalogue().cases()[0]
+        score = Rubric().score(case, observation(case, sources=0))
+        assert not EvaluationReport(scores=(score,)).passed()
+
+    def test_every_paraphrase_targets_a_canonical_case(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        canonical = {c.number: c for c in cases if c.variant == "canonical"}
+        paraphrases = [c for c in cases if c.variant == "paraphrase"]
+        assert {c.number for c in paraphrases} == {5, 6, 8}
+        for case in paraphrases:
+            twin = canonical[case.number]
+            assert case.prompt != twin.prompt or case.completion != twin.completion
+            assert case.expected_gate == twin.expected_gate
+            assert case.expect_refused == twin.expect_refused
+
+    def test_an_observation_of_another_variant_is_refused(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        canonical = next(c for c in cases if c.number == 5)
+        paraphrase = next(
+            c for c in cases if c.number == 5 and c.variant == "paraphrase"
+        )
+        with pytest.raises(ValueError, match="different case"):
+            Rubric().score(canonical, observation(paraphrase))
 
     def test_the_report_is_synthetic_until_tutor_sourced(self) -> None:
         assert EvaluationReport(scores=()).label == "synthetic-only"

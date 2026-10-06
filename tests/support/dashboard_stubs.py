@@ -7,7 +7,10 @@ from tests.support.samples import Samples
 from tests.support.scripted_connection import ScriptedConnection
 from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
 from tutor_core.domain.models.audit import (
+    GATE_ORDER,
     ActionChainHead,
+    GateEvaluation,
+    GateOutcome,
     HumanAction,
     TurnAuditRecord,
 )
@@ -47,8 +50,46 @@ class SealedRecords:
                     "previous_record_hash": previous or AuditRecordHash.GENESIS,
                     "history_snapshot": Samples().history(),
                     "recorded_at": STARTED + timedelta(minutes=turn_index),
+                    "gate_evaluations": self.gates("pass", "pass", "pass", "pass"),
                 }
             )
+        )
+
+    def held(self, decision: GateOutcome = "pause") -> TurnAuditRecord:
+        """A generated draft a post-generation gate held for review."""
+        return self._seal(
+            self.generated().model_copy(
+                update={"gate_evaluations": self.gates("pass", "pass", decision)}
+            )
+        )
+
+    def refused(self) -> TurnAuditRecord:
+        """A draft the agent refused after the model ran; sensitivity stopped it."""
+        return self._seal(
+            self.generated().model_copy(
+                update={
+                    "refused": True,
+                    "gate_evaluations": self.gates("pass", "pass", "stop"),
+                }
+            )
+        )
+
+    def legacy(self) -> TurnAuditRecord:
+        """A generated draft sealed before gate rows were recorded."""
+        return self._seal(self.generated().model_copy(update={"gate_evaluations": ()}))
+
+    def gates(self, *decisions: GateOutcome) -> tuple[GateEvaluation, ...]:
+        """One row per gate: the decisions given, then ``not_evaluated``."""
+        padded = (*decisions, *("not_evaluated",) * (len(GATE_ORDER) - len(decisions)))
+        return tuple(
+            GateEvaluation(
+                gate_name=name,
+                decision=decision,
+                reason=f"{name} {decision}",
+                policy_rule_id=f"rule-{name}",
+                evaluated_at=STARTED,
+            )
+            for name, decision in zip(GATE_ORDER, padded, strict=True)
         )
 
     def halted(

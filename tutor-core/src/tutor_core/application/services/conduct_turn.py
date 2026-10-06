@@ -10,6 +10,7 @@ from tutor_core.application.services.service import (
     FinaliseHandler,
     PrepareHandler,
 )
+from tutor_core.application.turn.baseline import SessionBaselineCalculator
 from tutor_core.application.turn.orchestrator import TurnOrchestrator
 from tutor_core.application.turn.record import TurnRecordBuilder
 from tutor_core.domain.models.conduct import (
@@ -20,6 +21,7 @@ from tutor_core.domain.models.conduct import (
 )
 from tutor_core.domain.models.learner import LearnerId
 from tutor_core.domain.models.turn import TurnState
+from tutor_core.domain.ports.audit_query import AuditQueryPort
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
@@ -93,6 +95,7 @@ class PrepareTurn(PrepareHandler[TurnCommand, PreparedTurn]):
                 requires_unvetted_source=any(
                     flag.category in self._unvetted for flag in flags
                 ),
+                prompt_safety_flags=flags,
             )
         )
 
@@ -115,6 +118,8 @@ class TurnTransaction(TransactionalWork):
         builder: TurnRecordBuilder,
         clock: ClockPort,
         sessions: TutoringSessionPort,
+        query: AuditQueryPort,
+        baselines: SessionBaselineCalculator,
     ) -> None:
         self._prepared = prepared
         self._receipt = receipt
@@ -124,6 +129,8 @@ class TurnTransaction(TransactionalWork):
         self._builder = builder
         self._clock = clock
         self._sessions = sessions
+        self._query = query
+        self._baselines = baselines
 
     async def run(self, connection: TransactionConnection) -> None:
         """Confirm the session, run the graph, then append its record.
@@ -131,10 +138,14 @@ class TurnTransaction(TransactionalWork):
         The session check uses the enlisted connection and runs before the
         graph, so a missing, stopped, or foreign session never reaches
         retrieval (REQ-MINOR). ``connection`` is the same request connection
-        the session port holds (DEC-0014).
+        the session port holds (DEC-0014). The session's earlier records are
+        summarised onto the turn next, so the drift gate judges this turn
+        against its own session (REQ-GATES).
         """
         turn = self._prepared.turn
         await self._sessions.require_active(turn.session_id, turn.learner_id)
+        earlier = await self._query.for_session(turn.session_id)
+        turn.session_baseline = self._baselines.baseline(earlier)
         state = await self._orchestrator.run(turn)
         head = await self._sink.head(turn.session_id)
         version = await self._policy.version()
@@ -164,6 +175,8 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
         builder: TurnRecordBuilder,
         clock: ClockPort,
         sessions: TutoringSessionPort,
+        query: AuditQueryPort,
+        baselines: SessionBaselineCalculator,
     ) -> None:
         self._unit = unit
         self._orchestrator = orchestrator
@@ -172,6 +185,8 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
         self._builder = builder
         self._clock = clock
         self._sessions = sessions
+        self._query = query
+        self._baselines = baselines
 
     async def run(self, prepared: PreparedTurn) -> ExecutedTurn:
         """Commit the turn and its record, or raise ``TurnFailed``."""
@@ -185,6 +200,8 @@ class ExecuteTurn(ExecuteHandler[PreparedTurn, ExecutedTurn]):
             self._builder,
             self._clock,
             self._sessions,
+            self._query,
+            self._baselines,
         )
         try:
             await self._unit.run(work)

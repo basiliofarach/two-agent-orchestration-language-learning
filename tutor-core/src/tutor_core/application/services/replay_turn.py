@@ -2,11 +2,13 @@
 
 Rule 7 asks that a recorded turn replay from the audit log and reproduce
 the same output. The record holds every input generation reads — the
-redacted prompt, the cited chunks (by id, opened from the vetted corpus),
-the allowlisted history snapshot — and the pins that make it repeatable:
-template version, decoding parameters, model revision. Replay feeds those
-back through the injected generation agent and reports, field by field,
-whether the outputs match.
+redacted prompt, the cited chunks (by id, opened from the vetted corpus,
+and bound by a digest of their text), the allowlisted history snapshot —
+and the pins that make it repeatable: template version, decoding
+parameters, model revision. Replay first checks that the chunks read back
+are the text the turn saw, then feeds those inputs back through the
+injected generation agent and reports, field by field, whether the outputs
+match.
 
 Gates are not re-run. Their inputs include the policy card and the
 retrieval confidence of a search that would run against today's corpus;
@@ -26,6 +28,7 @@ from tutor_core.application.services.service import (
     FinaliseHandler,
     PrepareHandler,
 )
+from tutor_core.domain.audit.context_digest import CitedContextDigest
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import TurnAuditRecord
 from tutor_core.domain.models.pipeline import GeneratedDraft
@@ -42,6 +45,8 @@ ReplayOutcome = Literal[
     "diverged",
     "not_generated",
     "history_not_recorded",
+    "context_not_recorded",
+    "context_changed",
     "record_tampered",
 ]
 
@@ -60,7 +65,11 @@ class ReplayReport(BaseModel):
     ``differences`` names each recorded field the replay did not
     reproduce. ``not_generated`` means the turn halted or was refused
     before the model ran, so there is no output to reproduce; the record's
-    digest still covers its gate rows.
+    digest still covers its gate rows. ``context_changed`` means the cited
+    chunks read back today are not the text the turn was generated from —
+    edited, retracted or gone — so the model is not called: a match would
+    prove nothing about the recorded turn. ``context_not_recorded`` is a
+    record sealed before that text was bound to it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -157,12 +166,14 @@ class ExecuteReplay(ExecuteHandler[ReplayCommand, ReplayReport]):
         agent: GenerationAgent,
         hasher: AuditRecordHash,
         comparison: DraftComparison,
+        context: CitedContextDigest,
     ) -> None:
         self._unit = unit
         self._query = query
         self._agent = agent
         self._hasher = hasher
         self._comparison = comparison
+        self._cited_digest = context
 
     async def run(self, prepared: ReplayCommand) -> ReplayReport:
         """Return what the replay found."""
@@ -179,6 +190,10 @@ class ExecuteReplay(ExecuteHandler[ReplayCommand, ReplayReport]):
         history = record.history_snapshot
         if history is None:
             return self._report(record, "history_not_recorded")
+        if record.context_digest is None:
+            return self._report(record, "context_not_recorded")
+        if self._cited_digest.digest(inputs.cited) != record.context_digest:
+            return self._report(record, "context_changed")
         draft = await self._agent.generate(
             record.learner_prompt.text, self._context(inputs.cited), history
         )

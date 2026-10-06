@@ -1483,3 +1483,208 @@ class TurnAuditHistorySnapshot:
     def downgrade_statements(self) -> tuple[str, ...]:
         """Drop the column."""
         return ("ALTER TABLE turn_audit DROP COLUMN IF EXISTS history_snapshot",)
+
+
+class TurnAuditOutcomeCheck:
+    """Model columns need an outcome; an outcome alone is a refusal.
+
+    The replaced check made every generation column null together or
+    present together, so a refusal before the model stored nothing: not the
+    refusal, not the disclosure, not the flags that caused it (REQ-AUDIT).
+    The model group is what the model produced; the outcome group is what
+    generation decided. It mirrors ``TurnAuditRecord.generation_fields_agree``.
+    """
+
+    NAME = "turn_audit_generation_outcome"
+
+    def expression(self) -> str:
+        """Both groups agree internally; an outcome without the model refused."""
+        return """
+                        (
+                            (
+                                model_revision IS NULL
+                                AND template_version IS NULL
+                                AND decoding_params IS NULL
+                                AND output_before_checks IS NULL
+                                AND source_support IS NULL
+                            )
+                            OR (
+                                model_revision IS NOT NULL
+                                AND template_version IS NOT NULL
+                                AND decoding_params IS NOT NULL
+                                AND output_before_checks IS NOT NULL
+                                AND source_support IS NOT NULL
+                            )
+                        )
+                        AND (
+                            (
+                                output_after_checks IS NULL
+                                AND ai_disclosure IS NULL
+                                AND refused IS NULL
+                                AND safety_flags IS NULL
+                            )
+                            OR (
+                                output_after_checks IS NOT NULL
+                                AND ai_disclosure IS NOT NULL
+                                AND refused IS NOT NULL
+                                AND safety_flags IS NOT NULL
+                            )
+                        )
+                        AND (model_revision IS NULL OR refused IS NOT NULL)
+                        AND (
+                            model_revision IS NOT NULL
+                            OR refused IS NULL
+                            OR refused
+                        )"""
+
+
+class TurnAuditEvidence:
+    """Prompt flags and the cited-text digest, and the refusal's outcome.
+
+    ``prompt_safety_flags`` is what the classifier raised on the redacted
+    prompt, sealed (DEC-0012). ``context_digest`` binds the record to the
+    cited chunk text; it is a digest, registered as a cleartext exemption
+    for the reason ``record_hash`` is. Both are null on rows sealed before
+    this revision, and the record hash omits them there.
+    """
+
+    _DIGEST = (
+        "Digest of the cited chunk text, not the text. Encrypting it would "
+        "make replay verification depend on key availability (DEC-0012)."
+    )
+
+    def statements(self) -> tuple[str, ...]:
+        """Register the exemption, add the columns, then swap the check."""
+        outcome = TurnAuditOutcomeCheck()
+        return (
+            f"""
+            INSERT INTO protected_column_exemption (
+                schema_name, table_name, column_name, reason, decision_ref
+            ) VALUES (
+                'public', 'turn_audit', 'context_digest',
+                '{self._DIGEST}', 'DEC-0012'
+            )
+            ON CONFLICT (schema_name, table_name, column_name) DO NOTHING
+            """,
+            """
+            ALTER TABLE turn_audit
+                ADD COLUMN prompt_safety_flags ciphertext,
+                ADD COLUMN context_digest text
+                    CONSTRAINT turn_audit_context_digest_shape
+                    CHECK (context_digest ~ '^[0-9a-f]{64}$')
+            """,
+            "ALTER TABLE turn_audit DROP CONSTRAINT turn_audit_generation_together",
+            f"""
+            ALTER TABLE turn_audit
+                ADD CONSTRAINT {outcome.NAME} CHECK ({outcome.expression()}
+                )
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Restore the all-or-none check. A stored refusal refuses the downgrade."""
+        generation = TurnAuditGenerationCheck().expression()
+        return (
+            f"ALTER TABLE turn_audit DROP CONSTRAINT {TurnAuditOutcomeCheck.NAME}",
+            f"""
+            ALTER TABLE turn_audit
+                ADD CONSTRAINT turn_audit_generation_together CHECK ({generation}
+                )
+            """,
+            """
+            ALTER TABLE turn_audit
+                DROP COLUMN context_digest,
+                DROP COLUMN prompt_safety_flags
+            """,
+            """
+            DELETE FROM protected_column_exemption
+            WHERE schema_name = 'public'
+              AND table_name = 'turn_audit'
+              AND column_name = 'context_digest'
+            """,
+        )
+
+
+class ReleaseRequiresPassedGates:
+    """``guard_human_action`` also refuses approving a held or refused draft.
+
+    The function ``HumanActionChain`` installed let approve through for any
+    turn the model ran on, so a gate's ``pause`` or ``stop`` did not change
+    what the tutor could release (REQ-GATES). Approve now needs four
+    ``pass`` rows and a draft the agent did not refuse. Edit still needs a
+    model draft; that test reads ``output_before_checks``, because a
+    refusal before the model now stores an outcome with no draft.
+    """
+
+    def statements(self) -> tuple[str, ...]:
+        """Replace the function body. The trigger and its grants are kept."""
+        return (self._function(release_rule=True),)
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Restore the body ``HumanActionChain`` installed."""
+        return (self._function(release_rule=False),)
+
+    def _function(self, *, release_rule: bool) -> str:
+        sqlstate = HumanActionChain.SQLSTATE
+        generated = (
+            "output_before_checks IS NOT NULL"
+            if release_rule
+            else "output_after_checks IS NOT NULL"
+        )
+        approve = (
+            f"""
+                IF NEW.action = 'approve' AND refused_draft THEN
+                    RAISE EXCEPTION 'the agent refused this draft'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                IF NEW.action = 'approve' AND (
+                    SELECT count(*) FROM public.gate_evaluation
+                    WHERE turn_id = NEW.turn_id AND decision = 'pass'
+                ) <> 4 THEN
+                    RAISE EXCEPTION 'this draft did not pass every gate'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;"""
+            if release_rule
+            else ""
+        )
+        return f"""
+            CREATE OR REPLACE FUNCTION guard_human_action()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                turn_session uuid;
+                generated boolean;
+                refused_draft boolean;
+                stopped timestamptz;
+            BEGIN
+                SELECT session_id, {generated}, coalesce(refused, false)
+                INTO turn_session, generated, refused_draft
+                FROM public.turn_audit
+                WHERE turn_id = NEW.turn_id;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'turn is not known'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                IF NEW.session_id IS DISTINCT FROM turn_session THEN
+                    RAISE EXCEPTION 'turn is not in this session'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = turn_session
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;
+                IF NEW.action IN ('approve', 'edit') AND NOT generated THEN
+                    RAISE EXCEPTION 'the model did not run on this turn'
+                        USING ERRCODE = '{sqlstate}';
+                END IF;{approve}
+                RETURN NEW;
+            END;
+            $$
+            """

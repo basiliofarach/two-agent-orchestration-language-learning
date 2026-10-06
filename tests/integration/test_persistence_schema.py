@@ -228,7 +228,7 @@ class TestPersistenceSchema:
             AlembicRunner(PostgresUrl(fresh_database).sync()).upgrade()
             with (
                 connection.cursor() as cursor,
-                pytest.raises(psycopg.Error, match="turn_audit_generation_together"),
+                pytest.raises(psycopg.Error, match="turn_audit_generation_outcome"),
             ):
                 self._insert_learner_and_session(cursor)
                 self._insert_policy(cursor)

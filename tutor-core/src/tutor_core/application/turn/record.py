@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from tutor_core.application.turn.state import TurnGraphState
+from tutor_core.domain.audit.context_digest import CitedContextDigest
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.models.audit import (
     GATE_ORDER,
@@ -63,14 +64,18 @@ class TurnRecordBuilder:
     """Build the frozen record from the live state, then seal it.
 
     The record is a snapshot: later assignment to the live ``TurnState``
-    does not reach it (DEC-0010). Generation fields are present together
-    only when the model ran; a refusal before the model, or a halt before
-    generation, stores them as ``None`` (REQ-AUDIT).
+    does not reach it (DEC-0010). A halt before generation stores no
+    generation field. A refusal before the model stores its outcome — the
+    refusal text, disclosure and the flags that caused it — and no model
+    field, because no model ran (REQ-AUDIT).
     """
 
-    def __init__(self, hasher: AuditRecordHash, gates: GateRows) -> None:
+    def __init__(
+        self, hasher: AuditRecordHash, gates: GateRows, context: CitedContextDigest
+    ) -> None:
         self._hasher = hasher
         self._gates = gates
+        self._context = context
 
     def build(
         self,
@@ -98,6 +103,10 @@ class TurnRecordBuilder:
             "retrieved_context_ids": context_ids,
             "gate_evaluations": self._gates.rows(state.verdicts, recorded_at),
             "history_snapshot": turn.history,
+            "prompt_safety_flags": turn.prompt_safety_flags,
+            "context_digest": (
+                None if retrieved is None else self._context.digest(retrieved.snippets)
+            ),
             "policy_version": policy_version,
             "previous_record_hash": head.previous_record_hash,
             "record_hash": "unsealed",
@@ -111,17 +120,22 @@ class TurnRecordBuilder:
 
     def _generation(self, state: TurnGraphState) -> dict[str, object]:
         draft = state.draft
-        if draft is None or not draft.model_ran():
+        if draft is None:
             return {}
         unit = draft.unit
-        return {
-            "model_revision": draft.model_revision,
-            "template_version": draft.template_version,
-            "decoding_params": draft.decoding_params,
-            "output_before_checks": unit.output_before_checks,
+        outcome: dict[str, object] = {
             "output_after_checks": unit.output_after_checks,
             "ai_disclosure": unit.ai_disclosure,
             "refused": unit.refused,
             "safety_flags": draft.safety_flags,
+        }
+        if not draft.model_ran():
+            return outcome
+        return {
+            **outcome,
+            "model_revision": draft.model_revision,
+            "template_version": draft.template_version,
+            "decoding_params": draft.decoding_params,
+            "output_before_checks": unit.output_before_checks,
             "source_support": unit.support,
         }

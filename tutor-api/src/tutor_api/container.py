@@ -141,6 +141,7 @@ from tutor_core.application.services.session_surface import (
     SseEncoder,
     StreamSession,
 )
+from tutor_core.application.turn.baseline import SessionBaselineCalculator
 from tutor_core.application.turn.guarded_generation import (
     GenerateIfConsistent,
     GenerationGuard,
@@ -156,13 +157,18 @@ from tutor_core.application.turn.orchestrator import (
 )
 from tutor_core.application.turn.record import GateRows, TurnRecordBuilder
 from tutor_core.domain.audit.chain import ChainVerifier
+from tutor_core.domain.audit.context_digest import CitedContextDigest
 from tutor_core.domain.audit.record_hash import ActionRecordHash, AuditRecordHash
+from tutor_core.domain.gates.citation import VerdictCitation
 from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
 from tutor_core.domain.gates.context_permission import ContextPermissionGate
+from tutor_core.domain.gates.contradiction import SnippetContradiction
 from tutor_core.domain.gates.drift import DriftAnomalyGate
 from tutor_core.domain.gates.registry import GateRegistry
 from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
 from tutor_core.domain.models.learner import HistoryFieldSet
+from tutor_core.domain.policy.confidence import ConfidenceThreshold
+from tutor_core.domain.policy.rule_lookup import PolicyRuleLookup
 from tutor_core.domain.ports.audit_query import AuditQueryPort
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
@@ -203,22 +209,6 @@ class SettingsProvider(Provider):
 
     def create(self, resolved: Mapping[type, object]) -> object:
         return ApplicationSettings()
-
-
-class ClockProvider(Provider):
-    """The wall clock. Replay substitutes a fixed one (rule 7)."""
-
-    def provides(self) -> type:
-        return ClockPort
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.SINGLETON
-
-    def requires(self) -> tuple[type, ...]:
-        return ()
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return SystemClock()
 
 
 class CipherProvider(Provider):
@@ -287,22 +277,6 @@ class RedactionProvider(Provider):
         return RegexPiiRedactor(StandardPiiSteps().steps())
 
 
-class RecordHashProvider(Provider):
-    """The audit digest. Stateless, so shared."""
-
-    def provides(self) -> type:
-        return AuditRecordHash
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.SINGLETON
-
-    def requires(self) -> tuple[type, ...]:
-        return ()
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return AuditRecordHash()
-
-
 class EngineProvider(Provider):
     """The pool, as the application role. One per process.
 
@@ -322,60 +296,6 @@ class EngineProvider(Provider):
     def create(self, resolved: Mapping[type, object]) -> object:
         settings = cast(ApplicationSettings, resolved[ApplicationSettings])
         return DatabaseEngine(ApplicationDatabaseUrl(settings).value())
-
-
-class ConnectionProvider(Provider):
-    """The request's one connection. Request-scoped: never shared by learners."""
-
-    def provides(self) -> type:
-        return TransactionConnection
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (DatabaseEngine,)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return RequestConnection(cast(DatabaseEngine, resolved[DatabaseEngine]))
-
-
-class UnitOfWorkProvider(Provider):
-    """Commits or rolls back the request's connection."""
-
-    def provides(self) -> type:
-        return UnitOfWorkPort
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (TransactionConnection,)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return SqlAlchemyUnitOfWork(
-            cast(TransactionConnection, resolved[TransactionConnection])
-        )
-
-
-class AuditSinkProvider(Provider):
-    """Appends on the request's connection, inside its unit of work."""
-
-    def provides(self) -> type:
-        return AuditSinkPort
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (TransactionConnection, CipherPort, AuditRecordHash)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return PostgresAuditSink(
-            cast(TransactionConnection, resolved[TransactionConnection]),
-            cast(CipherPort, resolved[CipherPort]),
-            cast(AuditRecordHash, resolved[AuditRecordHash]),
-        )
 
 
 class KnowledgeBaseProvider(Provider):
@@ -472,24 +392,6 @@ class HistoryProvider(Provider):
         )
 
 
-class SessionProvider(Provider):
-    """The session check, on the request's connection, before retrieval."""
-
-    def provides(self) -> type:
-        return TutoringSessionPort
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (TransactionConnection,)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return PostgresTutoringSession(
-            cast(TransactionConnection, resolved[TransactionConnection])
-        )
-
-
 class PermissionGateProvider(Provider):
     """The gate that runs before retrieval. Request-scoped with the policy."""
 
@@ -500,13 +402,14 @@ class PermissionGateProvider(Provider):
         return Lifetime.REQUEST
 
     def requires(self) -> tuple[type, ...]:
-        return (PolicyArtifactPort, HistoryFieldSet)
+        return (PolicyArtifactPort, HistoryFieldSet, VerdictCitation)
 
     def create(self, resolved: Mapping[type, object]) -> object:
         return ContextPermissionGate(
             cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
             cast(HistoryFieldSet, resolved[HistoryFieldSet]),
             PrototypeCopy().permission_rules(),
+            cast(VerdictCitation, resolved[VerdictCitation]),
         )
 
 
@@ -520,7 +423,13 @@ class ConflictGateProvider(Provider):
         return Lifetime.REQUEST
 
     def requires(self) -> tuple[type, ...]:
-        return (PolicyArtifactPort, ApplicationSettings)
+        return (
+            PolicyArtifactPort,
+            ApplicationSettings,
+            VerdictCitation,
+            ConfidenceThreshold,
+            SnippetContradiction,
+        )
 
     def create(self, resolved: Mapping[type, object]) -> object:
         settings = cast(ApplicationSettings, resolved[ApplicationSettings])
@@ -532,6 +441,9 @@ class ConflictGateProvider(Provider):
             cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
             threshold,
             PrototypeCopy().conflict_rules(),
+            cast(VerdictCitation, resolved[VerdictCitation]),
+            cast(ConfidenceThreshold, resolved[ConfidenceThreshold]),
+            cast(SnippetContradiction, resolved[SnippetContradiction]),
         )
 
 
@@ -545,7 +457,7 @@ class SensitivityGateProvider(Provider):
         return Lifetime.REQUEST
 
     def requires(self) -> tuple[type, ...]:
-        return (PolicyArtifactPort,)
+        return (PolicyArtifactPort, VerdictCitation)
 
     def create(self, resolved: Mapping[type, object]) -> object:
         copy = PrototypeCopy()
@@ -553,6 +465,7 @@ class SensitivityGateProvider(Provider):
             cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
             copy.flagged_categories(),
             copy.sensitivity_rules(),
+            cast(VerdictCitation, resolved[VerdictCitation]),
         )
 
 
@@ -566,52 +479,16 @@ class DriftGateProvider(Provider):
         return Lifetime.REQUEST
 
     def requires(self) -> tuple[type, ...]:
-        return (PolicyArtifactPort,)
+        return (PolicyArtifactPort, VerdictCitation)
 
     def create(self, resolved: Mapping[type, object]) -> object:
         copy = PrototypeCopy()
         return DriftAnomalyGate(
             cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
             copy.drift_envelope(),
+            copy.session_envelope(),
             copy.drift_rules(),
-        )
-
-
-class RetrievalAgentProvider(Provider):
-    """Knowledge and history only. No model (REQ-COMP)."""
-
-    def provides(self) -> type:
-        return RetrievalAgent
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (KnowledgeBasePort, LearnerHistoryPort)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return DataRetrievalAgent(
-            cast(KnowledgeBasePort, resolved[KnowledgeBasePort]),
-            cast(LearnerHistoryPort, resolved[LearnerHistoryPort]),
-        )
-
-
-class RetrievalGuardProvider(Provider):
-    """Permission, then retrieval. A non-pass verdict does not retrieve."""
-
-    def provides(self) -> type:
-        return RetrievalGuard
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (ContextPermissionGate, RetrievalAgent)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return RetrieveIfPermitted(
-            cast(ContextPermissionGate, resolved[ContextPermissionGate]),
-            cast(RetrievalAgent, resolved[RetrievalAgent]),
+            cast(VerdictCitation, resolved[VerdictCitation]),
         )
 
 
@@ -740,25 +617,6 @@ class GenerationAgentProvider(Provider):
         )
 
 
-class GenerationGuardProvider(Provider):
-    """Conflict, then generation. A non-pass verdict does not call the model."""
-
-    def provides(self) -> type:
-        return GenerationGuard
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (ConflictAmbiguityGate, GenerationAgent)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return GenerateIfConsistent(
-            cast(ConflictAmbiguityGate, resolved[ConflictAmbiguityGate]),
-            cast(GenerationAgent, resolved[GenerationAgent]),
-        )
-
-
 class OrchestratorProvider(Provider):
     """The LangGraph turn. Request-scoped: its gates read this request's card."""
 
@@ -797,24 +655,6 @@ class OrchestratorProvider(Provider):
         )
 
 
-class RecordBuilderProvider(Provider):
-    """Seals the turn record. Stateless, so shared."""
-
-    def provides(self) -> type:
-        return TurnRecordBuilder
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.SINGLETON
-
-    def requires(self) -> tuple[type, ...]:
-        return (AuditRecordHash,)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return TurnRecordBuilder(
-            cast(AuditRecordHash, resolved[AuditRecordHash]), GateRows()
-        )
-
-
 class PrepareTurnProvider(Provider):
     """Redaction and scope cues. Stateless, so shared."""
 
@@ -832,74 +672,6 @@ class PrepareTurnProvider(Provider):
             cast(PiiRedactionPort, resolved[PiiRedactionPort]),
             cast(SafetyClassifierPort, resolved[SafetyClassifierPort]),
             PrototypeCopy().unvetted_source_categories(),
-        )
-
-
-class ExecuteTurnProvider(Provider):
-    """The turn's unit of work. Request-scoped: it holds the connection."""
-
-    def provides(self) -> type:
-        return ExecuteTurn
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (
-            UnitOfWorkPort,
-            TurnOrchestrator,
-            AuditSinkPort,
-            PolicyArtifactPort,
-            TurnRecordBuilder,
-            ClockPort,
-            TutoringSessionPort,
-        )
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return ExecuteTurn(
-            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
-            cast(TurnOrchestrator, resolved[TurnOrchestrator]),
-            cast(AuditSinkPort, resolved[AuditSinkPort]),
-            cast(PolicyArtifactPort, resolved[PolicyArtifactPort]),
-            cast(TurnRecordBuilder, resolved[TurnRecordBuilder]),
-            cast(ClockPort, resolved[ClockPort]),
-            cast(TutoringSessionPort, resolved[TutoringSessionPort]),
-        )
-
-
-class FinaliseTurnProvider(Provider):
-    """Maps the record to the dashboard's view. Stateless, so shared."""
-
-    def provides(self) -> type:
-        return FinaliseTurn
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.SINGLETON
-
-    def requires(self) -> tuple[type, ...]:
-        return ()
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return FinaliseTurn()
-
-
-class ConductTurnProvider(Provider):
-    """The use case the router walks: prepare, execute, finalise (DEC-0011)."""
-
-    def provides(self) -> type:
-        return ConductTurn
-
-    def lifetime(self) -> Lifetime:
-        return Lifetime.REQUEST
-
-    def requires(self) -> tuple[type, ...]:
-        return (PrepareTurn, ExecuteTurn, FinaliseTurn)
-
-    def create(self, resolved: Mapping[type, object]) -> object:
-        return ConductTurn(
-            cast(PrepareTurn, resolved[PrepareTurn]),
-            cast(ExecuteTurn, resolved[ExecuteTurn]),
-            cast(FinaliseTurn, resolved[FinaliseTurn]),
         )
 
 
@@ -936,39 +708,107 @@ class ApplicationContainer:
     def _request_path(self) -> tuple[Provider, ...]:
         return (
             self._settings,
-            ClockProvider(),
+            ConstructorProvider(
+                SystemClock, Lifetime.SINGLETON, (), provides=ClockPort
+            ),
             CipherProvider(),
             EmbeddingProvider(),
             RedactionProvider(),
-            RecordHashProvider(),
+            StatelessProvider(AuditRecordHash),
             EngineProvider(),
-            ConnectionProvider(),
-            UnitOfWorkProvider(),
-            AuditSinkProvider(),
+            ConstructorProvider(
+                RequestConnection,
+                Lifetime.REQUEST,
+                (DatabaseEngine,),
+                provides=TransactionConnection,
+            ),
+            ConstructorProvider(
+                SqlAlchemyUnitOfWork,
+                Lifetime.REQUEST,
+                (TransactionConnection,),
+                provides=UnitOfWorkPort,
+            ),
+            ConstructorProvider(
+                PostgresAuditSink,
+                Lifetime.REQUEST,
+                (TransactionConnection, CipherPort, AuditRecordHash),
+                provides=AuditSinkPort,
+            ),
             KnowledgeBaseProvider(),
             PolicyProvider(),
             HistoryFieldSetProvider(),
             HistoryProvider(),
-            SessionProvider(),
+            ConstructorProvider(
+                PostgresTutoringSession,
+                Lifetime.REQUEST,
+                (TransactionConnection,),
+                provides=TutoringSessionPort,
+            ),
             PermissionGateProvider(),
             ConflictGateProvider(),
             SensitivityGateProvider(),
             DriftGateProvider(),
-            RetrievalAgentProvider(),
-            RetrievalGuardProvider(),
+            ConstructorProvider(
+                DataRetrievalAgent,
+                Lifetime.REQUEST,
+                (KnowledgeBasePort, LearnerHistoryPort),
+                provides=RetrievalAgent,
+            ),
+            ConstructorProvider(
+                RetrieveIfPermitted,
+                Lifetime.REQUEST,
+                (ContextPermissionGate, RetrievalAgent),
+                provides=RetrievalGuard,
+            ),
             TemplateProvider(),
             LanguageModelProvider(),
             GrammarProvider(),
             SafetyProvider(),
             SourceSupportProvider(),
             GenerationAgentProvider(),
-            GenerationGuardProvider(),
+            ConstructorProvider(
+                GenerateIfConsistent,
+                Lifetime.REQUEST,
+                (ConflictAmbiguityGate, GenerationAgent),
+                provides=GenerationGuard,
+            ),
             OrchestratorProvider(),
-            RecordBuilderProvider(),
+            StatelessProvider(GateRows),
+            StatelessProvider(PolicyRuleLookup),
+            ConstructorProvider(
+                VerdictCitation, Lifetime.SINGLETON, (PolicyRuleLookup,)
+            ),
+            ConstructorProvider(
+                ConfidenceThreshold, Lifetime.SINGLETON, (PolicyRuleLookup,)
+            ),
+            StatelessProvider(SnippetContradiction),
+            StatelessProvider(CitedContextDigest),
+            ConstructorProvider(
+                TurnRecordBuilder,
+                Lifetime.SINGLETON,
+                (AuditRecordHash, GateRows, CitedContextDigest),
+            ),
             PrepareTurnProvider(),
-            ExecuteTurnProvider(),
-            FinaliseTurnProvider(),
-            ConductTurnProvider(),
+            StatelessProvider(SessionBaselineCalculator),
+            ConstructorProvider(
+                ExecuteTurn,
+                Lifetime.REQUEST,
+                (
+                    UnitOfWorkPort,
+                    TurnOrchestrator,
+                    AuditSinkPort,
+                    PolicyArtifactPort,
+                    TurnRecordBuilder,
+                    ClockPort,
+                    TutoringSessionPort,
+                    AuditQueryPort,
+                    SessionBaselineCalculator,
+                ),
+            ),
+            StatelessProvider(FinaliseTurn),
+            ConstructorProvider(
+                ConductTurn, Lifetime.REQUEST, (PrepareTurn, ExecuteTurn, FinaliseTurn)
+            ),
         )
 
     def _audit_read(self) -> tuple[Provider, ...]:
@@ -1021,7 +861,11 @@ class ApplicationContainer:
         directory = SessionDirectoryPort
         return (
             # Record a tutor action (REQ-DASH).
-            StatelessProvider(PrepareAction),
+            ConstructorProvider(
+                PrepareAction,
+                Lifetime.SINGLETON,
+                (PiiRedactionPort, SafetyClassifierPort),
+            ),
             ConstructorProvider(
                 ExecuteAction,
                 request,
@@ -1103,7 +947,14 @@ class ApplicationContainer:
             ConstructorProvider(
                 ExecuteReplay,
                 request,
-                (unit, audit, GenerationAgent, AuditRecordHash, DraftComparison),
+                (
+                    unit,
+                    audit,
+                    GenerationAgent,
+                    AuditRecordHash,
+                    DraftComparison,
+                    CitedContextDigest,
+                ),
             ),
             StatelessProvider(FinaliseReplay),
             ServiceProvider(ReplayTurn, PrepareReplay, ExecuteReplay, FinaliseReplay),
