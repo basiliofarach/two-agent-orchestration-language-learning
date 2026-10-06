@@ -12,6 +12,15 @@ dependencies = [
 [tool.uv]
 required-version = ">=0.12.5"
 
+# Pylint does not read pytest's pythonpath. These roots match it, so
+# tutor_core stays first-party beside tutor_api (ruff known-first-party).
+[tool.pylint.main]
+source-roots = ["tutor-core/src", "tutor-api/src"]
+
+[tool.pylint.imports]
+known-first-party = ["tutor_core", "tutor_api"]
+init-hook = "import sys; from pathlib import Path; root = next((p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'uv.lock').is_file()), None); sys.path[:0] = [str(root / 'tutor-core' / 'src'), str(root / 'tutor-api' / 'src')] if root is not None else []"
+
 [tool.uv.workspace]
 members = ["tutor-core", "tutor-api"]
 

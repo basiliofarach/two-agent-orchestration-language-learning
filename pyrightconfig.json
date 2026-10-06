@@ -1,0 +1,4 @@
+{
+  "extraPaths": ["tutor-core/src", "tutor-api/src"],
+  "pythonVersion": "3.12"
+}
