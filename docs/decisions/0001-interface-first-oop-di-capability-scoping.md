@@ -48,6 +48,14 @@ refuses a stopped session. The trigger function is `SECURITY DEFINER`
 because a row lock needs UPDATE privilege the application role must not
 hold; it reads `stopped_at` only, with a fixed `search_path`.
 
+*Amended:* 2026-10-06 — `HumanActionPort`, `AuditQueryPort` and
+`SessionDirectoryPort` added for the dashboard. The turn path still cannot
+open or stop a session through `TutoringSessionPort`. A stop is an append
+on `HumanActionPort`, which marks the session through a security-definer
+function so the request role gains no UPDATE on `tutoring_session`. The
+audit read and the session list are separate ports, so the generation
+agent is not handed the log or the directory.
+
 ## Context
 
 The prototype must produce *evidence* that Articles 10, 12, 14 and 15 are
@@ -84,6 +92,9 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `CorpusIngestionPort` | Record source, version, and review status | Curation only; no retrieval; no open web; no default review status | REQ-KB |
 | `LearnerHistoryPort` | Read minimal student-history fields | Read-only; field allowlist; reads only the requested fields; `read` is async | REQ-HISTORY |
 | `TutoringSessionPort` | Confirm the session is this learner's and still open | Read-only; no open, stop, or reassignment; on the enlisted connection before retrieval | REQ-MINOR, REQ-AUDIT |
+| `HumanActionPort` | Append approve, edit, override, or stop | Append-only; a stop marks the session in the same transaction; no update of `turn_audit` | REQ-DASH, REQ-AUDIT |
+| `AuditQueryPort` | Read sealed turn records and tutor actions | Read-only; not held by the generation agent | REQ-AUDIT |
+| `SessionDirectoryPort` | List sessions the dashboard can open | Read-only; `id`, `learner_id`, `stopped_at` only | REQ-DASH, REQ-MINOR |
 | `EmbeddingPort` | Text → vector | — | — |
 | `LanguageModelPort` | Prompt → completion | No retriever; `complete` is async local-model I/O; `revision` is the pinned SHA | REQ-COMP |
 | `PromptTemplatePort` | Build structured prompts; carry tone constraints | Fixed templates only | REQ-ACCURACY, REQ-MINOR |

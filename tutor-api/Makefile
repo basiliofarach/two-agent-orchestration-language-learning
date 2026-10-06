@@ -7,7 +7,7 @@ REPO := $(abspath ..)
 # prek and CI all resolve. Do not relocate it per-member.
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
-	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle
+	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
@@ -30,6 +30,7 @@ help:
 	@echo "  make migrate       apply every Alembic revision, as the owner role"
 	@echo "  make seed          publish the policy card, ingest the demo KB, enrol a learner"
 	@echo "  make serve         the API on http://127.0.0.1:8000 (docs at /docs)"
+	@echo "  make evidence      write the compliance pack to ../evidence"
 
 sync:
 	$(UV) --directory "$(REPO)" sync --frozen --group dev
@@ -76,6 +77,9 @@ migrate:
 
 seed:
 	$(RUN) python -m tutor_api.curation.prototype_seed
+
+evidence:
+	$(RUN) python -m tutor_api.evidence
 
 serve:
 	$(RUN) tutor-api

@@ -3,6 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
+from tutor_api.adapters.persistence.base import BaseRepository
 from tutor_core.domain.models.learner import LearnerId
 from tutor_core.domain.ports.tutoring_session import (
     SessionRejected,
@@ -11,7 +12,7 @@ from tutor_core.domain.ports.tutoring_session import (
 from tutor_core.domain.ports.unit_of_work import TransactionConnection
 
 
-class PostgresTutoringSession(TutoringSessionPort):
+class PostgresTutoringSession(BaseRepository, TutoringSessionPort):
     """One select, on the request connection. No insert, update, or delete.
 
     The application role can read ``id``, ``learner_id`` and ``stopped_at``
@@ -27,11 +28,11 @@ class PostgresTutoringSession(TutoringSessionPort):
         """
 
     def __init__(self, connection: TransactionConnection) -> None:
-        self._connection = connection
+        super().__init__(connection)
 
     async def require_active(self, session_id: UUID, learner_id: LearnerId) -> None:
         """Refuse before the caller retrieves or appends."""
-        row = await self._connection.fetch_one(
+        row = await self._fetch_one(
             self._ACTIVE,
             {"session_id": session_id},
         )

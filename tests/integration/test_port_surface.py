@@ -9,7 +9,6 @@ from types import ModuleType
 
 import tutor_core.domain.ports as ports_package
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
-from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
 class PortModules:
@@ -46,17 +45,21 @@ class PublicClasses:
 class TestPortSurface:
     def test_port_modules_are_abstract(self) -> None:
         modules = PortModules().load()
-        assert len(modules) == 18
+        assert len(modules) == 21
         classes = [
             cls for module in modules for cls in PublicClasses().in_module(module)
         ]
-        # 18 modules, 20 ports. unit_of_work.py also declares the work that
+        # 21 modules, 23 ports. unit_of_work.py also declares the work that
         # enlists in the port and the connection that work is given.
-        # tutoring_session.py also declares SessionRejected, the refusal
-        # the port raises. That refusal is not a second interface.
+        # tutoring_session.py declares SessionRejected. human_action.py
+        # declares ActionRejected. Those refusals are not interfaces.
         ports = [cls for cls in classes if issubclass(cls, ABC)]
-        assert len(ports) == 20
-        assert [cls for cls in classes if not issubclass(cls, ABC)] == [SessionRejected]
+        assert len(ports) == 23
+        refusals = [cls for cls in classes if not issubclass(cls, ABC)]
+        assert {cls.__name__ for cls in refusals} == {
+            "SessionRejected",
+            "ActionRejected",
+        }
         for cls in ports:
             assert cls.__abstractmethods__
 

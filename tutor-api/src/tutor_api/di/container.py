@@ -3,7 +3,14 @@
 from collections.abc import Callable
 from threading import RLock
 
-from tutor_api.di.lifetime import Lifetime, ScopeLeak, UnregisteredDependency
+from tutor_api.di.lifetime import (
+    DuplicateRegistration,
+    Lifetime,
+    RegistrationCycle,
+    ScopeClosed,
+    ScopeLeak,
+    UnregisteredDependency,
+)
 from tutor_api.di.provider import Provider
 
 
@@ -24,7 +31,8 @@ class LifetimeValidation:
         self._providers = providers
 
     def validate(self) -> None:
-        """Raise on the first unresolvable or scope-leaking registration."""
+        """Raise on a duplicate, a cycle, an unresolvable edge, or a leak."""
+        self._reject_duplicates()
         lifetimes = {
             provider.provides(): provider.lifetime() for provider in self._providers
         }
@@ -38,6 +46,49 @@ class LifetimeValidation:
                     and lifetimes[required] is Lifetime.REQUEST
                 ):
                     raise ScopeLeak(holder, required)
+        CycleSearch(
+            {provider.provides(): provider.requires() for provider in self._providers},
+            set(lifetimes),
+        ).walk_all()
+
+    def _reject_duplicates(self) -> None:
+        seen: set[type] = set()
+        for provider in self._providers:
+            provided = provider.provides()
+            if provided in seen:
+                raise DuplicateRegistration(provided)
+            seen.add(provided)
+
+
+class CycleSearch:
+    """Name the types on a registration loop (BE-22a)."""
+
+    def __init__(
+        self,
+        requires: dict[type, tuple[type, ...]],
+        known: set[type],
+    ) -> None:
+        self._requires = requires
+        self._known = known
+        self._visiting: list[type] = []
+        self._visited: set[type] = set()
+
+    def walk_all(self) -> None:
+        """Raise ``RegistrationCycle`` when a provider requires itself."""
+        for node in tuple(self._known):
+            self._walk(node)
+
+    def _walk(self, node: type) -> None:
+        if node in self._visited or node not in self._known:
+            return
+        if node in self._visiting:
+            start = self._visiting.index(node)
+            raise RegistrationCycle((*self._visiting[start:], node))
+        self._visiting.append(node)
+        for required in self._requires[node]:
+            self._walk(required)
+        self._visiting.pop()
+        self._visited.add(node)
 
 
 class RequestScope:
@@ -49,21 +100,33 @@ class RequestScope:
     describes it (DEC-0006). Two scopes share nothing request-scoped: one
     learner's request never receives another's connection. Singletons
     still come from the container.
+
+    ``close`` drops the cache. Services have no ``dispose``: the scope is
+    the request, and the next request opens another scope.
     """
 
     def __init__(self, build: Callable[[type, dict[type, object]], object]) -> None:
         self._build = build
         self._instances: dict[type, object] = {}
+        self._closed = False
 
     def resolve(self, requested: type) -> object:
         """Return ``requested``, built at most once in this scope."""
+        if self._closed:
+            raise ScopeClosed
         return self._build(requested, self._instances)
+
+    def close(self) -> None:
+        """Drop every request-scoped instance this scope built."""
+        self._instances.clear()
+        self._closed = True
 
 
 class Container:
     """The object graph. Constructed once per application, never at import."""
 
     def __init__(self, providers: tuple[Provider, ...]) -> None:
+        self._registered = providers
         self._providers = {provider.provides(): provider for provider in providers}
         self._singletons: dict[type, object] = {}
         # `Provide.__call__` is synchronous, so FastAPI runs it in a worker
@@ -76,7 +139,7 @@ class Container:
 
     def validate(self) -> None:
         """Check every registration before the application serves traffic."""
-        LifetimeValidation(tuple(self._providers.values())).validate()
+        LifetimeValidation(self._registered).validate()
 
     def resolve(self, requested: type) -> object:
         """Return the object registered for ``requested``.
@@ -93,8 +156,15 @@ class Container:
         """Open the scope one HTTP request resolves from."""
         return RequestScope(self._build)
 
-    def _build(self, requested: type, scoped: dict[type, object]) -> object:
+    def _build(
+        self,
+        requested: type,
+        scoped: dict[type, object],
+        stack: tuple[type, ...] = (),
+    ) -> object:
         with self._lock:
+            if requested in stack:
+                raise RegistrationCycle((*stack, requested))
             if requested in self._singletons:
                 return self._singletons[requested]
             if requested in scoped:
@@ -104,7 +174,7 @@ class Container:
                 raise UnregisteredDependency(Container, requested)
             created = provider.create(
                 {
-                    required: self._build(required, scoped)
+                    required: self._build(required, scoped, (*stack, requested))
                     for required in provider.requires()
                 }
             )

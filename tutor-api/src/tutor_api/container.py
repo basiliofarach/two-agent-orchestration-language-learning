@@ -38,9 +38,11 @@ from tutor_api.adapters.llm.ollama import (
     UrllibOllamaEndpoint,
 )
 from tutor_api.adapters.persistence.aes_gcm_envelope import AesGcmEnvelope
+from tutor_api.adapters.persistence.audit_query import PostgresAuditQuery
 from tutor_api.adapters.persistence.audit_sink import PostgresAuditSink
 from tutor_api.adapters.persistence.database import DatabaseEngine, RequestConnection
 from tutor_api.adapters.persistence.database_url import ApplicationDatabaseUrl
+from tutor_api.adapters.persistence.human_action import PostgresHumanAction
 from tutor_api.adapters.persistence.knowledge_base import (
     CitedSources,
     CosineConfidence,
@@ -52,6 +54,7 @@ from tutor_api.adapters.persistence.learner_history import (
     PostgresLearnerHistory,
 )
 from tutor_api.adapters.persistence.schema import BaseSchema
+from tutor_api.adapters.persistence.session_directory import PostgresSessionDirectory
 from tutor_api.adapters.persistence.tutoring_session import PostgresTutoringSession
 from tutor_api.adapters.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tutor_api.adapters.persistence.versioned_policy import (
@@ -75,6 +78,29 @@ from tutor_core.application.services.conduct_turn import (
     FinaliseTurn,
     PrepareTurn,
 )
+from tutor_core.application.services.read_audit import (
+    ExecuteAudit,
+    FinaliseAudit,
+    PrepareAudit,
+    ReadAudit,
+)
+from tutor_core.application.services.record_human_action import (
+    ExecuteAction,
+    FinaliseAction,
+    PrepareAction,
+    RecordHumanAction,
+)
+from tutor_core.application.services.session_surface import (
+    ExecuteSessionList,
+    ExecuteStream,
+    FinaliseSessionList,
+    FinaliseStream,
+    ListSessions,
+    PrepareSessionList,
+    PrepareStream,
+    SseEncoder,
+    StreamSession,
+)
 from tutor_core.application.turn.guarded_generation import (
     GenerateIfConsistent,
     GenerationGuard,
@@ -89,17 +115,21 @@ from tutor_core.application.turn.orchestrator import (
     TurnOrchestrator,
 )
 from tutor_core.application.turn.record import GateRows, TurnRecordBuilder
+from tutor_core.domain.audit.chain import ChainVerifier
 from tutor_core.domain.audit.record_hash import AuditRecordHash
 from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
 from tutor_core.domain.gates.context_permission import ContextPermissionGate
 from tutor_core.domain.gates.drift import DriftAnomalyGate
+from tutor_core.domain.gates.registry import GateRegistry
 from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
 from tutor_core.domain.models.learner import HistoryFieldSet
+from tutor_core.domain.ports.audit_query import AuditQueryPort
 from tutor_core.domain.ports.audit_sink import AuditSinkPort
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.embedding import EmbeddingPort
 from tutor_core.domain.ports.grammar_check import GrammarCheckPort
+from tutor_core.domain.ports.human_action import HumanActionPort
 from tutor_core.domain.ports.knowledge_base import KnowledgeBasePort
 from tutor_core.domain.ports.language_model import LanguageModelPort
 from tutor_core.domain.ports.learner_history import LearnerHistoryPort
@@ -107,6 +137,7 @@ from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
+from tutor_core.domain.ports.session_directory import SessionDirectoryPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
 from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
@@ -698,19 +729,29 @@ class OrchestratorProvider(Provider):
 
     def requires(self) -> tuple[type, ...]:
         return (
+            ContextPermissionGate,
             RetrievalGuard,
+            ConflictAmbiguityGate,
             GenerationGuard,
             SensitivityHighStakesGate,
             DriftAnomalyGate,
         )
 
     def create(self, resolved: Mapping[type, object]) -> object:
+        registry = GateRegistry(
+            (
+                cast(ContextPermissionGate, resolved[ContextPermissionGate]),
+                cast(ConflictAmbiguityGate, resolved[ConflictAmbiguityGate]),
+                cast(SensitivityHighStakesGate, resolved[SensitivityHighStakesGate]),
+                cast(DriftAnomalyGate, resolved[DriftAnomalyGate]),
+            )
+        )
         return LangGraphTurnOrchestrator(
             TurnNodes(
                 cast(RetrievalGuard, resolved[RetrievalGuard]),
                 cast(GenerationGuard, resolved[GenerationGuard]),
-                cast(SensitivityHighStakesGate, resolved[SensitivityHighStakesGate]),
-                cast(DriftAnomalyGate, resolved[DriftAnomalyGate]),
+                registry.at("sensitivity_and_high_stakes"),
+                registry.at("drift_and_anomaly"),
             )
         )
 
@@ -821,6 +862,382 @@ class ConductTurnProvider(Provider):
         )
 
 
+class AuditQueryProvider(Provider):
+    """Reads the log on the request connection. No write."""
+
+    def provides(self) -> type:
+        return AuditQueryPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection, CipherPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresAuditQuery(
+            cast(TransactionConnection, resolved[TransactionConnection]),
+            cast(CipherPort, resolved[CipherPort]),
+        )
+
+
+class HumanActionProvider(Provider):
+    """Appends a tutor action on the request connection."""
+
+    def provides(self) -> type:
+        return HumanActionPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection, CipherPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresHumanAction(
+            cast(TransactionConnection, resolved[TransactionConnection]),
+            cast(CipherPort, resolved[CipherPort]),
+        )
+
+
+class SessionDirectoryProvider(Provider):
+    """Lists sessions from the columns the role may select."""
+
+    def provides(self) -> type:
+        return SessionDirectoryPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (TransactionConnection,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PostgresSessionDirectory(
+            cast(TransactionConnection, resolved[TransactionConnection])
+        )
+
+
+class ChainVerifierProvider(Provider):
+    """Checks a session chain. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return ChainVerifier
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (AuditRecordHash,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ChainVerifier(cast(AuditRecordHash, resolved[AuditRecordHash]))
+
+
+class SseEncoderProvider(Provider):
+    """Encodes event frames. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return SseEncoder
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return SseEncoder()
+
+
+class PrepareActionProvider(Provider):
+    """Shapes a tutor action. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PrepareAction
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PrepareAction()
+
+
+class ExecuteActionProvider(Provider):
+    """Writes the action. Request-scoped: it holds the connection."""
+
+    def provides(self) -> type:
+        return ExecuteAction
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (UnitOfWorkPort, AuditQueryPort, HumanActionPort, ClockPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ExecuteAction(
+            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
+            cast(AuditQueryPort, resolved[AuditQueryPort]),
+            cast(HumanActionPort, resolved[HumanActionPort]),
+            cast(ClockPort, resolved[ClockPort]),
+        )
+
+
+class FinaliseActionProvider(Provider):
+    """Returns the recorded action. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return FinaliseAction
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return FinaliseAction()
+
+
+class RecordHumanActionProvider(Provider):
+    """The tutor-decision use case. Request-scoped with its execute stage."""
+
+    def provides(self) -> type:
+        return RecordHumanAction
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PrepareAction, ExecuteAction, FinaliseAction)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return RecordHumanAction(
+            cast(PrepareAction, resolved[PrepareAction]),
+            cast(ExecuteAction, resolved[ExecuteAction]),
+            cast(FinaliseAction, resolved[FinaliseAction]),
+        )
+
+
+class PrepareAuditProvider(Provider):
+    """Shapes an audit read. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PrepareAudit
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PrepareAudit()
+
+
+class ExecuteAuditProvider(Provider):
+    """Reads the log. Request-scoped: it holds the connection."""
+
+    def provides(self) -> type:
+        return ExecuteAudit
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (UnitOfWorkPort, AuditQueryPort, ChainVerifier)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ExecuteAudit(
+            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
+            cast(AuditQueryPort, resolved[AuditQueryPort]),
+            cast(ChainVerifier, resolved[ChainVerifier]),
+        )
+
+
+class FinaliseAuditProvider(Provider):
+    """Returns the audit view. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return FinaliseAudit
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return FinaliseAudit()
+
+
+class ReadAuditProvider(Provider):
+    """The audit-read use case."""
+
+    def provides(self) -> type:
+        return ReadAudit
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PrepareAudit, ExecuteAudit, FinaliseAudit)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ReadAudit(
+            cast(PrepareAudit, resolved[PrepareAudit]),
+            cast(ExecuteAudit, resolved[ExecuteAudit]),
+            cast(FinaliseAudit, resolved[FinaliseAudit]),
+        )
+
+
+class PrepareSessionListProvider(Provider):
+    """Shapes a session list. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PrepareSessionList
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PrepareSessionList()
+
+
+class ExecuteSessionListProvider(Provider):
+    """Lists sessions. Request-scoped: it holds the connection."""
+
+    def provides(self) -> type:
+        return ExecuteSessionList
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (UnitOfWorkPort, SessionDirectoryPort)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ExecuteSessionList(
+            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
+            cast(SessionDirectoryPort, resolved[SessionDirectoryPort]),
+        )
+
+
+class FinaliseSessionListProvider(Provider):
+    """Returns the session list. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return FinaliseSessionList
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return FinaliseSessionList()
+
+
+class ListSessionsProvider(Provider):
+    """The session-list use case."""
+
+    def provides(self) -> type:
+        return ListSessions
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PrepareSessionList, ExecuteSessionList, FinaliseSessionList)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ListSessions(
+            cast(PrepareSessionList, resolved[PrepareSessionList]),
+            cast(ExecuteSessionList, resolved[ExecuteSessionList]),
+            cast(FinaliseSessionList, resolved[FinaliseSessionList]),
+        )
+
+
+class PrepareStreamProvider(Provider):
+    """Shapes an event stream. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return PrepareStream
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return PrepareStream()
+
+
+class ExecuteStreamProvider(Provider):
+    """Reads the log into frames. Request-scoped: it holds the connection."""
+
+    def provides(self) -> type:
+        return ExecuteStream
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (UnitOfWorkPort, AuditQueryPort, SseEncoder)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ExecuteStream(
+            cast(UnitOfWorkPort, resolved[UnitOfWorkPort]),
+            cast(AuditQueryPort, resolved[AuditQueryPort]),
+            cast(SseEncoder, resolved[SseEncoder]),
+        )
+
+
+class FinaliseStreamProvider(Provider):
+    """Returns the event body. Stateless, so shared."""
+
+    def provides(self) -> type:
+        return FinaliseStream
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return ()
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return FinaliseStream()
+
+
+class StreamSessionProvider(Provider):
+    """The event-stream use case."""
+
+    def provides(self) -> type:
+        return StreamSession
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.REQUEST
+
+    def requires(self) -> tuple[type, ...]:
+        return (PrepareStream, ExecuteStream, FinaliseStream)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return StreamSession(
+            cast(PrepareStream, resolved[PrepareStream]),
+            cast(ExecuteStream, resolved[ExecuteStream]),
+            cast(FinaliseStream, resolved[FinaliseStream]),
+        )
+
+
 class ApplicationContainer:
     """Build the object graph. Nothing is constructed at import.
 
@@ -874,4 +1291,25 @@ class ApplicationContainer:
             ExecuteTurnProvider(),
             FinaliseTurnProvider(),
             ConductTurnProvider(),
+            AuditQueryProvider(),
+            HumanActionProvider(),
+            SessionDirectoryProvider(),
+            ChainVerifierProvider(),
+            SseEncoderProvider(),
+            PrepareActionProvider(),
+            ExecuteActionProvider(),
+            FinaliseActionProvider(),
+            RecordHumanActionProvider(),
+            PrepareAuditProvider(),
+            ExecuteAuditProvider(),
+            FinaliseAuditProvider(),
+            ReadAuditProvider(),
+            PrepareSessionListProvider(),
+            ExecuteSessionListProvider(),
+            FinaliseSessionListProvider(),
+            ListSessionsProvider(),
+            PrepareStreamProvider(),
+            ExecuteStreamProvider(),
+            FinaliseStreamProvider(),
+            StreamSessionProvider(),
         )

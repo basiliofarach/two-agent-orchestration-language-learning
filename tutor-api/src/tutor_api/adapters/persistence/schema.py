@@ -1058,3 +1058,110 @@ class HistoryOutcomeEncryption:
         connection.execute(
             "ALTER TABLE learner_history_event RENAME COLUMN correct_plain TO correct"
         )
+
+
+class MarkSessionStopped:
+    """Let the application stop a session without an UPDATE grant.
+
+    ``FOR UPDATE`` on ``tutoring_session`` needs a privilege the request
+    role must not hold (the same reason ``TurnAuditOpenSession`` is a
+    security definer). The function sets ``stopped_at`` and the sealed
+    ``stop_reason``, and raises ``SS001`` when the session is missing or
+    already stopped. The turns already written stay (REQ-DASH).
+    """
+
+    SQLSTATE = "SS001"
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Create the function and grant execute to the application role."""
+        role = self._role.identifier()
+        return (
+            f"""
+            CREATE FUNCTION mark_session_stopped(
+                target uuid,
+                stopped timestamptz,
+                reason bytea
+            )
+            RETURNS void
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                existing timestamptz;
+            BEGIN
+                SELECT stopped_at INTO existing
+                FROM public.tutoring_session
+                WHERE id = target
+                FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'session is not known'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                IF existing IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{self.SQLSTATE}';
+                END IF;
+                UPDATE public.tutoring_session
+                SET stopped_at = stopped,
+                    stop_reason = reason
+                WHERE id = target;
+            END;
+            $$
+            """,
+            "REVOKE ALL ON FUNCTION mark_session_stopped(uuid, timestamptz, bytea) "
+            "FROM PUBLIC",
+            f"GRANT EXECUTE ON FUNCTION mark_session_stopped(uuid, timestamptz, bytea) "
+            f"TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the function. Sessions already stopped stay stopped."""
+        return (
+            "DROP FUNCTION IF EXISTS mark_session_stopped(uuid, timestamptz, bytea)",
+        )
+
+
+class RetentionPurgeLog:
+    """An append-only note that a learner's personal rows were purged.
+
+    ``learner_id`` is the pseudonymous key. ``purged_at`` is an instant.
+    ``history_rows`` is a count. None of those is learner text, so the
+    table has no ciphertext column and no plaintext exemption to register
+    (DEC-0012). The purge itself is the owner's job; this role may only
+    read the log (REQ-MINOR).
+    """
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Create the log, refuse updates, and grant select."""
+        role = self._role.identifier()
+        return (
+            """
+            CREATE TABLE retention_purge (
+                id uuid PRIMARY KEY,
+                learner_id uuid NOT NULL,
+                purged_at timestamptz NOT NULL,
+                history_rows integer NOT NULL
+            )
+            """,
+            """
+            CREATE TRIGGER retention_purge_append_only
+                BEFORE UPDATE OR DELETE ON retention_purge
+                FOR EACH ROW EXECUTE FUNCTION reject_audit_mutation()
+            """,
+            f"REVOKE ALL ON TABLE retention_purge FROM PUBLIC, {role}",
+            f"GRANT SELECT ON TABLE retention_purge TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Drop the log. A downgrade does not restore purged rows."""
+        return (
+            "DROP TRIGGER IF EXISTS retention_purge_append_only ON retention_purge",
+            "DROP TABLE IF EXISTS retention_purge",
+        )

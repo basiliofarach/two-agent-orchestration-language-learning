@@ -1,17 +1,45 @@
 """ASGI entrypoint. The object graph is built here and nowhere else."""
 
-from fastapi import FastAPI
+from collections.abc import Awaitable, Callable
+
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
 
 from tutor_api.container import ApplicationContainer, SettingsProvider
 from tutor_api.di.container import Container
 from tutor_api.routers.health import HealthRouter
+from tutor_api.routers.sessions import (
+    ActionRouter,
+    AuditRouter,
+    EventRouter,
+    SessionRouter,
+)
 from tutor_api.routers.turns import (
     SessionRejectionHandler,
     TurnFailureHandler,
     TurnRouter,
 )
 from tutor_core.application.services.conduct_turn import TurnFailed
+from tutor_core.domain.ports.human_action import ActionRejected
 from tutor_core.domain.ports.tutoring_session import SessionRejected
+
+
+class RequestScopeCloser:
+    """Drop the request's scope after the response. Services have no dispose."""
+
+    async def __call__(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Close the scope the dependencies opened, then return the response."""
+        try:
+            response = await call_next(request)
+        finally:
+            scope = getattr(request.state, "scope", None)
+            if scope is not None:
+                scope.close()
+        return response
 
 
 class Application:
@@ -40,8 +68,14 @@ class Application:
         app.state.container = self._container
         app.include_router(HealthRouter().router())
         app.include_router(TurnRouter().router())
+        app.include_router(SessionRouter().router())
+        app.include_router(AuditRouter().router())
+        app.include_router(ActionRouter().router())
+        app.include_router(EventRouter().router())
         app.add_exception_handler(TurnFailed, TurnFailureHandler())
         app.add_exception_handler(SessionRejected, SessionRejectionHandler())
+        app.add_exception_handler(ActionRejected, SessionRejectionHandler())
+        app.middleware("http")(RequestScopeCloser())
         return app
 
 

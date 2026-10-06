@@ -8,12 +8,14 @@ import pytest
 
 from tutor_core.domain.models.retrieval import RedactedRetrievalRequest
 from tutor_core.domain.ports import (
+    AuditQueryPort,
     AuditSinkPort,
     CipherPort,
     ClockPort,
     CorpusIngestionPort,
     EmbeddingPort,
     GrammarCheckPort,
+    HumanActionPort,
     KnowledgeBasePort,
     LanguageModelPort,
     LearnerHistoryPort,
@@ -23,6 +25,7 @@ from tutor_core.domain.ports import (
     PolicyPublicationPort,
     PromptTemplatePort,
     SafetyClassifierPort,
+    SessionDirectoryPort,
     SourceSupportPort,
     TransactionalWork,
     TutoringSessionPort,
@@ -52,6 +55,9 @@ class PortCatalogue:
             SafetyClassifierPort,
             SourceSupportPort,
             TutoringSessionPort,
+            HumanActionPort,
+            AuditQueryPort,
+            SessionDirectoryPort,
             OversightGatePort,
             AuditSinkPort,
             PolicyArtifactPort,
@@ -126,6 +132,9 @@ class TestPortMethodSurface:
             PolicyPublicationPort.publish,
             LearnerHistoryPort.read,
             TutoringSessionPort.require_active,
+            HumanActionPort.append,
+            AuditQueryPort.for_session,
+            SessionDirectoryPort.listed,
             OversightGatePort.evaluate,
             LanguageModelPort.complete,
         ):

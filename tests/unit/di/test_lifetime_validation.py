@@ -5,7 +5,13 @@ from collections.abc import Mapping
 import pytest
 
 from tutor_api.di.container import LifetimeValidation
-from tutor_api.di.lifetime import Lifetime, ScopeLeak, UnregisteredDependency
+from tutor_api.di.lifetime import (
+    DuplicateRegistration,
+    Lifetime,
+    RegistrationCycle,
+    ScopeLeak,
+    UnregisteredDependency,
+)
 from tutor_api.di.provider import Provider
 
 
@@ -100,3 +106,33 @@ class TestLifetimeValidation:
             LifetimeValidation(providers).validate()
         assert "GenerationAgent" in str(raised.value)
         assert "LearnerHistory" in str(raised.value)
+
+    def test_a_cycle_is_refused_at_startup(self) -> None:
+        providers = (
+            StubProvider(PolicyCard, Lifetime.SINGLETON, (GenerationAgent,)),
+            StubProvider(GenerationAgent, Lifetime.SINGLETON, (PolicyCard,)),
+        )
+        with pytest.raises(RegistrationCycle, match="PolicyCard -> GenerationAgent"):
+            LifetimeValidation(providers).validate()
+
+    def test_a_duplicate_registration_is_refused(self) -> None:
+        providers = (
+            StubProvider(PolicyCard, Lifetime.SINGLETON),
+            StubProvider(PolicyCard, Lifetime.REQUEST),
+        )
+        with pytest.raises(DuplicateRegistration, match="PolicyCard"):
+            LifetimeValidation(providers).validate()
+
+    def test_a_singleton_reaching_request_state_through_another_singleton_is_refused(
+        self,
+    ) -> None:
+        class Middle:
+            """A singleton between the agent and the learner-bound history."""
+
+        providers = (
+            StubProvider(LearnerHistory, Lifetime.REQUEST),
+            StubProvider(Middle, Lifetime.SINGLETON, (LearnerHistory,)),
+            StubProvider(GenerationAgent, Lifetime.SINGLETON, (Middle,)),
+        )
+        with pytest.raises(ScopeLeak, match="Middle"):
+            LifetimeValidation(providers).validate()
