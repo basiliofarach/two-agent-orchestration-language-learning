@@ -46,6 +46,7 @@ class DriftRuleIds(BaseModel):
 
     within_envelope: str = Field(min_length=1)
     outside_envelope: str = Field(min_length=1)
+    outside_session_envelope: str = Field(min_length=1)
     evaluation_failed: str = Field(min_length=1)
 
 
@@ -54,8 +55,8 @@ class DriftEnvelope(BaseModel):
 
     Retrieval confidence and source support must not fall below their
     floors; the draft must not exceed its length or its grammar findings.
-    The envelope is per turn; the session scope ARCHITECTURE §13 names is a
-    deliberate limitation.
+    These bounds hold for any turn. :class:`SessionEnvelope` is the bound
+    relative to the session's own earlier turns.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -64,3 +65,22 @@ class DriftEnvelope(BaseModel):
     min_support_ratio: float = Field(ge=0.0, le=1.0)
     max_output_characters: int = Field(ge=1)
     max_grammar_findings: int = Field(ge=0)
+
+
+class SessionEnvelope(BaseModel):
+    """How far a turn may leave its session's norm (REQ-GATES, §13).
+
+    REQ-GATES scopes drift to the session. Once the session has
+    ``min_prior_turns`` drafts, a draft whose source support falls more than
+    ``max_support_drop`` below the session mean, or that is longer than
+    ``max_length_factor`` times the session's mean length, is outside it.
+    ``max_flagged_prompts`` earlier high-severity prompts in one session
+    are a pattern — repeated attempts — whatever this turn looks like.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    min_prior_turns: int = Field(ge=1)
+    max_support_drop: float = Field(ge=0.0, le=1.0)
+    max_length_factor: float = Field(ge=1.0)
+    max_flagged_prompts: int = Field(ge=1)

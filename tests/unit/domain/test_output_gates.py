@@ -11,8 +11,10 @@ from tutor_api.prototype import PrototypeCopy
 from tutor_core.domain.gates.citation import VerdictCitation
 from tutor_core.domain.gates.drift import DriftAnomalyGate
 from tutor_core.domain.gates.sensitivity import SensitivityHighStakesGate
-from tutor_core.domain.models.gate_rules import DriftEnvelope
+from tutor_core.domain.models.gate_rules import DriftEnvelope, SessionEnvelope
+from tutor_core.domain.models.session_baseline import SessionBaseline
 from tutor_core.domain.models.turn import TurnState
+from tutor_core.domain.policy.rule_lookup import PolicyRuleLookup
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
 from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 
@@ -29,18 +31,45 @@ class OutputGates:
             policy if policy is not None else CardPolicy(GateCard().build()),
             flagged,
             GateRules().sensitivity(),
+            VerdictCitation(PolicyRuleLookup()),
         )
 
     def drift(
         self,
         policy: PolicyArtifactPort | None = None,
         envelope: DriftEnvelope | None = None,
+        session: SessionEnvelope | None = None,
     ) -> DriftAnomalyGate:
         return DriftAnomalyGate(
             policy if policy is not None else CardPolicy(GateCard().build()),
             envelope if envelope is not None else self.loose(),
+            session if session is not None else self.session(),
             GateRules().drift(),
+            VerdictCitation(PolicyRuleLookup()),
         )
+
+    def session(self) -> SessionEnvelope:
+        return SessionEnvelope(
+            min_prior_turns=2,
+            max_support_drop=0.3,
+            max_length_factor=3.0,
+            max_flagged_prompts=2,
+        )
+
+    def in_session(self, **baseline: object) -> TurnState:
+        """The sample turn, after earlier turns summarised by ``baseline``."""
+        turn = Samples().turn()
+        turn.session_baseline = SessionBaseline.model_validate(
+            {
+                "prior_turns": 3,
+                "generated_turns": 3,
+                "mean_support_ratio": 0.5,
+                "mean_output_characters": 17.0,
+                "flagged_prompts": 0,
+                **baseline,
+            }
+        )
+        return turn
 
     def loose(self) -> DriftEnvelope:
         return DriftEnvelope(
@@ -118,7 +147,7 @@ class TestSensitivityHighStakesGate:
 
     def test_the_gate_holds_no_classifier_and_no_sink(self) -> None:
         names = set(inspect.signature(SensitivityHighStakesGate).parameters)
-        assert names == {"policy", "flagged_categories", "rules"}
+        assert names == {"policy", "flagged_categories", "rules", "citation"}
         assert OutputGates().sensitivity().name() == "sensitivity_and_high_stakes"
 
 
@@ -164,6 +193,41 @@ class TestDriftAnomalyGate:
         await OutputGates().drift().evaluate(turn)
         assert turn.model_dump() == before
 
+    async def test_the_first_turn_of_a_session_is_judged_per_turn_only(
+        self,
+    ) -> None:
+        verdict = await OutputGates().drift().evaluate(Samples().turn())
+        assert verdict.decision == "pass"
+
+    async def test_support_well_below_the_session_norm_pauses(self) -> None:
+        turn = OutputGates().in_session(mean_support_ratio=1.0)
+        verdict = await OutputGates().drift().evaluate(turn)
+        assert verdict.decision == "pause"
+        assert verdict.policy_rule_id == GateRules().drift().outside_session_envelope
+
+    async def test_a_reply_far_longer_than_the_session_norm_pauses(self) -> None:
+        turn = OutputGates().in_session(mean_output_characters=4.0)
+        verdict = await OutputGates().drift().evaluate(turn)
+        assert verdict.decision == "pause"
+        assert verdict.policy_rule_id == GateRules().drift().outside_session_envelope
+
+    async def test_repeated_flagged_prompts_pause_an_ordinary_turn(self) -> None:
+        turn = OutputGates().in_session(flagged_prompts=2)
+        verdict = await OutputGates().drift().evaluate(turn)
+        assert verdict.decision == "pause"
+        assert verdict.policy_rule_id == GateRules().drift().outside_session_envelope
+
+    async def test_a_turn_in_line_with_its_session_passes(self) -> None:
+        verdict = await OutputGates().drift().evaluate(OutputGates().in_session())
+        assert verdict.decision == "pass"
+
+    async def test_too_few_earlier_drafts_do_not_set_a_norm(self) -> None:
+        turn = OutputGates().in_session(
+            generated_turns=1, mean_support_ratio=1.0, mean_output_characters=1.0
+        )
+        verdict = await OutputGates().drift().evaluate(turn)
+        assert verdict.decision == "pass"
+
     def test_the_prototype_envelope_is_a_valid_envelope(self) -> None:
         envelope = PrototypeCopy().drift_envelope()
         assert envelope.max_output_characters > 0
@@ -173,6 +237,10 @@ class TestDriftAnomalyGate:
 class TestVerdictCitation:
     def test_a_rule_the_card_does_not_name_raises(self) -> None:
         with pytest.raises(ValueError, match="has no rule"):
-            VerdictCitation("drift_and_anomaly").cite(
-                GateCard().build(), "pass", "no-such-rule", "reason"
+            VerdictCitation(PolicyRuleLookup()).cite(
+                "drift_and_anomaly",
+                GateCard().build(),
+                "pass",
+                "no-such-rule",
+                "reason",
             )

@@ -60,6 +60,8 @@ class AuditRecordDecoder(RowReader):
             "record_hash": str(row[16]),
             "recorded_at": self._instant(row[17]),
             "history_snapshot": self._sealed.open_optional_json(row[18]),
+            "prompt_safety_flags": self._sealed.open_optional_json(row[19]),
+            "context_digest": row[20],
             "gate_evaluations": tuple(self._gate(gate) for gate in gates),
         }
         try:
@@ -124,7 +126,7 @@ class PostgresAuditQuery(BaseRepository, AuditQueryPort):
             output_before_checks, output_after_checks, ai_disclosure,
             refused, safety_flags, source_support,
             policy_version, previous_record_hash, record_hash, recorded_at,
-            history_snapshot
+            history_snapshot, prompt_safety_flags, context_digest
         """
 
     _TURNS = f"""

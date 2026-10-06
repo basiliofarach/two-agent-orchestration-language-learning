@@ -33,8 +33,10 @@ from tutor_api.retention.__main__ import RetentionMain
 from tutor_api.retention.purge import PurgeLog, RetentionPurge
 from tutor_core.application.evaluation.rubric import (
     Rubric,
+    RubricScore,
     ScenarioCase,
     ScenarioCatalogue,
+    ScenarioObservation,
     ScenarioObserver,
 )
 from tutor_core.domain.audit.chain import ChainVerifier
@@ -367,15 +369,12 @@ class RubricReport:
             handle.write(json.dumps(line, sort_keys=True) + "\n")
 
 
-class TestScriptedScenarios:
-    """REQ-EVAL: eight cases, scored on what the pipeline actually did."""
+class ScenarioRun:
+    """One case through the real API, scored and written to the report."""
 
-    @pytest.mark.parametrize(
-        "case", ScenarioCatalogue().cases(), ids=lambda case: case.name
-    )
-    async def test_the_case_scores_full_marks(
+    async def scored(
         self, fresh_database: str, case: ScenarioCase
-    ) -> None:
+    ) -> tuple[ScenarioObservation, RubricScore]:
         served = Served(fresh_database, RecordingModel(case.completion))
         await served.install()
         for client in served.client():
@@ -394,9 +393,52 @@ class TestScriptedScenarios:
                 "observed": observed.model_dump(mode="json"),
             }
         )
+        return observed, score
+
+
+# Known misses of the regex classifier (ARCHITECTURE §13). Strict: a detector
+# that starts catching one turns this into a failure, so the record is updated
+# rather than silently flattering.
+_KNOWN_MISSES = {
+    "out_of_scope_prompt_paraphrase": "no pattern for 'google'",
+    "safety_sensitive_prompt_paraphrase": "no pattern for 'you are at <level>'",
+    "prompt_injection_paraphrase": "no pattern for 'disregard what you were told'",
+}
+
+
+class TestScriptedScenarios:
+    """REQ-EVAL: eight cases and three paraphrases, scored on observed behaviour."""
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in ScenarioCatalogue().cases() if c.variant == "canonical"],
+        ids=lambda case: case.name,
+    )
+    async def test_the_case_scores_full_marks(
+        self, fresh_database: str, case: ScenarioCase
+    ) -> None:
+        observed, score = await ScenarioRun().scored(fresh_database, case)
         assert observed.halted_at == case.expected_gate
         assert observed.model_calls == case.expect_model_calls
-        assert score.total() == 5, score
+        assert score.full_marks(), score
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            pytest.param(
+                c,
+                id=c.name,
+                marks=pytest.mark.xfail(strict=True, reason=_KNOWN_MISSES[c.name]),
+            )
+            for c in ScenarioCatalogue().cases()
+            if c.variant == "paraphrase"
+        ],
+    )
+    async def test_the_paraphrase_scores_full_marks(
+        self, fresh_database: str, case: ScenarioCase
+    ) -> None:
+        _, score = await ScenarioRun().scored(fresh_database, case)
+        assert score.full_marks(), score
 
 
 class TestRetention:
@@ -532,6 +574,34 @@ class TestOperatorCommands:
         assert (
             "Chain verification: intact" in (destination / "article-12.md").read_text()
         )
+        article_12 = (destination / "article-12.md").read_text()
+        exhibits = (destination / "exhibits.json").read_text()
+        assert "TurnAuditRecord" in article_12
+        assert "missing tail is not reported" in article_12
+        assert "LearnerHistoryPort" in (destination / "article-10.md").read_text()
+        assert "kb://spanish/greetings" in exhibits
+        assert "history_snapshot" not in exhibits
+        assert '"action": "approve"' in exhibits
+        assert (
+            "No comparison is invented" in (destination / "article-15.md").read_text()
+        )
+        assert manifest["field_comparison"] == "not_in_this_pack"
+        assert manifest["rubric_lines"] == 0
+
+    async def test_an_address_in_the_prompt_is_redacted_in_the_pack(
+        self, dashboard: Dashboard, tmp_path: Path
+    ) -> None:
+        address = "ada@example.com"
+        dashboard.turn(f"My email is {address}")
+        settings = TurnApp(dashboard.served.url).settings()
+        destination = tmp_path / "evidence"
+        code = await EvidenceMain(PackPaths(Path(__file__)).root(), destination).run(
+            settings
+        )
+        assert code == 0
+        packed = (destination / "exhibits.json").read_text()
+        assert address not in packed
+        assert "[REDACTED:email]" in packed
 
     async def test_a_missing_pin_is_reported_as_unpinned(self, tmp_path: Path) -> None:
         empty = tmp_path / "runtime.toml"

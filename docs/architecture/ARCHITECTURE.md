@@ -938,7 +938,7 @@ REQ-HISTORY). The gate count stays at four.
 | REQ-AUDIT hash chain | `previous_record_hash`, `record_hash` |
 | REQ-POLICY versioned policy artifact | `PolicyArtifactPort`, `policy_version` table |
 | REQ-POLICY rule version per verdict | `gate_evaluation.policy_rule_id` |
-| REQ-POLICY exportable trail | `routers/evidence.py` |
+| REQ-POLICY exportable trail | `tutor_api.evidence` (`make evidence`) |
 | REQ-GATES four gates | `domain/gates/`, four classes |
 | REQ-GATES / DEC-0004 deterministic backbone | LangGraph graph + checkpointer |
 | REQ-ACCURACY fixed prompt templates | `PromptTemplatePort`, `template_version()` |
@@ -953,11 +953,17 @@ REQ-HISTORY). The gate count stays at four.
 - **Single learner, single tutor per session.** Concurrent multi-learner
   supervision is out of scope.
 - **No authentication beyond a tutor identifier.** This prototype argues
-  oversight mechanics, not identity management.
+  oversight mechanics, not identity management. The identifier is asserted
+  by the caller, so the action chain proves which identifier was recorded
+  and that it was not altered afterwards — not who was at the keyboard.
 - **Drift gate is per-session.** REQ-GATES specifies monitoring behaviour
   against an expected envelope; true cross-cohort drift detection needs a
   longitudinal corpus this prototype does not collect. Report that bound with
   REQ-FIELD metrics.
+- **The safety classifier is a pattern list.** It catches the phrasings it
+  names and misses paraphrases. `make eval` runs a paraphrase of each
+  detector-facing case (5, 6, 8); each is a recorded miss today, marked as
+  an expected failure that turns into a test failure once it is caught.
 - **Non-discrimination review is manual.** The architecture supplies the query;
   the periodic review is a human activity.
 - **8B model.** Rubric scores will trail a frontier model; the object of study

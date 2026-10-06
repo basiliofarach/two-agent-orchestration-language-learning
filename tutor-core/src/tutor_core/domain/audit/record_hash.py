@@ -63,8 +63,9 @@ class AuditRecordHash:
         ``gate_evaluations`` is covered when present, so a gate row cannot be
         edited without breaking the chain. An empty tuple is omitted, which
         keeps the digest of a record sealed before gate rows existed.
-        ``history_snapshot`` is covered when present and omitted when
-        ``None``, for the same reason.
+        ``history_snapshot``, ``prompt_safety_flags`` and ``context_digest``
+        are covered when present and omitted when ``None``, for the same
+        reason.
 
         The prompt is written as the two fields the historical digest
         covered, ``learner_prompt_redacted`` and ``redacted_categories``.
@@ -80,6 +81,12 @@ class AuditRecordHash:
         if record.history_snapshot is None:
             # Rows sealed before the snapshot was recorded hashed no such key.
             del payload["history_snapshot"]
+        if record.prompt_safety_flags is None:
+            # Rows sealed before prompt flags were recorded hashed no such key.
+            del payload["prompt_safety_flags"]
+        if record.context_digest is None:
+            # Rows sealed before the context digest hashed no such key.
+            del payload["context_digest"]
         prompt = HistoricalPrompt.from_stored(record.learner_prompt)
         payload.update(prompt.model_dump(mode="json"))
         return json.dumps(

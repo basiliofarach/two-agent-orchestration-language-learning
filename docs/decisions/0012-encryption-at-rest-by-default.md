@@ -2,6 +2,12 @@
 
 *Status:* Accepted · *Date:* 2026-09-21
 
+*Amended:* 2026-10-08 — Revision `5e1f0c7a9b23` adds two `turn_audit`
+columns. `prompt_safety_flags` is ciphertext: the flags quote what the
+learner asked about. `context_digest` joins the digest exemption beside
+`record_hash`: it is a SHA-256 of the cited chunk text, which is vetted KB
+material, and replay must verify it without the key.
+
 ## Context
 
 The store holds four things (DEC-0006): the curated knowledge base and its
@@ -128,6 +134,7 @@ produce identical ciphertexts and equality is not leaked.
 | `turn_audit` | `learner_prompt_redacted` | Learner text, retained not digested (DEC-0002) |
 | `turn_audit` | `output_before_checks` | Content addressed to an identified minor |
 | `turn_audit` | `output_after_checks` | As above |
+| `turn_audit` | `prompt_safety_flags` | The classifier's flags on the prompt; a flag message can name what the learner asked about |
 | `human_action` | `edited_output` | As above, plus tutor attribution. The action is its own row, so this text is not written by updating `turn_audit`. |
 | `learner` | `proficiency_level` | Assessment of a named minor |
 | `learner_history_event` | `item_id`, `correct` | Per-learner performance. `correct` is ciphertext: a boolean outcome is personal data, and the plaintext-column trigger does not watch booleans. It is sealed as one byte (`0x01`/`0x00`): AES-GCM preserves length, so sealing `"true"`/`"false"` would reveal the outcome by ciphertext size. Revision `b7e2c4a91d08` converts existing rows in place. |
@@ -137,7 +144,7 @@ produce identical ciphertexts and equality is not leaked.
 | Column | Reason not encrypted |
 | --- | --- |
 | `embedding` (pgvector) | ANN search over ciphertext is not possible. Encrypting it forfeits retrieval and with it DEC-0006. Mitigated by layer one plus the fact that the indexed corpus is the vetted KB, not learner text. |
-| `record_hash`, `previous_record_hash` | Digests, not plaintext. Encrypting them adds no confidentiality and makes Art. 12 chain verification depend on key availability — trading an evidence guarantee for nothing. |
+| `record_hash`, `previous_record_hash`, `turn_audit.context_digest` | Digests, not plaintext. Encrypting them adds no confidentiality and makes Art. 12 chain verification depend on key availability — trading an evidence guarantee for nothing. |
 | `learner_id` | Already a pseudonymous UUID and a cross-table foreign key. Deterministic encryption would be required to preserve joins, and deterministic encryption leaks equality — strictly worse than the pseudonym. |
 | KB documents, `source_uri`, `version`, `review_status` | Not personal data. Public curated material with provenance. |
 | `policy_version`, `model_revision`, `recorded_at`, `turn_id` | Not personal data. Required in cleartext for the evidence pack and for replay selection. |

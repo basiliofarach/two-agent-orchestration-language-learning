@@ -30,9 +30,9 @@ workspace lockfile. It is not an operator cwd.
 
 | You want | Directory | Command |
 | --- | --- | --- |
-| Backend (sync, tests, Postgres, later the API) | `tutor-api/` | `make` |
+| Backend (sync, tests, Postgres, the API) | `tutor-api/` | `make` |
 | Integration tests on a throwaway Postgres | `tutor-api/` | `make sandbox-test` |
-| Frontend dashboard (when it exists) | `app/` | `pnpm dev` |
+| Frontend dashboard (not built yet) | `app/` | `pnpm dev` |
 
 Cursor's multi-root workspace can open a terminal in `tutor-api`. Use that.
 
@@ -56,15 +56,26 @@ Copy `tutor-api/.env.example` to `tutor-api/.env` to override credentials or
 the host port. This project defaults to **5433** because `learner-postgres`
 already publishes 5432 on this machine.
 
-There is **no HTTP API process in this phase**. After the API ticket (Phase 7):
+The HTTP API serves the turn, the tutor actions, the audit view and replay.
+Migrate and seed once, then serve:
 
 ```text
 cd tutor-api
-make sync
-uvx uv@0.12.5 run uvicorn tutor_api.main:app --reload --host 127.0.0.1 --port 8000
+make migrate
+make seed
+make serve
 ```
 
-The dashboard (Phase 8, DEC-0008) will live in `app/`. When that tree exists:
+`make serve` binds `127.0.0.1:8000`; the OpenAPI page is at `/docs`.
+`make eval` runs the REQ-EVAL cases and writes their scores to
+`evidence/rubric-scores.jsonl`, paraphrase misses included.
+`make evidence` writes the compliance pack to `evidence/`. When that
+rubric file is already there, Article 15 includes it and labels it
+synthetic-only. The command does not invent tutor-sourced scores.
+
+There is **no dashboard UI yet**: `app/` does not exist, and every tutor
+action is reached through the API. The dashboard (DEC-0008) will live in
+`app/`. When that tree exists:
 
 ```text
 cd app
@@ -88,9 +99,10 @@ outbound network off to confirm there is no egress.
 
 ## Checks
 
-Ruff reviews Python (`tutor-core`, `tutor-api`). import-linter enforces the
-hexagonal boundary. Biome reviews the dashboard once TypeScript files exist.
-The same hook config works with **prek** or **pre-commit**. CI runs those
+Ruff reviews Python (`tutor-core`, `tutor-api`). Strict mypy checks both
+packages. import-linter enforces the hexagonal boundary. Biome reviews the
+dashboard once TypeScript files exist. The same hook config works with
+**prek** or **pre-commit**. CI runs those
 hooks and `pytest` (coverage gate in `pyproject.toml`).
 
 ```text

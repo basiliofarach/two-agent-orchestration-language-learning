@@ -152,6 +152,16 @@ class TurnAuditRecord(Timestamped):
     with, kept so a replay renders the same prompt. It is ``None`` when
     retrieval never ran, and it was ``None`` on every record sealed before
     it was recorded.
+
+    ``prompt_safety_flags`` are the flags the classifier raised on the
+    redacted prompt, before any gate. They are recorded on every turn, a
+    permission stop included, so the log keeps why a turn was stopped or
+    refused. ``None`` marks a record sealed before they were recorded.
+
+    ``context_digest`` binds the record to the cited chunk text, not only
+    to the chunk ids: the corpus can change after the turn, and a replay
+    must detect that rather than render today's text. ``None`` when
+    retrieval never ran, and on records sealed before it was recorded.
     """
 
     turn_id: UUID
@@ -168,6 +178,8 @@ class TurnAuditRecord(Timestamped):
     refused: bool | None = None
     safety_flags: tuple[SafetyFlag, ...] | None = None
     source_support: SourceSupportReport | None = None
+    prompt_safety_flags: tuple[SafetyFlag, ...] | None = None
+    context_digest: str | None = Field(default=None, min_length=64, max_length=64)
     gate_evaluations: tuple[GateEvaluation, ...] = ()
     history_snapshot: LearnerHistorySnapshot | None = None
     policy_version: str = Field(min_length=1)
@@ -177,23 +189,44 @@ class TurnAuditRecord(Timestamped):
 
     @model_validator(mode="after")
     def generation_fields_agree(self) -> Self:
-        fields = (
+        """Model fields need an outcome; an outcome alone is a refusal.
+
+        The model group is what the model produced and how. The outcome
+        group is what generation decided: the text the tutor sees, the
+        disclosure, the refusal and its flags. A refusal before the model
+        has an outcome and no model group. It is still recorded, because
+        the flags that caused it are evidence (REQ-AUDIT).
+        """
+        model = (
             self.model_revision,
             self.template_version,
             self.decoding_params,
             self.output_before_checks,
+            self.source_support,
+        )
+        outcome = (
             self.output_after_checks,
             self.ai_disclosure,
             self.refused,
             self.safety_flags,
-            self.source_support,
         )
-        if any(field is not None for field in fields) and not all(
-            field is not None for field in fields
-        ):
-            msg = "a turn the model never ran carries no model revision and no outputs"
+        ran = self._together(model, "model fields are present together, or none")
+        decided = self._together(
+            outcome, "outcome fields are present together, or none"
+        )
+        if ran and not decided:
+            msg = "the model ran, so its outcome is recorded"
+            raise ValueError(msg)
+        if decided and not ran and self.refused is not True:
+            msg = "only a refusal has an outcome without the model"
             raise ValueError(msg)
         return self
+
+    def _together(self, fields: tuple[object, ...], message: str) -> bool:
+        present = tuple(field is not None for field in fields)
+        if any(present) and not all(present):
+            raise ValueError(message)
+        return all(present)
 
     @model_validator(mode="after")
     def one_evaluation_per_gate(self) -> Self:

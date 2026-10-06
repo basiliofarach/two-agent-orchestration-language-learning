@@ -73,7 +73,7 @@ class PrototypePlan:
     def plan(self, threshold: float) -> SeedPlan:
         """Return the plan. ``threshold`` must equal the gate's setting."""
         return SeedPlan(
-            policy_version="prototype-1",
+            policy_version="prototype-2",
             conflict_threshold=str(threshold),
             document_id=UUID("10000000-0000-4000-8000-000000000001"),
             document_uri="kb://spanish/greetings",

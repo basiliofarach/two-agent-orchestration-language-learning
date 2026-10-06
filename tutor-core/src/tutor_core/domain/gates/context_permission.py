@@ -36,11 +36,12 @@ class ContextPermissionGate(OversightGatePort):
         policy: PolicyArtifactPort,
         minimum: HistoryFieldSet,
         rules: PermissionRuleIds,
+        citation: VerdictCitation,
     ) -> None:
         self._policy = policy
         self._minimum = minimum
         self._rules = rules
-        self._citation = VerdictCitation(self.name())
+        self._citation = citation
 
     def name(self) -> str:
         """The stage name stored with the verdict."""
@@ -53,6 +54,7 @@ class ContextPermissionGate(OversightGatePort):
             return self._judge(card, turn)
         except Exception:
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.evaluation_failed,
@@ -63,6 +65,7 @@ class ContextPermissionGate(OversightGatePort):
         prompt = turn.learner_prompt
         if prompt is None or not prompt.text.strip():
             return self._citation.cite(
+                self.name(),
                 card,
                 "pause",
                 self._rules.indeterminate,
@@ -70,6 +73,7 @@ class ContextPermissionGate(OversightGatePort):
             )
         if turn.requires_unvetted_source:
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.unvetted_source,
@@ -77,12 +81,14 @@ class ContextPermissionGate(OversightGatePort):
             )
         if self._minimum.outside(turn.requested_history_fields):
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.history_outside_minimum,
                 "This question asks for student history we do not keep, so I stopped.",
             )
         return self._citation.cite(
+            self.name(),
             card,
             "pass",
             self._rules.in_scope,

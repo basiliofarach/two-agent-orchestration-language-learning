@@ -12,9 +12,12 @@ class ConfidenceThreshold:
     the card on each evaluation (REQ-GATES, REQ-POLICY).
     """
 
+    def __init__(self, lookup: PolicyRuleLookup) -> None:
+        self._lookup = lookup
+
     def parse(self, card: PolicyCard, rule_id: str) -> float:
         """Return the threshold the rule states."""
-        statement = PolicyRuleLookup().rule(card, rule_id).statement
+        statement = self._lookup.rule(card, rule_id).statement
         try:
             value = float(statement)
         except ValueError as exc:

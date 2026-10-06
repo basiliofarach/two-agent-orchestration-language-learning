@@ -12,6 +12,7 @@ from tutor_core.domain.models.gate_rules import (
     DriftRuleIds,
     PermissionRuleIds,
     SensitivityRuleIds,
+    SessionEnvelope,
 )
 from tutor_core.domain.models.safety import DecodingParams
 from tutor_core.domain.policy.policy_card import ArticleMapping, PolicyCard, PolicyRule
@@ -55,11 +56,26 @@ class PrototypeCopy:
         return DriftRuleIds(
             within_envelope="drift-within-envelope",
             outside_envelope="drift-outside-envelope",
+            outside_session_envelope="drift-outside-session-envelope",
             evaluation_failed="drift-evaluation-failed",
         )
 
+    def session_envelope(self) -> SessionEnvelope:
+        """The session envelope: drift relative to this session (REQ-GATES).
+
+        Two earlier drafts set a norm. Support may fall 0.3 below it and
+        length may triple it before the turn is held; two high-severity
+        prompts in one session hold every later turn for the tutor.
+        """
+        return SessionEnvelope(
+            min_prior_turns=2,
+            max_support_drop=0.3,
+            max_length_factor=3.0,
+            max_flagged_prompts=2,
+        )
+
     def drift_envelope(self) -> DriftEnvelope:
-        """The per-turn envelope (ARCHITECTURE §13 scopes drift per session)."""
+        """The envelope any turn must stay inside."""
         return DriftEnvelope(
             min_retrieval_confidence=0.3,
             min_support_ratio=0.5,
@@ -157,6 +173,11 @@ class PrototypePolicyCard:
                 ),
                 self._rule(
                     drift.outside_envelope, "Output outside the envelope pauses.", "15"
+                ),
+                self._rule(
+                    drift.outside_session_envelope,
+                    "A turn unlike its session pauses.",
+                    "15",
                 ),
             ),
             article_mappings=(

@@ -1,5 +1,7 @@
 """Stubs for the turn's collaborators, shared by unit and integration tests."""
 
+import hashlib
+
 from tests.support.samples import Samples
 from tests.support.scripted_model import ScriptedLanguageModel
 from tutor_core.application.agents.generation import ContentGenerationAgent
@@ -107,6 +109,24 @@ class RecordingModel(ScriptedLanguageModel):
         return await super().complete(prompt)
 
 
+class PromptEchoModel(RecordingModel):
+    """A model whose completion is a digest of the exact prompt it was given.
+
+    A constant completion reproduces whatever prompt a replay rebuilds, so it
+    cannot show that replay rebuilt the same one. This one answers the same
+    text only for the same rendered prompt, template version included.
+    """
+
+    async def complete(self, prompt: RenderedPrompt) -> ModelCompletion:
+        self.calls += 1
+        seen = f"{prompt.template_version}\n{prompt.text}".encode()
+        return ModelCompletion(
+            text=f"Echo {hashlib.sha256(seen).hexdigest()[:16]}.",
+            model_revision=self.revision(),
+            decoding_params=Samples().decoding(),
+        )
+
+
 class ScriptedGate(OversightGatePort):
     """A gate that returns one decision and counts its evaluations."""
 
@@ -135,9 +155,10 @@ class Agents:
         self,
         safety: SafetyClassifierPort | None = None,
         model: RecordingModel | None = None,
+        template: PromptTemplatePort | None = None,
     ) -> ContentGenerationAgent:
         return ContentGenerationAgent(
-            FixedTemplate(),
+            template if template is not None else FixedTemplate(),
             model if model is not None else RecordingModel(),
             FindingGrammar(),
             safety if safety is not None else FlaggingSafety(),

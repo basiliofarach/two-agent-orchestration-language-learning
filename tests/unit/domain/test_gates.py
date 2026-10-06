@@ -11,6 +11,7 @@ from tests.contract.test_port_contracts import OversightGatePortContract
 from tests.support.gate_card import BrokenPolicy, CardPolicy, GateCard, GateRules
 from tests.support.samples import Samples
 
+from tutor_core.domain.gates.citation import VerdictCitation
 from tutor_core.domain.gates.conflict import ConflictAmbiguityGate
 from tutor_core.domain.gates.context_permission import ContextPermissionGate
 from tutor_core.domain.gates.contradiction import SnippetContradiction
@@ -19,6 +20,18 @@ from tutor_core.domain.models.retrieval import RetrievalResult, Snippet
 from tutor_core.domain.policy.confidence import ConfidenceThreshold
 from tutor_core.domain.policy.rule_lookup import PolicyRuleLookup
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
+
+
+class Detectors:
+    """The collaborators the conflict gate is given, after its rule ids."""
+
+    def all(self) -> tuple[VerdictCitation, ConfidenceThreshold, SnippetContradiction]:
+        lookup = PolicyRuleLookup()
+        return (
+            VerdictCitation(lookup),
+            ConfidenceThreshold(lookup),
+            SnippetContradiction(),
+        )
 
 
 class Gates:
@@ -31,7 +44,9 @@ class Gates:
     ) -> ContextPermissionGate:
         card = policy if policy is not None else CardPolicy(GateCard().build())
         minimum = HistoryFieldSet.model_validate({"fields": fields})
-        return ContextPermissionGate(card, minimum, GateRules().permission())
+        return ContextPermissionGate(
+            card, minimum, GateRules().permission(), VerdictCitation(PolicyRuleLookup())
+        )
 
     def conflict(
         self,
@@ -40,7 +55,12 @@ class Gates:
         statement: str = "0.5",
     ) -> ConflictAmbiguityGate:
         card = policy if policy is not None else CardPolicy(GateCard().build(statement))
-        return ConflictAmbiguityGate(card, threshold, GateRules().conflict())
+        return ConflictAmbiguityGate(
+            card,
+            threshold,
+            GateRules().conflict(),
+            *Detectors().all(),
+        )
 
 
 class TestContextPermissionGateContract(OversightGatePortContract):
@@ -142,7 +162,7 @@ class TestContextPermissionGate:
 
     def test_the_gate_holds_no_retriever_history_or_audit_sink(self) -> None:
         names = set(inspect.signature(ContextPermissionGate).parameters)
-        assert names == {"policy", "minimum", "rules"}
+        assert names == {"policy", "minimum", "rules", "citation"}
         assert (
             ContextPermissionGate.name(Gates().permission()) == "context_and_permission"
         )
@@ -168,18 +188,25 @@ class TestConfidenceThreshold:
     def test_the_statement_is_the_threshold(self) -> None:
         card = GateCard().build("0.25")
         assert (
-            ConfidenceThreshold().parse(card, GateRules().conflict().threshold) == 0.25
+            ConfidenceThreshold(PolicyRuleLookup()).parse(
+                card, GateRules().conflict().threshold
+            )
+            == 0.25
         )
 
     def test_a_statement_that_is_not_a_number_raises(self) -> None:
         card = GateCard().build("high")
         with pytest.raises(ValueError, match="not a confidence threshold"):
-            ConfidenceThreshold().parse(card, GateRules().conflict().threshold)
+            ConfidenceThreshold(PolicyRuleLookup()).parse(
+                card, GateRules().conflict().threshold
+            )
 
     def test_a_threshold_outside_zero_to_one_raises(self) -> None:
         card = GateCard().build("1.5")
         with pytest.raises(ValueError, match="outside 0 to 1"):
-            ConfidenceThreshold().parse(card, GateRules().conflict().threshold)
+            ConfidenceThreshold(PolicyRuleLookup()).parse(
+                card, GateRules().conflict().threshold
+            )
 
     def test_a_missing_rule_raises(self) -> None:
         with pytest.raises(ValueError, match="has no rule"):
@@ -191,11 +218,11 @@ class TestConflictAmbiguityGate:
         policy = CardPolicy(GateCard().build())
         rules = GateRules().conflict()
         with pytest.raises(TypeError, match="float"):
-            ConflictAmbiguityGate(policy, True, rules)  # type: ignore[arg-type]
+            ConflictAmbiguityGate(policy, True, rules, *Detectors().all())  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="float"):
-            ConflictAmbiguityGate(policy, 1, rules)  # type: ignore[arg-type]
+            ConflictAmbiguityGate(policy, 1, rules, *Detectors().all())  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="between 0 and 1"):
-            ConflictAmbiguityGate(policy, 1.5, rules)
+            ConflictAmbiguityGate(policy, 1.5, rules, *Detectors().all())
 
     async def test_empty_retrieval_pauses(self) -> None:
         turn = Samples().turn()

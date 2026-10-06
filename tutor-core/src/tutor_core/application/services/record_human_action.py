@@ -11,10 +11,17 @@ from tutor_core.application.services.service import (
     PrepareHandler,
 )
 from tutor_core.domain.audit.record_hash import ActionRecordHash
-from tutor_core.domain.models.audit import HumanAction, TurnAuditRecord, TutorAction
+from tutor_core.domain.models.audit import (
+    GATE_ORDER,
+    HumanAction,
+    TurnAuditRecord,
+    TutorAction,
+)
 from tutor_core.domain.ports.audit_query import AuditQueryPort, TurnNotFound
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.human_action import ActionRejected, HumanActionPort
+from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
+from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.session_directory import (
     SessionDirectoryPort,
     SessionNotFound,
@@ -88,10 +95,18 @@ class PreparedAction(BaseModel):
 class ActionRules:
     """What a turn and its session must be for one action to be logged.
 
-    The database enforces the same rules (``HumanActionChain``); checking
-    here first gives the tutor a precise refusal instead of a constraint
-    name, and keeps the rule readable beside the use case. The trigger is
-    the backstop a request path cannot skip.
+    ``approve`` releases the model's draft as it stands, so it needs a
+    draft the model wrote, that the agent did not refuse, and that passed
+    all four gates. A held draft is released only through ``edit``, which
+    puts the tutor's own words on record, or set aside with ``override``
+    (Art. 14(4)(d)). Without this, a gate's ``pause`` or ``stop`` was a log
+    line the approve button ignored (REQ-GATES: advisory gates do not
+    support the claim).
+
+    The database enforces the same rules (``ReleaseRequiresPassedGates``);
+    checking here first gives the tutor a precise refusal instead of a
+    constraint name, and keeps the rule readable beside the use case. The
+    trigger is the backstop a request path cannot skip.
     """
 
     def check(
@@ -102,12 +117,24 @@ class ActionRules:
     ) -> None:
         """Raise ``ActionRejected`` when the action may not follow ``earlier``."""
         action = command.body.action
-        if action in {"approve", "edit"} and record.output_after_checks is None:
+        if action in {"approve", "edit"} and record.output_before_checks is None:
             msg = "the model did not run on this turn, so there is no draft to release"
+            raise ActionRejected(msg)
+        if action == "approve" and record.refused:
+            msg = "the agent refused this draft; edit or override it instead"
+            raise ActionRejected(msg)
+        if action == "approve" and not self._passed(record):
+            msg = "this draft did not pass every gate; edit or override it instead"
             raise ActionRejected(msg)
         if action != "stop" and any(done.decides() for done in earlier):
             msg = "this turn already has a tutor decision"
             raise ActionRejected(msg)
+
+    def _passed(self, record: TurnAuditRecord) -> bool:
+        rows = record.gate_evaluations
+        return len(rows) == len(GATE_ORDER) and all(
+            row.decision == "pass" for row in rows
+        )
 
 
 class ActionWork(TransactionalWork):
@@ -174,11 +201,38 @@ class ActionWork(TransactionalWork):
 
 
 class PrepareAction(PrepareHandler[HumanActionCommand, PreparedAction]):
-    """Accept a command the log can store. No read."""
+    """Redact and check a tutor's edited reply before anything stores it.
+
+    An edit is text that reaches the learner, written by the tutor rather
+    than the model, so it gets the controls the model's draft got at its
+    boundaries: PII redaction (REQ-MINOR), and the safety classifier, whose
+    high-severity flag refuses the edit as it refuses a draft. The raw
+    edit stops here, as the raw prompt stops in ``PrepareTurn``. No read.
+    """
+
+    def __init__(
+        self, redactor: PiiRedactionPort, classifier: SafetyClassifierPort
+    ) -> None:
+        self._redactor = redactor
+        self._classifier = classifier
 
     def run(self, command: HumanActionCommand) -> PreparedAction:
-        """Return the command. Validation already ran on the model."""
-        return PreparedAction(command=command)
+        """Return the command, its edited reply redacted, or raise."""
+        body = command.body
+        if body.edited_output is None:
+            return PreparedAction(command=command)
+        redacted = self._redactor.redact(body.edited_output).text
+        high = tuple(
+            flag
+            for flag in self._classifier.classify(redacted)
+            if flag.severity == "high"
+        )
+        if high:
+            reasons = " ".join(flag.message for flag in high)
+            msg = f"the edited reply cannot be released: {reasons}"
+            raise ActionRejected(msg)
+        edited = body.model_copy(update={"edited_output": redacted})
+        return PreparedAction(command=command.model_copy(update={"body": edited}))
 
 
 class ExecuteAction(ExecuteHandler[PreparedAction, RecordedAction]):

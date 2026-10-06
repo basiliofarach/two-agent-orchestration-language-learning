@@ -16,7 +16,9 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 class ConflictAmbiguityGate(OversightGatePort):
     """Pause before generation when the retrieved context will not support it.
 
-    ``threshold`` is a constructor argument. It is checked against the
+    ``threshold`` is a constructor argument, as are the threshold parser and
+    the contradiction detector, so a stronger detector is a registration
+    change, not an edit here. The threshold is checked against the
     threshold rule on the policy card; a mismatch fails closed. The gate
     holds no language model and no audit sink. It does not modify the turn.
 
@@ -36,6 +38,9 @@ class ConflictAmbiguityGate(OversightGatePort):
         policy: PolicyArtifactPort,
         threshold: float,
         rules: ConflictRuleIds,
+        citation: VerdictCitation,
+        confidence: ConfidenceThreshold,
+        contradiction: SnippetContradiction,
     ) -> None:
         if isinstance(threshold, bool) or not isinstance(threshold, float):
             msg = "confidence threshold must be a float"
@@ -46,7 +51,9 @@ class ConflictAmbiguityGate(OversightGatePort):
         self._policy = policy
         self._threshold = threshold
         self._rules = rules
-        self._citation = VerdictCitation(self.name())
+        self._citation = citation
+        self._confidence = confidence
+        self._contradiction = contradiction
 
     def name(self) -> str:
         """The stage name stored with the verdict."""
@@ -59,6 +66,7 @@ class ConflictAmbiguityGate(OversightGatePort):
             return self._judge(card, turn)
         except Exception:
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.evaluation_failed,
@@ -66,7 +74,7 @@ class ConflictAmbiguityGate(OversightGatePort):
             )
 
     def _judge(self, card: PolicyCard, turn: TurnState) -> GateVerdict:
-        published = ConfidenceThreshold().parse(card, self._rules.threshold)
+        published = self._confidence.parse(card, self._rules.threshold)
         if not math.isclose(published, self._threshold, abs_tol=1e-9):
             msg = "confidence threshold does not match the policy card"
             raise ValueError(msg)
@@ -76,13 +84,15 @@ class ConflictAmbiguityGate(OversightGatePort):
             raise ValueError(msg)
         if not retrieved.snippets:
             return self._citation.cite(
+                self.name(),
                 card,
                 "pause",
                 self._rules.empty,
                 "I found no reviewed material, so I did not write an answer.",
             )
-        if SnippetContradiction().found(retrieved.snippets):
+        if self._contradiction.found(retrieved.snippets):
             return self._citation.cite(
+                self.name(),
                 card,
                 "pause",
                 self._rules.contradiction,
@@ -90,12 +100,14 @@ class ConflictAmbiguityGate(OversightGatePort):
             )
         if retrieved.confidence < self._threshold:
             return self._citation.cite(
+                self.name(),
                 card,
                 "pause",
                 self._rules.low_confidence,
                 "The reviewed material is too uncertain, so I paused for you.",
             )
         return self._citation.cite(
+            self.name(),
             card,
             "pass",
             self._rules.sufficient,

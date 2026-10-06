@@ -30,6 +30,7 @@ class SensitivityHighStakesGate(OversightGatePort):
         policy: PolicyArtifactPort,
         flagged_categories: tuple[str, ...],
         rules: SensitivityRuleIds,
+        citation: VerdictCitation,
     ) -> None:
         if not flagged_categories:
             msg = "a sensitivity gate with no flagged category passes everything"
@@ -37,7 +38,7 @@ class SensitivityHighStakesGate(OversightGatePort):
         self._policy = policy
         self._flagged = flagged_categories
         self._rules = rules
-        self._citation = VerdictCitation(self.name())
+        self._citation = citation
 
     def name(self) -> str:
         """The stage name stored with the verdict."""
@@ -50,6 +51,7 @@ class SensitivityHighStakesGate(OversightGatePort):
             return self._judge(card, turn)
         except Exception:
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.evaluation_failed,
@@ -63,6 +65,7 @@ class SensitivityHighStakesGate(OversightGatePort):
             raise ValueError(msg)
         if generated.refused:
             return self._citation.cite(
+                self.name(),
                 card,
                 "stop",
                 self._rules.refused,
@@ -73,12 +76,14 @@ class SensitivityHighStakesGate(OversightGatePort):
         )
         if flagged:
             return self._citation.cite(
+                self.name(),
                 card,
                 "pause",
                 self._rules.flagged_category,
                 "This reply touches a sensitive topic, so I paused for you.",
             )
         return self._citation.cite(
+            self.name(),
             card,
             "pass",
             self._rules.routine,

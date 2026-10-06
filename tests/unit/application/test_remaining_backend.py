@@ -2,13 +2,16 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from tests.support.dashboard_stubs import SESSION_ID, SealedRecords
 from tests.support.samples import Samples
 
 from tutor_api.adapters.frozen_clock import FrozenClock
+from tutor_api.evidence.body import PackBody
 from tutor_api.evidence.pack import EvidencePack, EvidenceSources
+from tutor_api.evidence.rubric_file import RubricScores
 from tutor_core.application.evaluation.rubric import (
     EvaluationReport,
     Rubric,
@@ -64,6 +67,7 @@ def observation(case: ScenarioCase, **changes: object) -> ScenarioObservation:
     released = not held and not case.expect_refused
     fields: dict[str, object] = {
         "case_number": case.number,
+        "variant": case.variant,
         "halted_at": case.expected_gate,
         "status": "held_for_review" if held else "awaiting_tutor_approval",
         "refused": case.expect_refused,
@@ -81,7 +85,8 @@ def observation(case: ScenarioCase, **changes: object) -> ScenarioObservation:
 class TestRubric:
     def test_a_correct_pipeline_scores_full_marks_on_every_case(self) -> None:
         cases = ScenarioCatalogue().cases()
-        assert [case.number for case in cases] == list(range(1, 9))
+        canonical = [case.number for case in cases if case.variant == "canonical"]
+        assert canonical == list(range(1, 9))
         scores = tuple(Rubric().score(case, observation(case)) for case in cases)
         assert EvaluationReport(scores=scores).passed()
         assert {score.judge_signal for score in scores} == {"secondary"}
@@ -129,6 +134,46 @@ class TestRubric:
         cases = ScenarioCatalogue().cases()
         with pytest.raises(ValueError, match="different case"):
             Rubric().score(cases[0], observation(cases[1]))
+
+    def test_a_criterion_that_does_not_apply_is_not_a_free_point(self) -> None:
+        case = ScenarioCatalogue().cases()[3]
+        assert case.name == "ambiguous_prompt"
+        score = Rubric().score(case, observation(case))
+        assert score.source_support is None
+        assert score.age_appropriateness is None
+        assert score.total() == score.applicable() == 3
+
+    def test_a_held_draft_is_not_scored_on_source_support(self) -> None:
+        case = ScenarioCatalogue().cases()[5]
+        assert case.name == "safety_sensitive_prompt"
+        score = Rubric().score(case, observation(case))
+        assert score.source_support is None
+        assert score.age_appropriateness == 1
+
+    def test_one_failed_applicable_criterion_fails_the_report(self) -> None:
+        case = ScenarioCatalogue().cases()[0]
+        score = Rubric().score(case, observation(case, sources=0))
+        assert not EvaluationReport(scores=(score,)).passed()
+
+    def test_every_paraphrase_targets_a_canonical_case(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        canonical = {c.number: c for c in cases if c.variant == "canonical"}
+        paraphrases = [c for c in cases if c.variant == "paraphrase"]
+        assert {c.number for c in paraphrases} == {5, 6, 8}
+        for case in paraphrases:
+            twin = canonical[case.number]
+            assert case.prompt != twin.prompt or case.completion != twin.completion
+            assert case.expected_gate == twin.expected_gate
+            assert case.expect_refused == twin.expect_refused
+
+    def test_an_observation_of_another_variant_is_refused(self) -> None:
+        cases = ScenarioCatalogue().cases()
+        canonical = next(c for c in cases if c.number == 5)
+        paraphrase = next(
+            c for c in cases if c.number == 5 and c.variant == "paraphrase"
+        )
+        with pytest.raises(ValueError, match="different case"):
+            Rubric().score(canonical, observation(paraphrase))
 
     def test_the_report_is_synthetic_until_tutor_sourced(self) -> None:
         assert EvaluationReport(scores=()).label == "synthetic-only"
@@ -227,8 +272,8 @@ class TestEvidencePack:
         )
         early = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
         later = FrozenClock(datetime(2026, 1, 2, tzinfo=UTC))
-        first = EvidencePack(early).files(sources)
-        second = EvidencePack(later).files(sources)
+        first = EvidencePack(early).files(sources, PackBody.empty())
+        second = EvidencePack(later).files(sources, PackBody.empty())
         assert first.keys() == second.keys()
         for name in first:
             if name == "manifest.json":
@@ -237,8 +282,16 @@ class TestEvidencePack:
             else:
                 assert first[name] == second[name]
         assert "synthetic-only" in first["article-15.md"]
+        assert "No comparison is invented" in first["article-15.md"]
         assert "Chain verification: intact" in first["article-12.md"]
+        assert "TurnAuditRecord" in first["article-12.md"]
+        assert "missing tail is not reported" in first["article-12.md"]
+        assert "LearnerHistoryPort" in first["article-10.md"]
+        assert "HumanAction" in first["article-14.md"]
         assert "REQ-AUDIT" in first["article-12.md"]
+        manifest = json.loads(first["manifest.json"])
+        assert manifest["field_comparison"] == "not_in_this_pack"
+        assert manifest["rubric_lines"] == 0
 
     def test_the_manifest_is_json_even_when_a_value_has_a_quote(self) -> None:
         sources = EvidenceSources(
@@ -253,9 +306,51 @@ class TestEvidencePack:
             broken_sessions=("s-1",),
         )
         files = EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
-            sources
+            sources, PackBody.empty()
         )
         manifest = json.loads(files["manifest.json"])
         assert manifest["commit"] == 'abc"def'
         assert manifest["broken_sessions"] == ["s-1"]
         assert "Broken sessions: s-1" in files["article-12.md"]
+
+    def test_a_validated_label_is_rejected(self) -> None:
+        sources = EvidenceSources(
+            commit="abc",
+            lockfile_sha256="a" * 64,
+            model_revision="b" * 64,
+            runtime="3.12.0",
+            policy_version="prototype-1",
+            chain_status="intact",
+            field_label="validated",
+        )
+        with pytest.raises(ValueError, match="synthetic-only"):
+            EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
+                sources, PackBody.empty()
+            )
+
+    def test_supplied_scores_are_copied_and_a_comparison_is_not(
+        self, tmp_path: Path
+    ) -> None:
+        score = tmp_path / "rubric-scores.jsonl"
+        score.write_text('{"case": 1, "label": "synthetic-only"}\n', encoding="utf-8")
+        body = PackBody.empty().model_copy(
+            update={"rubric_lines": RubricScores(score).lines()}
+        )
+        sources = EvidenceSources(
+            commit="abc",
+            lockfile_sha256="a" * 64,
+            model_revision="b" * 64,
+            runtime="3.12.0",
+            policy_version="prototype-1",
+            chain_status="intact",
+            field_label="synthetic-only",
+        )
+        directory = tmp_path / "pack"
+        EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).write(
+            directory, sources, body
+        )
+        article = (directory / "article-15.md").read_text()
+        assert '"label":"synthetic-only"' in article
+        assert "No comparison is invented" in article
+        assert "validated" not in article
+        assert score.is_file()
