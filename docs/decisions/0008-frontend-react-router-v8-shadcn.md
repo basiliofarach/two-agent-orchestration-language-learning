@@ -15,7 +15,7 @@ A route-file convention colocating components with their endpoint was wanted:
 
 ## Decision
 
-**pnpm + Vite + React Router v8.2 in framework mode**, with file routing via
+**pnpm + Vite + React Router v8.4 in framework mode**, with file routing via
 `@react-router/fs-routes`. In `app/routes.ts`, the default-exported config is
 `flatRoutes()` from that package, satisfying `RouteConfig`.
 

@@ -32,7 +32,7 @@ workspace lockfile. It is not an operator cwd.
 | --- | --- | --- |
 | Backend (sync, tests, Postgres, the API) | `tutor-api/` | `make` |
 | Integration tests on a throwaway Postgres | `tutor-api/` | `make sandbox-test` |
-| Frontend dashboard (not built yet) | `app/` | `pnpm dev` |
+| Frontend dashboard | `app/` | `pnpm dev` |
 
 Cursor's multi-root workspace can open a terminal in `tutor-api`. Use that.
 
@@ -73,9 +73,9 @@ make serve
 rubric file is already there, Article 15 includes it and labels it
 synthetic-only. The command does not invent tutor-sourced scores.
 
-There is **no dashboard UI yet**: `app/` does not exist, and every tutor
-action is reached through the API. The dashboard (DEC-0008) will live in
-`app/`. When that tree exists:
+The dashboard scaffold (DEC-0008) lives in `app/`. Tutor screens are not
+built yet, so every tutor action is still reached through the API. From
+the scaffold:
 
 ```text
 cd app
