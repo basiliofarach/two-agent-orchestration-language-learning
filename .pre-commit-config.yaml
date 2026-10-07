@@ -22,6 +22,8 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # Generated, and multi-document under pnpm 12; pnpm validates it.
+        exclude: (^app/pnpm-lock\.yaml$)
       - id: check-toml
         exclude: (^uv\.lock$)
       - id: check-json
