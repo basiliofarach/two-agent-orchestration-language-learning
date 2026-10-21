@@ -143,6 +143,35 @@ test("an edit starts from the checked draft and is logged as the tutor's words",
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
 });
 
+test("wording typed while the page loads is not replaced by the draft", async ({
+  page,
+}) => {
+  // A cold dev server hydrates slowly. Hold the client modules so the tutor
+  // reaches the edit box first, then let React hydrate under them.
+  let release = () => {};
+  const loaded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\.(tsx?|jsx?|mjs)(\?.*)?$/, async (route) => {
+    await loaded;
+    await route.continue();
+  });
+  await page.goto(`/sessions/${COMPLETED}`, { waitUntil: "domcontentloaded" });
+  await page.getByText("Edit reply", { exact: true }).click();
+  const box = page.getByLabel("Edited reply");
+  await expect(box).toHaveValue(/The verb ser agrees with the subject\./);
+  const typedEarly = box.fill("Ser describes identity and permanent traits.");
+  release();
+  await typedEarly;
+  await page.waitForFunction(() => "__reactRouterRouteModules" in window);
+  await page.waitForLoadState("networkidle");
+  await expect(box).toHaveValue("Ser describes identity and permanent traits.");
+  await page.getByRole("button", { name: "Save edited reply" }).click();
+  await expect(
+    page.getByText("Ser describes identity and permanent traits."),
+  ).toBeVisible();
+});
+
 test("a decision taken in another tab reaches this one without a reload", async ({
   context,
 }) => {

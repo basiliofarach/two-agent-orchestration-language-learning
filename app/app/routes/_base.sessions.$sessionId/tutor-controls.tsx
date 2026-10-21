@@ -14,6 +14,7 @@ import { Panel, PanelNote } from "~/components/panel";
 import { Button, buttonVariants } from "~/components/ui/button";
 import { UtcTime } from "~/components/utc-time";
 import { TutorControlOffer } from "~/lib/tutor-controls";
+import { useHydrated } from "~/lib/use-hydrated";
 import type { ActionView, TurnView, TutorActionName } from "~/lib/view-models";
 
 const HINTS = {
@@ -52,6 +53,7 @@ export function TutorControls({
   const offer = TutorControlOffer.fromTurn(sessionOpen, turn, actions);
   const names = offer.names();
   const navigation = useNavigation();
+  const hydrated = useHydrated();
   const pending =
     navigation.state !== "idle" &&
     navigation.formData?.get("turnId") === turn.turnId
@@ -116,10 +118,15 @@ export function TutorControls({
                     required
                     rows={4}
                     defaultValue={turn.draft?.afterChecks ?? ""}
+                    readOnly={!hydrated}
+                    aria-busy={!hydrated}
                     aria-describedby={`${turn.turnId}-edit-hint`}
                     className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                   />
-                  <Button type="submit" disabled={pending !== null}>
+                  <Button
+                    type="submit"
+                    disabled={!hydrated || pending !== null}
+                  >
                     {pending === "edit" ? "Recording…" : "Save edited reply"}
                   </Button>
                 </div>

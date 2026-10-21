@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { createRoutesStub } from "react-router";
 import { afterEach, expect, it } from "vitest";
 
@@ -98,4 +99,35 @@ it("shows the recorded decision and no further decisions", async () => {
   expect(
     screen.getByRole("button", { name: "Confirm stop session", hidden: true }),
   ).toBeTruthy();
+});
+
+it("keeps the edit box read-only in the server render, until React owns it", async () => {
+  const view = await turn(FixtureTutorApi.turnIds.completed);
+  const Stub = createRoutesStub([
+    {
+      path: "/",
+      Component: () => (
+        <TutorControls
+          turn={view}
+          actions={[]}
+          sessionOpen
+          actionError={null}
+        />
+      ),
+    },
+  ]);
+  const html = renderToString(<Stub />);
+  expect(html).toMatch(/<textarea[^>]*readOnly=""/i);
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Save edited reply/);
+});
+
+it("lets the tutor type once the page is hydrated", async () => {
+  renderControls(await turn(FixtureTutorApi.turnIds.completed));
+  const box = await screen.findByLabelText<HTMLTextAreaElement>("Edited reply");
+  expect(box.readOnly).toBe(false);
+  expect(
+    screen
+      .getByRole("button", { name: "Save edited reply", hidden: true })
+      .hasAttribute("disabled"),
+  ).toBe(false);
 });
