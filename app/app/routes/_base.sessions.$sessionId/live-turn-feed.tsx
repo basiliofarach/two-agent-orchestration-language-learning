@@ -1,30 +1,68 @@
-import { useEffect, useState } from "react";
+import {
+  Check,
+  CircleDashed,
+  FileText,
+  type LucideIcon,
+  MessageSquare,
+  ShieldAlert,
+  UserCheck,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRevalidator } from "react-router";
 
-import { LiveTurnEvents } from "~/lib/live-turn-events";
+import { Panel, PanelNote } from "~/components/panel";
+import {
+  type LiveKind,
+  type LiveLine,
+  LiveTurnEvents,
+  LiveTurnSummary,
+} from "~/lib/live-turn-events";
+import type { ActionView, TurnView } from "~/lib/view-models";
 
 const KINDS = ["prompt", "gate", "halt", "skipped", "draft", "action"] as const;
+
+const ICONS: Record<LiveKind, { icon: LucideIcon; className: string }> = {
+  prompt: { icon: MessageSquare, className: "text-muted-foreground" },
+  gate: { icon: Check, className: "text-muted-foreground" },
+  halt: { icon: ShieldAlert, className: "text-destructive-text" },
+  skipped: { icon: CircleDashed, className: "text-muted-foreground" },
+  draft: { icon: FileText, className: "text-muted-foreground" },
+  action: { icon: UserCheck, className: "text-foreground" },
+};
 
 /**
  * Follows one session's event stream. Frames arrive on the BFF route, so
  * the browser never opens FastAPI. A dropped connection is EventSource's
  * own reconnect; ids already applied are not painted again.
+ *
+ * When the stream names a turn or an action the panels above do not show,
+ * the route revalidates once, so the tutor never reviews a stale turn.
  */
-export function LiveTurnFeed({ sessionId }: { sessionId: string }) {
-  const [lines, setLines] = useState<{ id: string; text: string }[]>([]);
+export function LiveTurnFeed({
+  sessionId,
+  turns,
+  actions,
+}: {
+  sessionId: string;
+  turns: TurnView[];
+  actions: ActionView[];
+}) {
+  const [lines, setLines] = useState<LiveLine[]>([]);
+  const revalidator = useRevalidator();
+  const revalidatedAt = useRef(0);
 
   useEffect(() => {
     const feed = new LiveTurnEvents();
     const source = new EventSource(`/sessions/${sessionId}/events`);
     const onEvent = (event: MessageEvent) => {
-      const text = feed.accept(String(event.data));
-      if (text === null) {
+      const line = feed.accept(String(event.data));
+      if (line === null) {
         return;
       }
-      const id = event.lastEventId || text;
       setLines((current) =>
-        current.some((line) => line.id === id)
+        current.some((item) => item.id === line.id)
           ? current
-          : [...current, { id, text }],
+          : [...current, line],
       );
     };
     for (const kind of KINDS) {
@@ -35,22 +73,55 @@ export function LiveTurnFeed({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  const halted = lines.some((line) => line.text.includes("checked and fired"));
-  const drafted = lines.some((line) => line.text.includes("draft updated"));
+  const summary = useMemo(() => new LiveTurnSummary(lines), [lines]);
+  const loadedTurnIds = useMemo(
+    () => turns.map((turn) => turn.turnId),
+    [turns],
+  );
+  const loadedActions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const action of actions) {
+      counts.set(action.turnId, (counts.get(action.turnId) ?? 0) + 1);
+    }
+    return counts;
+  }, [actions]);
+
+  useEffect(() => {
+    if (
+      revalidator.state === "idle" &&
+      lines.length > revalidatedAt.current &&
+      summary.behind(loadedTurnIds, loadedActions)
+    ) {
+      revalidatedAt.current = lines.length;
+      void revalidator.revalidate();
+    }
+  }, [lines, summary, loadedTurnIds, loadedActions, revalidator]);
 
   return (
-    <section aria-labelledby="live-turn-events" className="space-y-2">
-      <h2 id="live-turn-events" className="text-lg font-medium">
-        Live turn events
-      </h2>
+    <Panel title="Live turn events" level={2}>
       <div role="log" aria-label="Live turn events">
-        <ul className="space-y-1">
-          {lines.map((line) => (
-            <li key={line.id}>{line.text}</li>
-          ))}
-        </ul>
+        {lines.length === 0 ? (
+          <PanelNote>Waiting for the session's event stream.</PanelNote>
+        ) : (
+          <ol className="space-y-1.5 text-sm">
+            {lines.map((line) => {
+              const { icon: Icon, className } = ICONS[line.kind];
+              return (
+                <li key={line.id} className="flex gap-2">
+                  <Icon
+                    aria-hidden="true"
+                    className={`mt-0.5 size-4 shrink-0 ${className}`}
+                  />
+                  <span>{line.text}</span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
-      {halted && !drafted ? <p>Halted. The stream is quiet.</p> : null}
-    </section>
+      {summary.latestHalted() ? (
+        <PanelNote>Halted. The stream is quiet.</PanelNote>
+      ) : null}
+    </Panel>
   );
 }

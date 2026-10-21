@@ -43,6 +43,8 @@ export type DraftSegment =
 
 export type DraftView = {
   segments: DraftSegment[];
+  /** The checked draft as one string; what an edit starts from. */
+  afterChecks: string;
   beforeChecks: string | null;
   disclosure: string | null;
   refused: boolean;

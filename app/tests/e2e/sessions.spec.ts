@@ -78,16 +78,16 @@ test("approve and stop are logged, and a halted turn does not offer approve", as
   await page.goto(`/sessions/${HALTED}`);
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Override" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Stop session" }),
-  ).toBeVisible();
+  await expect(page.getByText("Stop session", { exact: true })).toBeVisible();
 
   await page.goto(`/sessions/${COMPLETED}`);
   const approve = page.getByRole("button", { name: "Approve" });
   await approve.focus();
   await expect(approve).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("Approved", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Approved", { exact: true }).first(),
+  ).toBeVisible();
   await expect(
     page.getByText("Tutor decision: approve by tutor"),
   ).toBeVisible();
@@ -95,10 +95,16 @@ test("approve and stop are logged, and a halted turn does not offer approve", as
   await expect(page.getByText(/approve by tutor/)).toBeVisible();
 
   await page.goto(`/sessions/${COMPLETED}`);
-  const stop = page.getByRole("button", { name: "Stop session" });
-  await stop.focus();
+  const confirm = page.getByRole("button", { name: "Confirm stop session" });
+  await expect(confirm).toBeHidden();
+  await page.getByText("Stop session", { exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("Stopped", { exact: true })).toBeVisible();
+  await expect(confirm).toBeVisible();
+  await confirm.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByText("Stopped", { exact: true }).first(),
+  ).toBeVisible();
   await expect(page.getByText("How do I use ser?")).toBeVisible();
   await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
 });
@@ -119,4 +125,44 @@ test("live events arrive without a reload and a halt stays quiet", async ({
   await expect(page.getByText("Halted. The stream is quiet.")).toBeVisible();
   await expect(halted).not.toContainText("draft updated");
   await expect(halted.getByText(/checked and fired \(stop\)/)).toHaveCount(1);
+});
+
+test("an edit starts from the checked draft and is logged as the tutor's words", async ({
+  page,
+}) => {
+  await page.goto(`/sessions/${COMPLETED}`);
+  await page.getByText("Edit reply", { exact: true }).click();
+  const box = page.getByLabel("Edited reply");
+  await expect(box).toHaveValue(/The verb ser agrees with the subject\./);
+  await box.fill("Ser describes identity and permanent traits.");
+  await page.getByRole("button", { name: "Save edited reply" }).click();
+  await expect(page.getByText("Edited", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("Ser describes identity and permanent traits."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+});
+
+test("a decision taken in another tab reaches this one without a reload", async ({
+  context,
+}) => {
+  const watching = await context.newPage();
+  await watching.goto(`/sessions/${COMPLETED}`);
+  const log = watching.getByRole("log", { name: "Live turn events" });
+  await expect(log).toContainText("draft updated");
+
+  const acting = await context.newPage();
+  await acting.goto(`/sessions/${COMPLETED}`);
+  await acting.getByRole("button", { name: "Approve" }).click();
+  await expect(
+    acting.getByText("Approved", { exact: true }).first(),
+  ).toBeVisible();
+
+  await expect(log).toContainText("tutor approve", { timeout: 10_000 });
+  await expect(
+    watching.getByText("Approved", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(watching.getByRole("button", { name: "Approve" })).toHaveCount(
+    0,
+  );
 });

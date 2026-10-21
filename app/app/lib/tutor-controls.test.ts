@@ -67,7 +67,7 @@ describe("LiveTurnEvents", () => {
       reason: null,
       action: null,
     });
-    expect(feed.accept(payload)).toBe("Turn 1 prompt received.");
+    expect(feed.accept(payload)?.text).toBe("Turn 1 prompt received.");
     expect(feed.accept(payload)).toBeNull();
   });
 
@@ -84,7 +84,7 @@ describe("LiveTurnEvents", () => {
         action: null,
       }),
     );
-    expect(line).toContain("checked and fired (stop)");
-    expect(line).not.toContain("draft updated");
+    expect(line?.text).toContain("checked and fired (stop)");
+    expect(line?.kind).toBe("halt");
   });
 });

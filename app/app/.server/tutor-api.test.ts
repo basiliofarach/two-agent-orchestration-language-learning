@@ -59,6 +59,44 @@ describe("HttpTutorApi", () => {
     });
   });
 
+  it("rejects a 409 with the backend's reason", async () => {
+    stubFetch(Response.json({ detail: "session is stopped" }, { status: 409 }));
+    await expect(
+      new HttpTutorApi("http://api.test/").recordAction({
+        sessionId: "s",
+        turnId: "t",
+        tutorId: "tutor",
+        action: "stop",
+        editedOutput: null,
+      }),
+    ).rejects.toThrow("session is stopped");
+  });
+
+  it("rejects a 422 with the validator message, not the status text", async () => {
+    stubFetch(
+      Response.json(
+        {
+          detail: [
+            {
+              loc: ["body", "edited_output"],
+              msg: "Value error, edited_output is required when the tutor edits",
+            },
+          ],
+        },
+        { status: 422, statusText: "Unprocessable Entity" },
+      ),
+    );
+    await expect(
+      new HttpTutorApi("http://api.test/").recordAction({
+        sessionId: "s",
+        turnId: "t",
+        tutorId: "tutor",
+        action: "edit",
+        editedOutput: " ",
+      }),
+    ).rejects.toThrow("edited_output is required when the tutor edits");
+  });
+
   it("forwards Last-Event-ID and returns the event body", async () => {
     const fetch = stubFetch(new Response("retry: 2000\n\n", { status: 200 }));
     const body = await new HttpTutorApi("http://api.test").events(

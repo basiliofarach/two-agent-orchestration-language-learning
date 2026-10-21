@@ -20,7 +20,7 @@ export function TurnSection({
   turn: TurnView;
   actions?: ActionView[];
   sessionOpen?: boolean;
-  actionError?: string | null;
+  actionError?: { action: string; message: string } | null;
 }) {
   const headingId = useId();
   return (

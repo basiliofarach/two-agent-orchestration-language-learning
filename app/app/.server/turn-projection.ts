@@ -6,7 +6,7 @@ import type {
   HumanActionJson,
   TurnRecordJson,
 } from "~/.server/tutor-api.types";
-import { GATE_ORDER, type GateName } from "~/lib/gates";
+import { GATE_LABELS, GATE_ORDER } from "~/lib/gates";
 import type {
   ActionView,
   DraftView,
@@ -16,13 +16,6 @@ import type {
   TurnStatusLabel,
   TurnView,
 } from "~/lib/view-models";
-
-const GATE_LABELS: Record<GateName, string> = {
-  context_and_permission: "Context and permission",
-  conflict_and_ambiguity: "Conflict and ambiguity",
-  sensitivity_and_high_stakes: "Sensitivity and high-stakes",
-  drift_and_anomaly: "Drift and anomaly",
-};
 
 /** Turns one audit record into the tutor-facing `TurnView`. */
 export class TurnProjection {
@@ -93,6 +86,7 @@ export class TurnProjection {
         record.source_support,
         citations,
       ),
+      afterChecks: record.output_after_checks,
       beforeChecks: record.output_before_checks,
       disclosure: record.ai_disclosure,
       refused,

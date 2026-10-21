@@ -119,7 +119,13 @@ export class FixtureTutorApi extends TutorApi {
       );
     }
     const sealed = this.seal(command);
-    return { action: sealed, setCookie: this.log.append(sealed).header() };
+    const log = this.log.append(sealed);
+    if (!log.fits()) {
+      throw new ActionRejected(
+        "the fixture log is full; clear the tutor_fixture_log cookie to start again",
+      );
+    }
+    return { action: sealed, setCookie: log.header() };
   }
 
   async events(sessionId: string, after: string | null): Promise<string> {

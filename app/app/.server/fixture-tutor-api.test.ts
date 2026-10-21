@@ -60,6 +60,14 @@ describe("FixtureTutorApi actions", () => {
     ).rejects.toBeInstanceOf(ActionRejected);
   });
 
+  it("refuses an edit the browser could not store, instead of losing it", async () => {
+    await expect(
+      new FixtureTutorApi().recordAction(
+        command("edit", completed, "x".repeat(5000)),
+      ),
+    ).rejects.toThrow("the fixture log is full");
+  });
+
   it("refuses a second decision on the same turn", async () => {
     const first = await new FixtureTutorApi().recordAction(command("approve"));
     const api = new FixtureTutorApi(FixtureLog.parse(first.setCookie));

@@ -12,6 +12,12 @@ import type { HumanActionJson } from "~/.server/tutor-api.types";
 export class FixtureLog {
   static readonly NAME = "tutor_fixture_log";
 
+  /**
+   * Browsers drop a cookie over 4096 bytes without telling the server, which
+   * would lose an action the tutor saw accepted. Refuse it instead.
+   */
+  static readonly MAX_HEADER_BYTES = 4000;
+
   static empty(): FixtureLog {
     return new FixtureLog([]);
   }
@@ -50,6 +56,10 @@ export class FixtureLog {
 
   append(action: HumanActionJson): FixtureLog {
     return new FixtureLog([...this.entries, action]);
+  }
+
+  fits(): boolean {
+    return Buffer.byteLength(this.header()) <= FixtureLog.MAX_HEADER_BYTES;
   }
 
   header(): string {

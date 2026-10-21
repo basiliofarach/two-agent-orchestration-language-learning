@@ -23,8 +23,9 @@ type Timed = {
  * The fixture's copy of tutor-core `SessionEvents` plus `SseEncoder`.
  * Live mode does not use it: the BFF forwards FastAPI's frames unchanged.
  *
- * A halted turn emits the halt and the gates that were not reached, and
- * then nothing else — no draft frame.
+ * A halted turn emits the halt and the gates that were not reached. A draft
+ * frame follows only when the record carries `output_after_checks`, the same
+ * rule as the backend encoder.
  */
 export class SessionEvents {
   static readonly RETRY_MILLISECONDS = 2000;

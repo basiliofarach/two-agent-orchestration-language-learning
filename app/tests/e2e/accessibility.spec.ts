@@ -38,7 +38,7 @@ test("gate state stays readable when colour is removed", async ({ page }) => {
 
 test("the sessions link shows a focus outline", async ({ page }) => {
   await page.goto(`/sessions/${COMPLETED}`);
-  const link = page.getByRole("link", { name: "Sessions" });
+  const link = page.getByRole("link", { name: "Sessions", exact: true });
   await link.focus();
   const width = await link.evaluate(
     (element) => getComputedStyle(element).outlineWidth,

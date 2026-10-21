@@ -99,13 +99,35 @@ export class HttpTutorApi extends TutorApi {
       const problem = (await response.json().catch(() => null)) as {
         detail?: unknown;
       } | null;
-      const detail =
-        problem !== null && typeof problem.detail === "string"
-          ? problem.detail
-          : response.statusText;
-      throw new ActionRejected(detail);
+      throw new ActionRejected(
+        this.detail(problem?.detail) ?? response.statusText,
+      );
     }
     throw new Response(response.statusText, { status: response.status });
+  }
+
+  /**
+   * A 409 carries `detail` as a string; a FastAPI 422 carries a list of
+   * validation errors. Either way the tutor reads the backend's words.
+   */
+  private detail(detail: unknown): string | null {
+    if (typeof detail === "string" && detail !== "") {
+      return detail;
+    }
+    if (!Array.isArray(detail)) {
+      return null;
+    }
+    const messages = detail
+      .map((item: unknown) =>
+        typeof item === "object" &&
+        item !== null &&
+        "msg" in item &&
+        typeof item.msg === "string"
+          ? item.msg
+          : null,
+      )
+      .filter((message): message is string => message !== null);
+    return messages.length === 0 ? null : messages.join("; ");
   }
 
   private url(segments: string[]): URL {
