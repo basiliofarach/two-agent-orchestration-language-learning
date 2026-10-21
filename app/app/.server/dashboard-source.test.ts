@@ -11,7 +11,7 @@ const { completed, halted } = FixtureTutorApi.sessionIds;
 /** Fixture data with the audit chain verdict replaced. */
 class BrokenChainApi extends FixtureTutorApi {
   constructor(
-    private readonly verdict: Omit<AuditJson, "records"> & {
+    private readonly verdict: Partial<Omit<AuditJson, "records">> & {
       records?: AuditJson["records"];
     },
   ) {
@@ -37,6 +37,7 @@ describe("DashboardSource", () => {
       learnerId: "10000000-0000-4000-8000-000000000001",
       open: true,
       startedAt: "2026-10-01T09:00:00Z",
+      stoppedAt: null,
     });
   });
 
@@ -58,6 +59,7 @@ describe("DashboardSource", () => {
     expect(screen.chainBreak).toEqual({
       turnId: FixtureTutorApi.turnIds.completed,
       reason: "tampered",
+      actionIndex: null,
     });
     expect(screen.turns).toHaveLength(1);
   });
@@ -89,6 +91,11 @@ describe("DashboardSource", () => {
     const screen = await source().auditTurn(FixtureTutorApi.turnIds.refused);
     expect(screen.recordIntact).toBe(true);
     expect(screen.turn.statusLabel).toBe("Refused");
+    expect(screen.chainBreak).toBeNull();
+    expect(screen.fields.map((field) => field.label)).toContain(
+      "Redacted learner prompt",
+    );
+    expect(screen.fields.map((field) => field.label)).toContain("Human action");
   });
 
   it("answers an unknown session with a 404 response", async () => {

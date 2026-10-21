@@ -7,10 +7,21 @@ import { GateTimeline } from "~/components/turn/gate-timeline";
 import { PromptPanel } from "~/components/turn/prompt-panel";
 import { SafetyFlagPanel } from "~/components/turn/safety-flag-panel";
 import { TurnStatusBadge } from "~/components/turn/turn-status-badge";
-import type { TurnView } from "~/lib/view-models";
+import type { ActionView, TurnView } from "~/lib/view-models";
+import { TutorControls } from "./tutor-controls";
 
 /** One turn as the tutor reviews it: what came in, what was used, what came out. */
-export function TurnSection({ turn }: { turn: TurnView }) {
+export function TurnSection({
+  turn,
+  actions = [],
+  sessionOpen = true,
+  actionError = null,
+}: {
+  turn: TurnView;
+  actions?: ActionView[];
+  sessionOpen?: boolean;
+  actionError?: string | null;
+}) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="space-y-4 border-t pt-6">
@@ -32,6 +43,12 @@ export function TurnSection({ turn }: { turn: TurnView }) {
         <SafetyFlagPanel flags={turn.flags} support={turn.support} />
       </div>
       <GateTimeline gates={turn.gates} policyVersion={turn.policyVersion} />
+      <TutorControls
+        turn={turn}
+        actions={actions.filter((action) => action.turnId === turn.turnId)}
+        sessionOpen={sessionOpen}
+        actionError={actionError}
+      />
     </section>
   );
 }

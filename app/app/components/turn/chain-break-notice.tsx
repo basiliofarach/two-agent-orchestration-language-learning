@@ -14,7 +14,7 @@ export function ChainBreakNotice({ chainBreak }: { chainBreak: ChainBreak }) {
   return (
     <div
       role="alert"
-      className="flex gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-destructive"
+      className="flex gap-3 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-destructive-text"
     >
       <ShieldAlert aria-hidden="true" className="mt-0.5 size-5 shrink-0" />
       <div>

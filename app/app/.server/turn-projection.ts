@@ -3,10 +3,12 @@ import type {
   CitedSnippetJson,
   GateDecision,
   GateEvaluationJson,
+  HumanActionJson,
   TurnRecordJson,
 } from "~/.server/tutor-api.types";
 import { GATE_ORDER, type GateName } from "~/lib/gates";
 import type {
+  ActionView,
   DraftView,
   GateState,
   GateView,
@@ -26,18 +28,28 @@ const GATE_LABELS: Record<GateName, string> = {
 export class TurnProjection {
   constructor(private readonly segmenter: DraftSegmenter) {}
 
-  project(record: TurnRecordJson, cited: CitedSnippetJson[]): TurnView {
+  project(
+    record: TurnRecordJson,
+    cited: CitedSnippetJson[],
+    actions: HumanActionJson[] = [],
+  ): TurnView {
     const gates = this.gates(record.gate_evaluations);
     const refused = record.refused === true;
     const context = this.retrievalReached(gates)
       ? cited.map((snippet, index) => this.snippet(snippet, index + 1))
       : null;
+    const projected = actions.map((action) => this.action(action));
     return {
       turnId: record.turn_id,
       sessionId: record.session_id,
       turnIndex: record.turn_index,
       policyVersion: record.policy_version,
-      statusLabel: this.status(refused, gates),
+      statusLabel: this.status(refused, gates, projected),
+      modelRan: record.output_before_checks !== null,
+      refused,
+      allGatesPassed:
+        gates.length === GATE_ORDER.length &&
+        gates.every((gate) => gate.state === "passed"),
       prompt: {
         text: record.learner_prompt.text,
         redactedCategories: [...record.learner_prompt.redacted_categories],
@@ -51,6 +63,16 @@ export class TurnProjection {
       flags: record.safety_flags
         ? record.safety_flags.map((flag) => ({ ...flag }))
         : null,
+    };
+  }
+
+  action(record: HumanActionJson): ActionView {
+    return {
+      turnId: record.turn_id,
+      tutorId: record.tutor_id,
+      action: record.action,
+      editedOutput: record.edited_output,
+      actedAt: record.acted_at,
     };
   }
 
@@ -84,7 +106,21 @@ export class TurnProjection {
     );
   }
 
-  private status(refused: boolean, gates: GateView[]): TurnStatusLabel {
+  private status(
+    refused: boolean,
+    gates: GateView[],
+    actions: ActionView[],
+  ): TurnStatusLabel {
+    const decision = actions.find((action) => action.action !== "stop");
+    if (decision?.action === "approve") {
+      return "Approved";
+    }
+    if (decision?.action === "edit") {
+      return "Edited";
+    }
+    if (decision?.action === "override") {
+      return "Overridden";
+    }
     if (refused) {
       return "Refused";
     }

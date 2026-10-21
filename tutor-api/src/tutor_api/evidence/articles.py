@@ -132,6 +132,8 @@ class Article14:
                 "the logged `HumanAction`. The dashboard UI is not in this pack",
             ).text()
             + "\n\n"
+            "Dashboard screenshots are regenerated into `evidence/article-14/`. "
+            "This pack records that directory and does not embed the images.\n\n"
             "A sensitivity non-pass ends the graph before drift. A gate that "
             "was not reached is `not_evaluated` on the turn. This pack does "
             "not claim that gate ran.\n\n"

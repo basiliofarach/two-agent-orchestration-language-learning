@@ -1,0 +1,11 @@
+{
+  "version": "policy-1",
+  "redaction": "Fixture prompts are already redacted. These captures contain no unredacted learner text.",
+  "screenshots": [
+    "sessions.png",
+    "turn-completed.png",
+    "turn-halted.png",
+    "turn-refused.png",
+    "audit-completed.png"
+  ]
+}

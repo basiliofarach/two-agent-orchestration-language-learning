@@ -142,7 +142,11 @@ describe("ChainBreakNotice", () => {
     ["excised", "is missing from the chain"],
     ["unreadable", "could not be read"],
   ] as const)("explains a %s record", (reason, explanation) => {
-    render(<ChainBreakNotice chainBreak={{ turnId: completed, reason }} />);
+    render(
+      <ChainBreakNotice
+        chainBreak={{ turnId: completed, reason, actionIndex: null }}
+      />,
+    );
     const alert = screen.getByRole("alert");
     expect(alert.textContent).toContain(completed);
     expect(alert.textContent).toContain(explanation);

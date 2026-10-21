@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { CompositionRoot } from "~/.server/composition-root";
+import { FixtureLog } from "~/.server/fixture-log";
 import { SessionStatusBadge } from "~/components/session-status-badge";
 import { UtcTime } from "~/components/utc-time";
 import type { Route } from "./+types/_base._index";
@@ -9,8 +10,12 @@ export function meta(_: Route.MetaArgs) {
   return [{ title: "Tutor dashboard" }];
 }
 
-export async function loader() {
-  return { sessions: await new CompositionRoot().dashboardSource().sessions() };
+export async function loader({ request }: Route.LoaderArgs) {
+  return {
+    sessions: await new CompositionRoot(process.env, FixtureLog.from(request))
+      .dashboardSource()
+      .sessions(),
+  };
 }
 
 export default function Index({ loaderData }: Route.ComponentProps) {

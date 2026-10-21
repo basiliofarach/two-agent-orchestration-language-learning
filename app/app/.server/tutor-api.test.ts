@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 function stubFetch(response: Response) {
-  const fetch = vi.fn(async (_url: URL) => response);
+  const fetch = vi.fn(async (_url: URL, _init?: RequestInit) => response);
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
@@ -32,5 +32,45 @@ describe("HttpTutorApi", () => {
     await expect(
       new HttpTutorApi("http://api.test").turn("missing"),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("posts an approval without an edited reply", async () => {
+    const fetch = stubFetch(
+      Response.json({
+        action: { action: "approve" },
+        stopped: false,
+      }),
+    );
+    await new HttpTutorApi("http://api.test/").recordAction({
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      turnId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      tutorId: "tutor",
+      action: "approve",
+      editedOutput: null,
+    });
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(url.href).toBe(
+      "http://api.test/sessions/11111111-1111-4111-8111-111111111111/turns/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/actions",
+    );
+    expect(init).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      tutor_id: "tutor",
+      action: "approve",
+    });
+  });
+
+  it("forwards Last-Event-ID and returns the event body", async () => {
+    const fetch = stubFetch(new Response("retry: 2000\n\n", { status: 200 }));
+    const body = await new HttpTutorApi("http://api.test").events(
+      "session",
+      "cursor-1",
+    );
+    expect(body).toContain("retry: 2000");
+    const [, init] = fetch.mock.calls[0] ?? [];
+    const headers = init?.headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect(
+      headers instanceof Headers ? headers.get("Last-Event-ID") : null,
+    ).toBe("cursor-1");
   });
 });

@@ -54,10 +54,15 @@ test("a refused turn is a refusal, and the audit route records the digest", asyn
   await expect(
     page.getByRole("heading", { name: "Audit record" }),
   ).toBeVisible();
-  await expect(page.getByText("Record digest intact")).toBeVisible();
+  await expect(page.getByText("Record digest verified: intact")).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Gate timeline" }),
   ).toBeVisible();
+  await expect(page.getByText("Chain verified: intact")).toBeVisible();
+  await expect(page.getByText("Redacted learner prompt")).toBeVisible();
+  await expect(page.getByText("Policy version", { exact: true })).toBeVisible();
+  await expect(page.getByText("policy-1").first()).toBeVisible();
+  await expect(page.getByText("Human action")).toBeVisible();
 });
 
 test("an id that is not a UUID is a 404, not a backend call", async ({
@@ -65,4 +70,53 @@ test("an id that is not a UUID is a 404, not a backend call", async ({
 }) => {
   const response = await page.goto("/sessions/not-a-session");
   expect(response?.status()).toBe(404);
+});
+
+test("approve and stop are logged, and a halted turn does not offer approve", async ({
+  page,
+}) => {
+  await page.goto(`/sessions/${HALTED}`);
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Override" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Stop session" }),
+  ).toBeVisible();
+
+  await page.goto(`/sessions/${COMPLETED}`);
+  const approve = page.getByRole("button", { name: "Approve" });
+  await approve.focus();
+  await expect(approve).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Approved", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Tutor decision: approve by tutor"),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Audit record" }).click();
+  await expect(page.getByText(/approve by tutor/)).toBeVisible();
+
+  await page.goto(`/sessions/${COMPLETED}`);
+  const stop = page.getByRole("button", { name: "Stop session" });
+  await stop.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Stopped", { exact: true })).toBeVisible();
+  await expect(page.getByText("How do I use ser?")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+});
+
+test("live events arrive without a reload and a halt stays quiet", async ({
+  page,
+}) => {
+  await page.goto(`/sessions/${COMPLETED}`);
+  const log = page.getByRole("log", { name: "Live turn events" });
+  await expect(log).toContainText("draft updated");
+  const text = await log.innerText();
+  await page.waitForTimeout(2500);
+  expect(await log.innerText()).toBe(text);
+
+  await page.goto(`/sessions/${HALTED}`);
+  const halted = page.getByRole("log", { name: "Live turn events" });
+  await expect(halted).toContainText("checked and fired (stop)");
+  await expect(page.getByText("Halted. The stream is quiet.")).toBeVisible();
+  await expect(halted).not.toContainText("draft updated");
+  await expect(halted.getByText(/checked and fired \(stop\)/)).toHaveCount(1);
 });
