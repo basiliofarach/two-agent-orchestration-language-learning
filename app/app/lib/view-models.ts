@@ -1,6 +1,7 @@
 /**
  * What the tutor's browser receives. Loaders return these and nothing else;
- * audit fields the UI must not show are dropped before they get here.
+ * history snapshots and other fields the UI must not show are dropped before
+ * they get here.
  *
  * `null` always means "this stage was not reached", never "empty".
  */
@@ -42,6 +43,8 @@ export type DraftSegment =
 
 export type DraftView = {
   segments: DraftSegment[];
+  /** The checked draft as one string; what an edit starts from. */
+  afterChecks: string;
   beforeChecks: string | null;
   disclosure: string | null;
   refused: boolean;
@@ -50,7 +53,20 @@ export type DraftView = {
 export type TurnStatusLabel =
   | "Refused"
   | "Held for review"
-  | "Awaiting tutor approval";
+  | "Awaiting tutor approval"
+  | "Approved"
+  | "Edited"
+  | "Overridden";
+
+export type TutorActionName = "approve" | "edit" | "override" | "stop";
+
+export type ActionView = {
+  turnId: string;
+  tutorId: string;
+  action: TutorActionName;
+  editedOutput: string | null;
+  actedAt: string;
+};
 
 export type TurnView = {
   turnId: string;
@@ -58,6 +74,10 @@ export type TurnView = {
   turnIndex: number;
   policyVersion: string;
   statusLabel: TurnStatusLabel;
+  /** Whether the model produced a draft. A refusal before the model is false. */
+  modelRan: boolean;
+  refused: boolean;
+  allGatesPassed: boolean;
   prompt: { text: string; redactedCategories: string[] };
   context: SnippetView[] | null;
   draft: DraftView | null;
@@ -71,6 +91,7 @@ export type ChainBreakReason = "tampered" | "excised" | "unreadable";
 export type ChainBreak = {
   turnId: string;
   reason: ChainBreakReason;
+  actionIndex: number | null;
 };
 
 export type SessionListItem = {
@@ -78,6 +99,7 @@ export type SessionListItem = {
   learnerId: string;
   open: boolean;
   startedAt: string;
+  stoppedAt: string | null;
 };
 
 export type SessionScreen = {
@@ -85,11 +107,23 @@ export type SessionScreen = {
   learnerId: string;
   open: boolean;
   startedAt: string;
+  stoppedAt: string | null;
   turns: TurnView[];
+  actions: ActionView[];
   chainBreak: ChainBreak | null;
+  unchainedActions: number;
+};
+
+export type AuditFieldView = {
+  label: string;
+  value: string;
 };
 
 export type AuditScreen = {
   turn: TurnView;
+  actions: ActionView[];
+  fields: AuditFieldView[];
   recordIntact: boolean;
+  chainBreak: ChainBreak | null;
+  unchainedActions: number;
 };

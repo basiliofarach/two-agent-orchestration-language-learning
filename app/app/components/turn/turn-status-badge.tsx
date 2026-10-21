@@ -5,6 +5,9 @@ const VARIANTS = {
   Refused: "destructive",
   "Held for review": "secondary",
   "Awaiting tutor approval": "outline",
+  Approved: "secondary",
+  Edited: "secondary",
+  Overridden: "outline",
 } as const satisfies Record<TurnStatusLabel, string>;
 
 export function TurnStatusBadge({ label }: { label: TurnStatusLabel }) {

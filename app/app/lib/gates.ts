@@ -7,3 +7,11 @@ export const GATE_ORDER = [
 ] as const;
 
 export type GateName = (typeof GATE_ORDER)[number];
+
+/** How a gate is named to the tutor, on the timeline and in the live feed. */
+export const GATE_LABELS: Record<GateName, string> = {
+  context_and_permission: "Context and permission",
+  conflict_and_ambiguity: "Conflict and ambiguity",
+  sensitivity_and_high_stakes: "Sensitivity and high-stakes",
+  drift_and_anomaly: "Drift and anomaly",
+};

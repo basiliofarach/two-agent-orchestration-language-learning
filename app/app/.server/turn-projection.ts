@@ -3,10 +3,12 @@ import type {
   CitedSnippetJson,
   GateDecision,
   GateEvaluationJson,
+  HumanActionJson,
   TurnRecordJson,
 } from "~/.server/tutor-api.types";
-import { GATE_ORDER, type GateName } from "~/lib/gates";
+import { GATE_LABELS, GATE_ORDER } from "~/lib/gates";
 import type {
+  ActionView,
   DraftView,
   GateState,
   GateView,
@@ -15,29 +17,32 @@ import type {
   TurnView,
 } from "~/lib/view-models";
 
-const GATE_LABELS: Record<GateName, string> = {
-  context_and_permission: "Context and permission",
-  conflict_and_ambiguity: "Conflict and ambiguity",
-  sensitivity_and_high_stakes: "Sensitivity and high-stakes",
-  drift_and_anomaly: "Drift and anomaly",
-};
-
 /** Turns one audit record into the tutor-facing `TurnView`. */
 export class TurnProjection {
   constructor(private readonly segmenter: DraftSegmenter) {}
 
-  project(record: TurnRecordJson, cited: CitedSnippetJson[]): TurnView {
+  project(
+    record: TurnRecordJson,
+    cited: CitedSnippetJson[],
+    actions: HumanActionJson[] = [],
+  ): TurnView {
     const gates = this.gates(record.gate_evaluations);
     const refused = record.refused === true;
     const context = this.retrievalReached(gates)
       ? cited.map((snippet, index) => this.snippet(snippet, index + 1))
       : null;
+    const projected = actions.map((action) => this.action(action));
     return {
       turnId: record.turn_id,
       sessionId: record.session_id,
       turnIndex: record.turn_index,
       policyVersion: record.policy_version,
-      statusLabel: this.status(refused, gates),
+      statusLabel: this.status(refused, gates, projected),
+      modelRan: record.output_before_checks !== null,
+      refused,
+      allGatesPassed:
+        gates.length === GATE_ORDER.length &&
+        gates.every((gate) => gate.state === "passed"),
       prompt: {
         text: record.learner_prompt.text,
         redactedCategories: [...record.learner_prompt.redacted_categories],
@@ -51,6 +56,16 @@ export class TurnProjection {
       flags: record.safety_flags
         ? record.safety_flags.map((flag) => ({ ...flag }))
         : null,
+    };
+  }
+
+  action(record: HumanActionJson): ActionView {
+    return {
+      turnId: record.turn_id,
+      tutorId: record.tutor_id,
+      action: record.action,
+      editedOutput: record.edited_output,
+      actedAt: record.acted_at,
     };
   }
 
@@ -71,6 +86,7 @@ export class TurnProjection {
         record.source_support,
         citations,
       ),
+      afterChecks: record.output_after_checks,
       beforeChecks: record.output_before_checks,
       disclosure: record.ai_disclosure,
       refused,
@@ -84,7 +100,21 @@ export class TurnProjection {
     );
   }
 
-  private status(refused: boolean, gates: GateView[]): TurnStatusLabel {
+  private status(
+    refused: boolean,
+    gates: GateView[],
+    actions: ActionView[],
+  ): TurnStatusLabel {
+    const decision = actions.find((action) => action.action !== "stop");
+    if (decision?.action === "approve") {
+      return "Approved";
+    }
+    if (decision?.action === "edit") {
+      return "Edited";
+    }
+    if (decision?.action === "override") {
+      return "Overridden";
+    }
     if (refused) {
       return "Refused";
     }
