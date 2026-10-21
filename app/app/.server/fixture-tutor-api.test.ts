@@ -60,6 +60,56 @@ describe("FixtureTutorApi actions", () => {
     ).rejects.toBeInstanceOf(ActionRejected);
   });
 
+  it("logs an edit and shows the tutor's wording", async () => {
+    const result = await new FixtureTutorApi().recordAction(
+      command("edit", completed, "Ser is for identity."),
+    );
+    const screen = await (await logged(result)).auditTurn(turnId);
+    const human = screen.fields.find((field) => field.label === "Human action");
+    expect(human?.value).toContain("edit by tutor");
+    expect(human?.value).toContain("Ser is for identity.");
+    expect(screen.turn.statusLabel).toBe("Edited");
+  });
+
+  it("stores an edit only after personal data is removed", async () => {
+    const result = await new FixtureTutorApi().recordAction(
+      command(
+        "edit",
+        completed,
+        "Well done, my name is Ada. Email ada@example.com about 12 King Street.",
+      ),
+    );
+    const screen = await (await logged(result)).auditTurn(turnId);
+    const human = screen.fields.find((field) => field.label === "Human action");
+    expect(human?.value).toContain("[REDACTED:person_name]");
+    expect(human?.value).toContain("[REDACTED:email]");
+    expect(human?.value).toContain("[REDACTED:postal_address]");
+    expect(human?.value).not.toContain("Ada");
+    expect(human?.value).not.toContain("ada@example.com");
+    expect(human?.value).not.toContain("12 King Street");
+  });
+
+  it("refuses an unsafe edit and does not record it", async () => {
+    const api = new FixtureTutorApi();
+    await expect(
+      api.recordAction(
+        command("edit", completed, "Please diagnose this and search the web."),
+      ),
+    ).rejects.toThrow(
+      "the edited reply cannot be released: This asks for the open web, which this tutor cannot use. This asks for medical advice a language tutor does not give.",
+    );
+    expect((await api.audit(completed)).actions).toEqual([]);
+  });
+
+  it("records a proficiency remark, which is not a refusal", async () => {
+    const result = await new FixtureTutorApi().recordAction(
+      command("edit", completed, "your level is A1, and ser agrees."),
+    );
+    const screen = await (await logged(result)).auditTurn(turnId);
+    const human = screen.fields.find((field) => field.label === "Human action");
+    expect(human?.value).toContain("your level is A1, and ser agrees.");
+  });
+
   it("refuses an edit the browser could not store, instead of losing it", async () => {
     await expect(
       new FixtureTutorApi().recordAction(

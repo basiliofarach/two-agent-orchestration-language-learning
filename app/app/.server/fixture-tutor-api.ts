@@ -1,4 +1,5 @@
 import { ActionRejected } from "~/.server/action-rejected";
+import { FixtureEditBoundary } from "~/.server/fixture-edit";
 import { FixtureDigest, FixtureLog } from "~/.server/fixture-log";
 import { SessionEvents } from "~/.server/session-events";
 import { TutorApi } from "~/.server/tutor-api";
@@ -48,6 +49,7 @@ export class FixtureTutorApi extends TutorApi {
   } as const;
 
   private readonly digest = new FixtureDigest();
+  private readonly edits = new FixtureEditBoundary();
 
   constructor(private readonly log: FixtureLog = FixtureLog.empty()) {
     super();
@@ -118,7 +120,7 @@ export class FixtureTutorApi extends TutorApi {
         "edited_output is sent only when the tutor edits",
       );
     }
-    const sealed = this.seal(command);
+    const sealed = this.seal(this.edits.release(command));
     const log = this.log.append(sealed);
     if (!log.fits()) {
       throw new ActionRejected(
