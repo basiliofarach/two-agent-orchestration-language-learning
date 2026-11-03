@@ -1,6 +1,7 @@
 """Validated database configuration read by the composition root."""
 
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from pydantic import SecretStr, field_validator
@@ -53,6 +54,9 @@ class ApplicationSettings(BaseSettings):
     # has no authentication beyond a tutor identifier (ARCHITECTURE §13).
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    # prototype serves the dashboard. simulation is the campaign under test.
+    tutor_mode: Literal["prototype", "simulation"] = "prototype"
+    simulation_reports_dir: Path = Path("evidence")
     # Origins the dashboard is served from. The Vite dev server by default;
     # a comma-separated list in CORS_ORIGINS overrides it. No wildcard: the
     # API carries learner data, redacted or not.

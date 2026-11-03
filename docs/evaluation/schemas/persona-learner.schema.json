@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "HistoryEventRecord": {
+      "additionalProperties": false,
+      "description": "One seeded history event. The instant is applied later, from the clock.",
+      "properties": {
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "correct": {
+          "title": "Correct",
+          "type": "boolean"
+        },
+        "days_before_seed": {
+          "minimum": 0,
+          "title": "Days Before Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "item_id",
+        "correct",
+        "days_before_seed"
+      ],
+      "title": "HistoryEventRecord",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The roster row. The pseudonym is the persona id, and it is synthetic.",
+  "properties": {
+    "persona_id": {
+      "minLength": 1,
+      "title": "Persona Id",
+      "type": "string"
+    },
+    "learner_id": {
+      "format": "uuid",
+      "title": "Learner Id",
+      "type": "string"
+    },
+    "pseudonym": {
+      "minLength": 1,
+      "title": "Pseudonym",
+      "type": "string"
+    },
+    "proficiency_level": {
+      "enum": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "title": "Proficiency Level",
+      "type": "string"
+    },
+    "history": {
+      "items": {
+        "$ref": "#/$defs/HistoryEventRecord"
+      },
+      "title": "History",
+      "type": "array"
+    }
+  },
+  "required": [
+    "persona_id",
+    "learner_id",
+    "pseudonym",
+    "proficiency_level",
+    "history"
+  ],
+  "title": "PersonaLearnerRecord",
+  "type": "object"
+}

@@ -556,6 +556,13 @@ class TestLearnerTextBoundary:
         with pytest.raises(ValidationError):
             CorpusDocument.model_validate(payload)
 
+    @pytest.mark.parametrize("field", ["licence", "cefr_level", "level_method"])
+    def test_ingestion_refuses_a_missing_provenance_field(self, field: str) -> None:
+        payload = Samples().corpus_document().model_dump()
+        del payload[field]
+        with pytest.raises(ValidationError):
+            CorpusDocument.model_validate(payload)
+
     def test_ingestion_does_not_treat_whitespace_as_a_document(self) -> None:
         payload = Samples().corpus_document().model_dump()
         payload["content"] = "\n\n"

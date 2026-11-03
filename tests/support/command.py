@@ -19,7 +19,8 @@ class GuardrailCommand:
     def run(self, args: list[str], cwd: Path) -> CompletedProcess[str]:
         env = os.environ.copy()
         roots = os.pathsep.join(
-            str(cwd / member / "src") for member in ("tutor-core", "tutor-api")
+            str(cwd / member / "src")
+            for member in ("tutor-core", "tutor-api", "tutor-sim")
         )
         prior = env.get("PYTHONPATH")
         env["PYTHONPATH"] = roots if not prior else roots + os.pathsep + prior

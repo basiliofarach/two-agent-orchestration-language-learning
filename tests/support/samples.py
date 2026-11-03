@@ -232,6 +232,9 @@ class Samples:
             source_uri="kb://library",
             version="1",
             review_status="approved",
+            licence="author-own",
+            cefr_level="A1",
+            level_method="author-assigned",
             content="The library is open.",
         )
 

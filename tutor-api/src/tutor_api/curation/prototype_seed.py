@@ -166,6 +166,9 @@ class IngestAndEnrol(TransactionalWork):
                 source_uri=plan.document_uri,
                 version="1",
                 review_status="approved",
+                licence="author-own",
+                cefr_level="A1",
+                level_method="author-assigned",
                 content=plan.document_content,
             )
         )

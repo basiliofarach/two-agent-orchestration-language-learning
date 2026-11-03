@@ -36,6 +36,10 @@ build/
 .react-router/
 *.tsbuildinfo
 
+# Simulation artefacts that must not be redistributed (DEC-0016).
+datasets/sim/*/restricted/
+.cache/sim/
+
 # Models — pinned by SHA in the ADR, never committed as weights.
 # Anchored: tutor_core.domain.models is source, not weights.
 /models/

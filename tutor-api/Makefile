@@ -7,11 +7,25 @@ REPO := $(abspath ..)
 # prek and CI all resolve. Do not relocate it per-member.
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
-	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence purge eval
+	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
+	purge eval sim sim-realise sim-freeze sim-run sim-report sim-db sim-serve
+
+# Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
+# working directory so ApplicationSettings still finds tutor-api/.env.
+SIM_DATASET_DIR ?= $(REPO)/datasets/sim/unreleased
+SIM_SOURCES_PATH ?= $(SIM_DATASET_DIR)/public/sources.json
+SIM_EVIDENCE_DIR ?= $(REPO)/evidence
+SIM_RUNTIME_PIN_PATH ?= $(REPO)/config/runtime.toml
+SIM_KB ?= $(SIM_DATASET_DIR)/public/kb/documents.jsonl
+SIM_ROSTER ?= $(SIM_DATASET_DIR)/public/learners/roster.jsonl
+SIM_ENV = SIM_DATASET_DIR="$(SIM_DATASET_DIR)" \
+	SIM_SOURCES_PATH="$(SIM_SOURCES_PATH)" \
+	SIM_EVIDENCE_DIR="$(SIM_EVIDENCE_DIR)" \
+	SIM_RUNTIME_PIN_PATH="$(SIM_RUNTIME_PIN_PATH)"
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
-SRC := PYTHONPATH="$(REPO)/tutor-core/src:$(CURDIR)/src"
+SRC := PYTHONPATH="$(REPO)/tutor-core/src:$(CURDIR)/src:$(REPO)/tutor-sim/src"
 # `--project` keeps this directory as the working directory, so
 # ApplicationSettings finds tutor-api/.env (`--directory` would not).
 RUN := $(SRC) $(UV) run --project "$(REPO)"
@@ -33,6 +47,13 @@ help:
 	@echo "  make evidence      write the compliance pack to ../evidence"
 	@echo "  make purge         remove history of learners past retain_until, and log it"
 	@echo "  make eval          run the eight REQ-EVAL cases; scores to ../evidence/rubric-scores.jsonl"
+	@echo "  make sim          realise, freeze, and verify the dataset in SIM_DATASET_DIR"
+	@echo "  make sim-realise  rebuild stimuli from plan.json"
+	@echo "  make sim-freeze   write the manifest"
+	@echo "  make sim-run      Tier 1 against the API"
+	@echo "  make sim-report   write evidence/report.json"
+	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
+	@echo "  make sim-serve    the API in simulation mode, on tutor_sim"
 
 sync:
 	$(UV) --directory "$(REPO)" sync --frozen --group dev
@@ -41,7 +62,7 @@ print-model-sha:
 	@PYTHONPATH="$(REPO)" $(UV) --directory "$(REPO)" run python -c "from tests.support.runtime_pin import RuntimePin; print(RuntimePin().weights_sha())"
 
 lint-imports:
-	PYTHONPATH="$(REPO)/tutor-core/src:$(REPO)/tutor-api/src" $(UV) --directory "$(REPO)" run lint-imports
+	PYTHONPATH="$(REPO)/tutor-core/src:$(REPO)/tutor-api/src:$(REPO)/tutor-sim/src" $(UV) --directory "$(REPO)" run lint-imports
 
 # Alembic runs these two on each generated script via [post_write_hooks].
 # This target is the catch-up pass for scripts written before the hooks
@@ -100,3 +121,27 @@ purge:
 eval: sync
 	rm -f "$(REPO)/evidence/rubric-scores.jsonl"
 	RUBRIC_REPORT="$(REPO)/evidence/rubric-scores.jsonl" $(UV) --directory "$(REPO)" run pytest --no-cov -q "tests/integration/test_dashboard_and_scenarios.py::TestScriptedScenarios"
+
+sim-realise:
+	$(SIM_ENV) $(RUN) python -m tutor_sim realise
+
+sim-freeze:
+	$(SIM_ENV) $(RUN) python -m tutor_sim freeze
+
+sim: sim-realise sim-freeze
+	$(SIM_ENV) $(RUN) python -m tutor_sim verify
+
+sim-run:
+	$(SIM_ENV) $(RUN) python -m tutor_sim run
+
+sim-report:
+	$(SIM_ENV) $(RUN) python -m tutor_sim report
+
+sim-db:
+	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database) && \
+	DATABASE_URL="$$SIM_URL" $(RUN) alembic upgrade head && \
+	DATABASE_URL="$$SIM_URL" $(RUN) python -m tutor_api.curation.simulation_seed \
+		"$(SIM_KB)" "$(SIM_ROSTER)"
+
+sim-serve:
+	TUTOR_MODE=simulation POSTGRES_DB=tutor_sim $(RUN) tutor-api

@@ -6,7 +6,7 @@ EU AI Act Articles 10, 12, 14 and 15. The code is graded as evidence, not only
 as working software: every rule in the repository backs a numbered requirement.
 { .lead }
 
-The tree is self-contained. The four documents below are read in order;
+The tree is self-contained. The five documents below are read in order;
 no accompanying paper is required.
 
 ## Read order
@@ -20,12 +20,17 @@ no accompanying paper is required.
     oversight gates sits in the orchestration graph.
 
 [Decisions](decisions/README.md)
-:   Fourteen MADR records, DEC-0001 to DEC-0014 — what was chosen, what was
+:   Sixteen MADR records, DEC-0001 to DEC-0016 — what was chosen, what was
     rejected, and the reasoning. Superseded rather than edited.
 
 [Implementation plan](architecture/IMPLEMENTATION-PLAN.md)
 :   The sequence the prototype is built in, with the authoring order that the
     interface-first rule requires.
+
+[Evaluation dataset](evaluation/DATASET.md)
+:   The Article 10(6) testing data set that the role-based simulation runs
+    on: sources and licences, persona and tutor role cards, the labelled
+    case plan, and the Article 10(2) checklist.
 
 Cite those identifiers from code, tests, and later decisions. Do not cite
 external section, figure, or table numbers.
@@ -34,10 +39,10 @@ external section, figure, or table numbers.
 
 | Article | Obligation | Where it is argued |
 | --- | --- | --- |
-| Art. 10 | Data governance and minimisation | [DEC-0002](decisions/0002-pydantic-basemodel-only.md), [DEC-0006](decisions/0006-postgres-pgvector-single-store.md), [DEC-0012](decisions/0012-encryption-at-rest-by-default.md) |
+| Art. 10 | Data governance and minimisation | [DEC-0002](decisions/0002-pydantic-basemodel-only.md), [DEC-0006](decisions/0006-postgres-pgvector-single-store.md), [DEC-0012](decisions/0012-encryption-at-rest-by-default.md), [DEC-0016](decisions/0016-evaluation-dataset-is-the-testing-data-set.md) |
 | Art. 12 | Logging and traceability | [DEC-0004](decisions/0004-langgraph-orchestration-backbone.md), [DEC-0010](decisions/0010-mutable-turnstate-graph-wrapper.md), [DEC-0012](decisions/0012-encryption-at-rest-by-default.md) |
-| Art. 14 | Human oversight | [DEC-0005](decisions/0005-oversight-gates-chain-of-responsibility.md), [DEC-0008](decisions/0008-frontend-react-router-v8-shadcn.md) |
-| Art. 15 | Accuracy and robustness | [DEC-0001](decisions/0001-interface-first-oop-di-capability-scoping.md), [DEC-0007](decisions/0007-local-pinned-open-weight-model.md), [DEC-0011](decisions/0011-layer-roles-and-service-lifecycle.md) |
+| Art. 14 | Human oversight | [DEC-0005](decisions/0005-oversight-gates-chain-of-responsibility.md), [DEC-0008](decisions/0008-frontend-react-router-v8-shadcn.md), [DEC-0015](decisions/0015-role-based-simulation-replaces-field-testing.md) |
+| Art. 15 | Accuracy and robustness | [DEC-0001](decisions/0001-interface-first-oop-di-capability-scoping.md), [DEC-0007](decisions/0007-local-pinned-open-weight-model.md), [DEC-0011](decisions/0011-layer-roles-and-service-lifecycle.md), [DEC-0015](decisions/0015-role-based-simulation-replaces-field-testing.md) |
 
 !!! note "Encryption is a GDPR measure, not an AI Act control"
 

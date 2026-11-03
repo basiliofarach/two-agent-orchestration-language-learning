@@ -1,0 +1,5 @@
+{
+  "source_id": "tscc",
+  "digest_scope": "pin-file",
+  "note": "The sha256 in sources.json is the digest of this pin file, not of a fetched artefact. A later build replaces it with the artefact digest."
+}

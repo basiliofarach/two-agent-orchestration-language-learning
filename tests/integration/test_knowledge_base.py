@@ -30,6 +30,9 @@ class Documents:
             source_uri="kb://library",
             version=version,
             review_status=status,
+            licence="author-own",
+            cefr_level="A1",
+            level_method="author-assigned",
             content=_TEXT,
         )
 

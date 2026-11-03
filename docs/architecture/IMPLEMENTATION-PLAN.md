@@ -204,8 +204,9 @@ noisy prompt tests robustness while an injection attempt tests tool scoping.
 Evidence is reported against these eight cases.
 
 Rubric scoring for correctness, clarity, source support, age-appropriateness and
-safety. LLM-as-a-judge as secondary signal, with human resolution of
-disagreements.
+safety. ~~LLM-as-a-judge as secondary signal, with human resolution of
+disagreements.~~ *Superseded by DEC-0015: no language model scores any
+output. Phase 11 extends this harness.*
 
 *Done when:* the suite runs headless and emits scores; the injection attempt is
 provably refused and flagged; results are reproducible from the lockfile and
@@ -219,6 +220,51 @@ log (Art. 14), accuracy/refusal/robustness results (Art. 15).
 
 *Done when:* the pack regenerates from a clean checkout with one command.
 
+## Phase 11 — Role-based simulation
+
+DEC-0015 and DEC-0016; REQ-SIM and REQ-TESTDATA. Phase 11 replaces field
+testing. The full design and the BE/FE task breakdown are in
+[SIMULATION.md](SIMULATION.md). Authoring order is rule 5's: ABC, then
+contract tests, then the concrete class.
+
+1. **Dataset build (DEC-0016).**
+   - `CorpusDocument` gains `licence`, `cefr_level` and `level_method`. A
+     migration adds three `ciphertext` columns.
+   - The English knowledge base replaces the Spanish-greetings seed. Seeded
+     faults go in a stress-only seed.
+   - Build the CEFR-J level assigner, the payload bank with its dev/test
+     split, and the persona and tutor role cards.
+   - The case plan derives labels from the policy version. The manifest
+     carries a SHA-256 for every file.
+2. **Harness member `tutor-sim`.**
+   - ABCs `RoleModelPort`, `TutorClientPort` and `TutorRolePort` first
+     (DEC-0001 registry).
+   - An import-linter contract that forbids `tutor_core` and `tutor_api`.
+   - Stub, in-process ASGI, and HTTP implementations.
+   - The four tutor roles. A construction checker for planted payloads.
+3. **Freeze.** Generate Tier 1 stimuli with the pinned role model. Record
+   the test-split hash before the first test run.
+4. **Oracle and report.**
+   - Extend `ScenarioCase` with `expected` and `must_not_contain`.
+   - Remove `judge_signal`. `EvaluationReport.label` becomes
+     `simulated:<dataset_version>`.
+   - Compute every REQ-SIM measure as `k/n`, overall and per stratum.
+   - The Article 15 exhibit cites REQ-SIM, not REQ-FIELD.
+5. **Tier 2.** Closed-loop episodes of at most eight turns, for the
+   invariants: drift (S1), stop (S2), T3 fail-safe, and T2 edit-path
+   refusal.
+
+*Done when:*
+
+- `make sim` builds the dataset from pinned sources and verifies the
+  manifest.
+- The unit and integration suites pass with both model ports stubbed.
+- A campaign run writes `evidence/sim-<dataset_version>/`, containing:
+  - rates with intervals
+  - the invariant results
+  - the manifest
+- Every REQ-SIM invariant holds on Tier 1 and Tier 2.
+
 ---
 
 ## Sequencing notes
@@ -229,11 +275,12 @@ the backend is end-to-end at phase 6.
 **Frontend timing.** The dashboard can start any time after phase 2 against
 fixtures, but its audit viewer is not meaningful until real records exist.
 
-**Field testing** (REQ-FIELD) is gated on phase 8 and tracked as FIELD-01.
-Recruit the 5–8 tutors during phases 6–7 so the formative round starts as soon
-as the dashboard is usable — that recruitment lead time is the most common
-schedule slip in a project of this shape.
+**Field testing** (REQ-FIELD, FIELD-01) — *superseded by DEC-0015
+(2026-11-03).* No tutors or learners take part, so there is no recruitment
+and no tutor-sourced round. Phase 11 replaces both.
 
-**Synthetic-to-validated metrics** (REQ-FIELD) spans phases 9 and field testing:
-record the synthetic baseline at phase 9 so any later movement is attributable
-to the change in input rather than to a change in the system.
+**Phase 11 sequencing.** Phase 11 starts after phase 10. Within it, the
+dataset (step 1) comes before the harness (step 2), because a case's
+expected outcome is a property of the data (DEC-0016). The test split is
+frozen (step 3) before any detector or threshold is tuned against
+simulation results.
