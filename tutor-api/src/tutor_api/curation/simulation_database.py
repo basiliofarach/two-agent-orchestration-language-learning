@@ -2,6 +2,7 @@
 
 import re
 import sys
+from typing import TextIO
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
@@ -77,13 +78,33 @@ class SimulationDatabase:
         return urls.renamed(owner_url, self._name.value())
 
 
-def main() -> int:
-    """Print the owner URL of the campaign database. Alembic reads that URL."""
-    settings = ApplicationSettings()
-    url = SimulationDatabase().ensure(MigrationDatabaseUrl(settings).value())
-    sys.stdout.write(url + "\n")
-    return 0
+class SimulationDatabaseMain:
+    """The process entry: print the campaign database's owner URL.
+
+    Alembic reads that URL. Settings and the output stream are injected so the
+    entry runs under test against a throwaway server.
+    """
+
+    def __init__(
+        self,
+        settings: ApplicationSettings,
+        output: TextIO,
+        database: SimulationDatabase,
+    ) -> None:
+        self._settings = settings
+        self._output = output
+        self._database = database
+
+    def run(self) -> int:
+        """Ensure the database, write its URL, and return a process status."""
+        url = self._database.ensure(MigrationDatabaseUrl(self._settings).value())
+        self._output.write(url + "\n")
+        return 0
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    raise SystemExit(
+        SimulationDatabaseMain(
+            ApplicationSettings(), sys.stdout, SimulationDatabase()
+        ).run()
+    )
