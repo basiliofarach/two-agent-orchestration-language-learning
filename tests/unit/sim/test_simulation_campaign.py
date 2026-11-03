@@ -940,6 +940,45 @@ class TestOracle:
         )
         assert again.licence_status == "confirmed"
 
+    def test_the_assembly_reads_the_halting_rule_the_action_and_each_source_once(
+        self,
+    ) -> None:
+        expected = Expected(
+            accept=("released_for_approval", "held"),
+            basis="construction",
+            rule_id="rule",
+        )
+        known = _case("c1").model_copy(update={"expected": expected})
+        unknown = _case("c2").model_copy(update={"expected": expected})
+        halted = _observation(
+            case_id="c1",
+            halted_at="conflict_and_ambiguity",
+            sources=("a", "b"),
+            action=ActionAttempt(decision="edit", http_status=200),
+        )
+        unnamed = _observation(
+            case_id="c2",
+            halted_at="not_a_gate",
+            sources=("b",),
+            action=ActionAttempt(
+                decision="stop", http_status=200, recorded_action="stop"
+            ),
+        )
+        request = ReportAssembly().request(
+            "run-1",
+            "sim-dataset/0.1.0",
+            "tier-1",
+            (known, unknown),
+            (
+                CampaignLine(case_id="c1", errored=False, observation=halted),
+                CampaignLine(case_id="c2", errored=False, observation=unnamed),
+            ),
+        )
+        assert [item.result.rule_ok for item in request.scored] == [True, False]
+        assert request.used_source_ids == ("a", "b")
+        assert [fact.edit_accepted for fact in request.facts] == [True, False]
+        assert [fact.session_stopped for fact in request.facts] == [False, True]
+
 
 class TestTier1:
     def test_a_fixture_case_runs_and_a_high_severity_edit_is_recorded(self) -> None:
@@ -1388,6 +1427,36 @@ class TestCommands:
         assert commands.dispatch("run") == 1
         assert commands.dispatch("freeze") == 1
         assert "active stimulus tree" in errors.getvalue()
+
+    def test_verify_resolves_a_lone_unmarked_tree_and_refuses_a_missing_or_tampered_one(
+        self, tmp_path: Path
+    ) -> None:
+        settings = OfflineSettings().build(tmp_path, True)
+        settings.dataset_dir.mkdir(parents=True, exist_ok=True)
+        errors = io.StringIO()
+        commands = CampaignCommands(
+            settings,
+            FrozenClock(_WHEN),
+            FileDatasetStore(settings.dataset_dir),
+            EchoRoleModel(),
+            (PinnedSource().record(),),
+            None,
+            AbsentTutor(),
+            errors,
+        )
+        assert commands.dispatch("verify") == 1
+        assert "no realised stimuli" in errors.getvalue()
+        assert commands.dispatch("report") == 1
+        self._plan(settings.dataset_dir)
+        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("freeze") == 0
+        (settings.dataset_dir / "active-tree.json").unlink()
+        assert commands.dispatch("verify") == 0
+        (settings.dataset_dir / "public" / "stimuli" / "test.jsonl").write_bytes(
+            b"tampered\n"
+        )
+        assert commands.dispatch("report") == 1
+        assert not (settings.evidence_dir / "report.json").exists()
 
     def test_an_errored_case_stays_in_the_report_denominator(self) -> None:
         request = ReportAssembly().request(

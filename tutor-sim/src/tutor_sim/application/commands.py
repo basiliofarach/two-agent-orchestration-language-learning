@@ -79,7 +79,7 @@ class CampaignCommands:
         if command == "freeze":
             return self._freeze()
         if command == "verify":
-            return self._verify()
+            return 0 if self._verified() is not None else 1
         if command == "run":
             return self._run()
         if command == "report":
@@ -159,29 +159,28 @@ class CampaignCommands:
             return 1
         return 0
 
-    def _verify(self) -> int:
+    def _verified(self) -> DatasetTree | None:
+        """The active tree once its manifest verifies; none after an error."""
         tree = self._resolve()
         if tree is None:
-            return 1
+            return None
         path = self._root() / tree / "manifest.json"
         if not path.is_file():
             self._errors.write("tutor_sim: no manifest\n")
-            return 1
+            return None
         try:
             ManifestVerifier(self._root()).verify(ManifestFile().load(path))
         except (ManifestMismatch, FileNotFoundError, OSError) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
-            return 1
-        return 0
+            return None
+        return tree
 
     def _run(self) -> int:
         tutor = self._tutor
         if tutor is None:
             self._errors.write("tutor_sim: run needs a tutor client\n")
             return 1
-        if self._verify() != 0:
-            return 1
-        tree = self._resolve()
+        tree = self._verified()
         if tree is None:
             return 1
         runner = Tier1Runner(tutor, self._role)
@@ -214,9 +213,7 @@ class CampaignCommands:
         return 0
 
     def _report(self) -> int:
-        if self._verify() != 0:
-            return 1
-        tree = self._resolve()
+        tree = self._verified()
         if tree is None:
             return 1
         try:
