@@ -22,6 +22,12 @@ Under the real model, an `output_dependent` case (I6, assessed proficiency)
 is reported as an observed rate, outside headline accuracy. No judge is
 brought in to resolve it.
 
+*Amended:* 2026-11-03
+— Rates are reported as counts, `k/n`, overall and per stratum. The
+95% Wilson interval in **Runs** below is withdrawn. None of the cited
+precedents reports one, and the thesis reports `k/n`. An invariant is
+already stated as a count, with a target of all or 0.
+
 Supersedes REQ-FIELD: the field-testing protocol and its
 synthetic-to-tutor-sourced validation step. Also supersedes the
 LLM-as-a-judge sentence of REQ-EVAL. The eight REQ-EVAL cases and the five

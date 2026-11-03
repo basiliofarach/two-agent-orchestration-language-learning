@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tutor_sim.domain.models.case import LabelBasis, OutcomeClass
 
@@ -21,7 +21,7 @@ class CaseResult(BaseModel):
 
 
 class RateRow(BaseModel):
-    """A count and its 95% Wilson interval."""
+    """A count over its cases, ``k/n``. No interval is computed."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -29,8 +29,13 @@ class RateRow(BaseModel):
     basis: LabelBasis | None = None
     k: int = Field(ge=0)
     n: int = Field(ge=0)
-    low: float
-    high: float
+
+    @model_validator(mode="after")
+    def _k_within_n(self) -> "RateRow":
+        if self.k > self.n:
+            msg = "k cannot exceed n"
+            raise ValueError(msg)
+        return self
 
 
 class InvariantRow(BaseModel):

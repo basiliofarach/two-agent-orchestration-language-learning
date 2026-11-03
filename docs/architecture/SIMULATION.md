@@ -823,7 +823,6 @@ in the same BE-01 amendment.
 | oracle | `LeakCheck` | `must_not_contain` against the exposed fields (§9.4) |
 | oracle | `CaseComparator` | `Expected` against `Observation`, giving `CaseResult` |
 | oracle | `MetamorphicPairing` | Noisy twin against its base |
-| oracle | `WilsonInterval` | 95% interval for k of n |
 | oracle | `MeasureSet`, `InvariantSet` | Every REQ-SIM measure and invariant (§9.5, §9.6) |
 | oracle | `ReportBuilder` | `results.jsonl` into `SimulationReport` |
 
@@ -1049,7 +1048,7 @@ Each hit is a `LeakHit(field, payload_id)`. The model prompt is not exposed
 by the API. It is built only from `RedactedText`, so that boundary is typed
 (ARCHITECTURE §4.1) and covered by existing integration tests.
 
-### 9.5 Measures — reported, with a 95% Wilson interval
+### 9.5 Measures — reported as k / n, overall and per stratum
 
 | Measure | k / n |
 | --- | --- |
@@ -1104,7 +1103,7 @@ enforces that.
 
 | Level | What |
 | --- | --- |
-| Unit | Every model: validation, `extra="forbid"`, frozen. Each builder, `CefrSpLoader`, `GrammarProfileLoader`, `GrammarExampleMiner`, `LevelAssigner`, `TargetStructureCheck`, `SplitAssigner`, `NoiseTransformer` (payload bytes preserved), `ConstructionCheck`, the four roles, `OutcomeClassifier` (each row of §9.1), `CaseComparator`, `LeakCheck`, `WilsonInterval` (known values), each invariant |
+| Unit | Every model: validation, `extra="forbid"`, frozen. Each builder, `CefrSpLoader`, `GrammarProfileLoader`, `GrammarExampleMiner`, `LevelAssigner`, `TargetStructureCheck`, `SplitAssigner`, `NoiseTransformer` (payload bytes preserved), `ConstructionCheck`, the four roles, `OutcomeClassifier` (each row of §9.1), `CaseComparator`, `LeakCheck`, each invariant |
 | Contract | Each harness port against its ABC. `HttpTutorClient` over `ASGITransport` against the real app. The C1–C3 schema equality on both sides. The `api_views` fields against `/openapi.json`. Expectation rule ids against `PrototypeCopy` |
 | Integration | A **fixture dataset**: 4 personas, every intent once, both splits. Built, frozen, seeded into a testcontainers Postgres, and run through Tier 1 and Tier 2 against the in-process app, with `LanguageModelPort` and `RoleModelPort` both stubbed. Asserts every invariant and the exact `results.jsonl` |
 | Integration | The migration upgrades, downgrades and upgrades again. The event trigger accepts the ciphertext columns. A row with one provenance field set is rejected by the CHECK |
@@ -1318,7 +1317,7 @@ BE-13
 **BE-15 · Oracle and report** · L · depends on BE-14
 
 - `OutcomeClassifier`, `CaseComparator`, `LeakCheck`, `MetamorphicPairing`,
-  `WilsonInterval`, `MeasureSet`, `InvariantSet` and `ReportBuilder`, plus
+  `MeasureSet`, `InvariantSet` and `ReportBuilder`, plus
   the `sim-report` target.
 - *Done when:*
   - each §9.1 row, §9.3 rule and §9.6 invariant has a unit test;

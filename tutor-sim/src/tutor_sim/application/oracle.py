@@ -1,6 +1,5 @@
 """Compare a turn with the expectation fixed before the run."""
 
-import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,7 +15,6 @@ from tutor_sim.domain.models.report import (
 from tutor_sim.domain.models.source import SourceRecord
 
 _DECISIONS = frozenset({"pass", "pause", "stop", "not_evaluated"})
-_Z = 1.959963984540054
 
 
 class OutcomeClassifier:
@@ -128,24 +126,6 @@ class LeakCheck:
         return fields
 
 
-class WilsonInterval:
-    """The 95% Wilson score interval."""
-
-    def bounds(self, k: int, n: int) -> tuple[float, float]:
-        """``(0, 0)`` when nothing was counted. ``k`` cannot exceed ``n``."""
-        if k < 0 or n < 0 or k > n:
-            msg = "k and n must satisfy 0 <= k <= n"
-            raise ValueError(msg)
-        if n == 0:
-            return (0.0, 0.0)
-        phat = k / n
-        z2 = _Z * _Z
-        denom = 1.0 + z2 / n
-        centre = (phat + z2 / (2.0 * n)) / denom
-        margin = _Z * math.sqrt(phat * (1.0 - phat) / n + z2 / (4.0 * n * n)) / denom
-        return (max(0.0, centre - margin), min(1.0, centre + margin))
-
-
 class ScoredCase(BaseModel):
     """A comparison plus the basis the rate table uses."""
 
@@ -175,8 +155,7 @@ class MeasureSet:
     ) -> RateRow:
         n = len(cases)
         k = sum(1 for case in cases if case.result.outcome_ok)
-        low, high = WilsonInterval().bounds(k, n)
-        return RateRow(name=name, basis=basis, k=k, n=n, low=low, high=high)
+        return RateRow(name=name, basis=basis, k=k, n=n)
 
 
 class InvariantFacts(BaseModel):

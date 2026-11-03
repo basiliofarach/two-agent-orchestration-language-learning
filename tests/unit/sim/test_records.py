@@ -229,11 +229,7 @@ class Records:
             label="simulated:sim-dataset/0.1.0",
             licence_status="pending",
             pending_sources=("fce",),
-            rates=(
-                RateRow(
-                    name="accuracy", basis="construction", k=1, n=2, low=0.1, high=0.9
-                ),
-            ),
+            rates=(RateRow(name="accuracy", basis="construction", k=1, n=2),),
             invariants=(InvariantRow(invariant_id="chain", passed=True),),
             finished=True,
         )
@@ -307,7 +303,7 @@ class Records:
                 errored=False,
                 observed="released_for_approval",
             ),
-            RateRow(name="accuracy", k=0, n=0, low=0.0, high=1.0),
+            RateRow(name="accuracy", k=0, n=0),
             InvariantRow(invariant_id="chain", passed=False),
             self.report(),
         )

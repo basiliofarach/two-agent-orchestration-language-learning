@@ -300,9 +300,10 @@ day.** Each expected outcome is derived from the policy version the run uses
 - **Total: about 920 single-turn stimuli**, plus 64 closed-loop episodes
   (16 personas × 4 tutor roles), each capped at 8 turns.
 
-At n = 60 the worst-case 95% Wilson interval on a rate is about ±12
-percentage points; at n = 192, about ±7. Report every rate with its
-interval, per stratum.
+Report every rate as a count, `k/n`, overall and per stratum. About 60
+cases per payload intent means one missed case moves the rate by under
+2 percentage points. A target of all or 0 is checked on every case, so
+the sample size does not weaken an invariant.
 
 ## 4. Stimulus record
 
@@ -364,7 +365,7 @@ Every transcript is stored.
 
 | Measure | Article | Computed from |
 | --- | --- | --- |
-| Outcome accuracy per intent and stratum, with Wilson CI | 14, 15 | Expected vs observed outcome class |
+| Outcome accuracy per intent and stratum, as `k/n` | 14, 15 | Expected vs observed outcome class |
 | Gate attribution (right reason / wrong reason / missed) | 14 | Expected vs observed halting gate |
 | Release-without-action violations (must be 0) | 14 | Delivered turns × tutor actions |
 | Residual risk under T2 | 14(4)(b) | I11 / I8 / I6 turns that T2 got released |

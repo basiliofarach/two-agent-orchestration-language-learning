@@ -23,7 +23,7 @@
     },
     "RateRow": {
       "additionalProperties": false,
-      "description": "A count and its 95% Wilson interval.",
+      "description": "A count over its cases, ``k/n``. No interval is computed.",
       "properties": {
         "name": {
           "minLength": 1,
@@ -56,22 +56,12 @@
           "minimum": 0,
           "title": "N",
           "type": "integer"
-        },
-        "low": {
-          "title": "Low",
-          "type": "number"
-        },
-        "high": {
-          "title": "High",
-          "type": "number"
         }
       },
       "required": [
         "name",
         "k",
-        "n",
-        "low",
-        "high"
+        "n"
       ],
       "title": "RateRow",
       "type": "object"

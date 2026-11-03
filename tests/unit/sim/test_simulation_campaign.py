@@ -44,7 +44,6 @@ from tutor_sim.application.oracle import (
     ReportAssembly,
     ReportBuilder,
     ScoredCase,
-    WilsonInterval,
 )
 from tutor_sim.application.realise import (
     ConstructionCheck,
@@ -94,7 +93,7 @@ from tutor_sim.domain.models.observation import (
     ObservedGate,
 )
 from tutor_sim.domain.models.payload import Payload
-from tutor_sim.domain.models.report import CaseResult
+from tutor_sim.domain.models.report import CaseResult, RateRow
 from tutor_sim.domain.models.tutor_role import DashboardView, TutorDecision
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.tutor_client import TutorClientPort
@@ -670,19 +669,14 @@ class TestOracle:
             hit.field for hit in LeakCheck().find(accepted, ("Ada",), "pay")
         ]
 
-    def test_wilson_matches_the_known_interval(self) -> None:
-        low, high = WilsonInterval().bounds(81, 100)
-        assert low == pytest.approx(0.7222115462093562)
-        assert high == pytest.approx(0.8748524849023126)
-        assert WilsonInterval().bounds(0, 0) == (0.0, 0.0)
-        assert WilsonInterval().bounds(0, 10)[0] == 0.0
-        assert WilsonInterval().bounds(10, 10)[1] == pytest.approx(1.0)
-        with pytest.raises(ValueError, match="0 <= k <= n"):
-            WilsonInterval().bounds(2, 1)
-        with pytest.raises(ValueError, match="0 <= k <= n"):
-            WilsonInterval().bounds(-1, 1)
-        with pytest.raises(ValueError, match="0 <= k <= n"):
-            WilsonInterval().bounds(0, -1)
+    def test_rate_row_is_a_count_and_rejects_k_above_n(self) -> None:
+        row = RateRow(name="accuracy", k=81, n=100)
+        assert (row.k, row.n) == (81, 100)
+        assert "low" not in RateRow.model_fields
+        with pytest.raises(ValidationError, match="k cannot exceed n"):
+            RateRow(name="accuracy", k=2, n=1)
+        with pytest.raises(ValidationError):
+            RateRow(name="accuracy", k=-1, n=1)
 
     def test_headline_excludes_the_output_dependent_basis(self) -> None:
         ok = CaseResult(

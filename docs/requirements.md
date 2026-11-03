@@ -235,7 +235,7 @@ API.
   derived from the policy version (REQ-POLICY). No language model scores a
   system output, a pupil utterance, or a tutor-role decision.
 - **Tier 1** is frozen and open-loop. It yields every reported rate, each
-  with a 95% Wilson interval per stratum.
+  as a count `k/n`, overall and per stratum.
 - **Tier 2** is closed-loop, with episodes of at most eight turns. It
   reports invariants only.
 

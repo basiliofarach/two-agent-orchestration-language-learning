@@ -248,7 +248,7 @@ contract tests, then the concrete class.
    - Extend `ScenarioCase` with `expected` and `must_not_contain`.
    - Remove `judge_signal`. `EvaluationReport.label` becomes
      `simulated:<dataset_version>`.
-   - Compute every REQ-SIM measure with its Wilson interval and strata.
+   - Compute every REQ-SIM measure as `k/n`, overall and per stratum.
    - The Article 15 exhibit cites REQ-SIM, not REQ-FIELD.
 5. **Tier 2.** Closed-loop episodes of at most eight turns, for the
    invariants: drift (S1), stop (S2), T3 fail-safe, and T2 edit-path
