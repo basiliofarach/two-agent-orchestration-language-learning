@@ -26,3 +26,8 @@ class TestSimulationDatabase:
         assert urls.plain(owner) == "postgresql://owner:secret@127.0.0.1:5432/tutor"
         renamed = urls.renamed(owner, "tutor_sim")
         assert renamed == "postgresql+psycopg://owner:secret@127.0.0.1:5432/tutor_sim"
+        verified = owner + "?sslmode=verify-full&sslrootcert=/tmp/ca.pem#root"
+        assert urls.renamed(verified, "tutor_sim") == (
+            "postgresql+psycopg://owner:secret@127.0.0.1:5432/tutor_sim"
+            "?sslmode=verify-full&sslrootcert=/tmp/ca.pem#root"
+        )

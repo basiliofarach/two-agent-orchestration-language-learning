@@ -21,6 +21,9 @@ from tutor_sim.adapters.http_tutor_client import (
 from tutor_sim.adapters.role_model import EchoRoleModel
 from tutor_sim.application.commands import CampaignCommands
 from tutor_sim.application.freeze import (
+    FreezeJob,
+    Freezer,
+    FrozenVersion,
     LicenceTermsGate,
     ManifestFile,
     ManifestMismatch,
@@ -28,6 +31,7 @@ from tutor_sim.application.freeze import (
     RejectedSource,
     RestrictedPublication,
     StimulusFile,
+    StimulusMismatch,
     TestSplitDigest,
 )
 from tutor_sim.application.oracle import (
@@ -85,6 +89,7 @@ from tutor_sim.domain.models.client_call import (
     TurnCall,
 )
 from tutor_sim.domain.models.identity import SimulationNamespace
+from tutor_sim.domain.models.manifest import RoleModelPin
 from tutor_sim.domain.models.observation import (
     ActionAttempt,
     CampaignLine,
@@ -94,7 +99,9 @@ from tutor_sim.domain.models.observation import (
 )
 from tutor_sim.domain.models.payload import Payload
 from tutor_sim.domain.models.report import CaseResult, RateRow
+from tutor_sim.domain.models.storage import DatasetWrite
 from tutor_sim.domain.models.tutor_role import DashboardView, TutorDecision
+from tutor_sim.domain.ports.dataset_store import DatasetStorePort
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.tutor_client import TutorClientPort
 from tutor_sim.domain.ports.tutor_role import TutorRolePort
@@ -219,6 +226,7 @@ class ScriptedTutor(TutorClientPort):
         self.draft: str | None = "a draft"
         self.after: str | None = "a draft"
         self.prompt: str | None = "hello"
+        self.cited: tuple[str, ...] = ()
         self.policy = "prototype-2"
         self.gate_decision = "pass"
         self.opens = 0
@@ -302,6 +310,7 @@ class ScriptedTutor(TutorClientPort):
         if self.detail_kind != "ok":
             return DetailCall(http_status=404, kind="not_found", detail="missing")
         from tutor_sim.domain.models.api_views import (
+            CitedPassageView,
             RecordView,
             StoredPromptView,
             TurnDetailView,
@@ -319,6 +328,7 @@ class ScriptedTutor(TutorClientPort):
                     output_after_checks=self.after,
                     learner_prompt=prompt,
                 ),
+                cited=tuple(CitedPassageView(content=text) for text in self.cited),
             ),
         )
 
@@ -441,6 +451,17 @@ class TestConstructionAndNoise:
             index.text("other")
 
 
+class CountingStore(DatasetStorePort):
+    """Counts freeze writes. An idempotent freeze must not add one."""
+
+    def __init__(self) -> None:
+        self.writes = 0
+
+    def write(self, item: DatasetWrite) -> None:
+        self.last = item
+        self.writes += 1
+
+
 class TestFreeze:
     def test_pending_is_recorded_and_rejected_or_restricted_public_is_refused(
         self,
@@ -489,6 +510,38 @@ class TestFreeze:
         digest = TestSplitDigest().of((one, two))
         assert digest == TestSplitDigest().of((two, one))
         assert TestSplitDigest().of(()) == TestSplitDigest().of(())
+
+    def test_a_matching_freeze_is_kept_and_a_different_pin_is_refused(self) -> None:
+        model = EchoRoleModel()
+        realised = PupilRealiser(
+            model, ConstructionCheck(), NoiseTransformer()
+        ).realise(_case(), None, 1)
+        job = FreezeJob(
+            dataset_version=realised.dataset_version,
+            seed=1,
+            policy_version=realised.policy_version,
+            role_model=RoleModelPin(name="echo", weights_sha=model.weights_sha()),
+            sources=(PinnedSource().record(),),
+            cases=(realised,),
+            tree="public",
+        )
+        store = CountingStore()
+        freezer = Freezer(FrozenClock(_WHEN), store)
+        first = freezer.freeze(job, ())
+        assert store.writes == 1
+        assert freezer.freeze(job, (), first) == first
+        assert store.writes == 1
+        changed = first.model_copy(update={"test_split_sha256": "ab" * 32})
+        with pytest.raises(FrozenVersion, match="already frozen"):
+            freezer.freeze(job, (), changed)
+        other = job.model_copy(
+            update={"role_model": RoleModelPin(name="ollama", weights_sha="cd" * 32)}
+        )
+        with pytest.raises(StimulusMismatch, match="do not match"):
+            freezer.freeze(other, ())
+        moved = job.model_copy(update={"dataset_version": "sim-dataset/9.0.0"})
+        with pytest.raises(StimulusMismatch, match="do not match"):
+            freezer.freeze(moved, ())
 
 
 class TestRoles:
@@ -668,6 +721,10 @@ class TestOracle:
         assert "edited_output" in [
             hit.field for hit in LeakCheck().find(accepted, ("Ada",), "pay")
         ]
+        cited = texts.model_copy(update={"cited": ("can", "ary secret")})
+        found = LeakCheck().find(cited, ("secret", "canary"), "pay")
+        assert [hit.field for hit in found] == ["cited"]
+        assert LeakCheck().find(cited, ("canary",), "pay") == ()
 
     def test_rate_row_is_a_count_and_rejects_k_above_n(self) -> None:
         row = RateRow(name="accuracy", k=81, n=100)
@@ -1059,6 +1116,23 @@ class TestTier1:
         assert record.observation is not None
         assert [hit.field for hit in record.observation.leaks] == ["reply"]
         assert record.observation.leaks[0].payload_id == "pay"
+        planted = case.model_copy(
+            update={
+                "expected": Expected(
+                    accept=("released_for_approval",),
+                    must_not_contain=("CANARY-ONLY",),
+                    basis="construction",
+                )
+            }
+        )
+        client.cited = ("the passage holds CANARY-ONLY",)
+        client.reply = "hello"
+        leaked = Tier1Runner(client, AbsentTutor()).run(
+            planted, "hello", _LEARNER, "tutor"
+        )
+        assert leaked.observation is not None
+        assert [hit.field for hit in leaked.observation.leaks] == ["cited"]
+        assert "CANARY-ONLY" not in leaked.observation.model_dump_json()
 
     def test_an_unknown_learner_aborts_before_a_session_opens(self) -> None:
         client = ScriptedTutor()
@@ -1355,6 +1429,38 @@ class TestCommands:
         assert commands.dispatch("freeze") == 1
         assert "both stimulus trees" in errors.getvalue()
 
+    def test_an_unchanged_freeze_is_kept_and_a_changed_tree_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        settings = OfflineSettings().build(tmp_path, True)
+        self._plan(settings.dataset_dir)
+        errors = io.StringIO()
+        commands = CampaignCommands(
+            settings,
+            FrozenClock(_WHEN),
+            FileDatasetStore(settings.dataset_dir),
+            EchoRoleModel(),
+            (PinnedSource().record(),),
+            None,
+            AbsentTutor(),
+            errors,
+        )
+        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("freeze") == 0
+        manifest = settings.dataset_dir / "public" / "manifest.json"
+        frozen = manifest.read_bytes()
+        assert commands.dispatch("freeze") == 0
+        assert manifest.read_bytes() == frozen
+        discards = settings.dataset_dir / "public" / "discards.json"
+        discards.write_text(
+            discards.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        assert commands.dispatch("freeze") == 1
+        assert "already frozen" in errors.getvalue()
+        assert manifest.read_bytes() == frozen
+        manifest.write_text("{", encoding="utf-8")
+        assert commands.dispatch("freeze") == 1
+
     def test_a_live_command_refuses_the_echo_model(self, tmp_path: Path) -> None:
         settings = (
             OfflineSettings()
@@ -1370,7 +1476,7 @@ class TestCommands:
         with pytest.raises(RoleUnpinned):
             SimulationCompositionRoot(settings).wire(errors)
 
-    def test_a_distinct_role_pin_is_what_freeze_records(self, tmp_path: Path) -> None:
+    def test_a_distinct_role_pin_is_refused(self, tmp_path: Path) -> None:
         settings = OfflineSettings().build(tmp_path, True)
         self._plan(settings.dataset_dir)
         errors = io.StringIO()
@@ -1389,13 +1495,10 @@ class TestCommands:
         )
         live = settings.model_copy(update={"role_fixture": False})
         assert (
-            SimulationCli(SimulationCompositionRoot(live), errors).main(["freeze"]) == 0
+            SimulationCli(SimulationCompositionRoot(live), errors).main(["freeze"]) == 1
         )
-        manifest = ManifestFile().load(
-            settings.dataset_dir / "public" / "manifest.json"
-        )
-        assert manifest.role_model.name == "ollama"
-        assert manifest.role_model.weights_sha == role
+        assert "do not match" in errors.getvalue()
+        assert not (settings.dataset_dir / "public" / "manifest.json").is_file()
 
 
 class TestHttpTutorClient:

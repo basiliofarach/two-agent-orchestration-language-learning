@@ -83,12 +83,21 @@ class RecordView(BaseModel):
     learner_prompt: StoredPromptView | None = None
 
 
+class CitedPassageView(BaseModel):
+    """One retrieved passage. The leak scan reads ``content`` and then drops it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    content: str = Field(min_length=1)
+
+
 class TurnDetailView(BaseModel):
     """``GET /turns/{id}``."""
 
     model_config = ConfigDict(extra="ignore")
 
     record: RecordView = RecordView()
+    cited: tuple[CitedPassageView, ...] = ()
     record_intact: bool
 
 

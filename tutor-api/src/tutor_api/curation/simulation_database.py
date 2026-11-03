@@ -40,7 +40,9 @@ class DatabaseUrl:
     def renamed(self, url: str, name: str) -> str:
         """The same server and credentials, with ``name`` as the database."""
         parts = urlsplit(url)
-        return urlunsplit((parts.scheme, parts.netloc, f"/{name}", "", ""))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, f"/{name}", parts.query, parts.fragment)
+        )
 
 
 class SimulationDatabase:

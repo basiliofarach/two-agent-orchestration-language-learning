@@ -95,6 +95,7 @@ class ExposedText(BaseModel):
     output_after_checks: str | None = None
     edited_output: str | None = None
     edit_accepted: bool = False
+    cited: tuple[str, ...] = ()
 
 
 class LeakCheck:
@@ -112,7 +113,20 @@ class LeakCheck:
                 if needle and needle in value:
                     hits.append(LeakHit(field=field, payload_id=payload_id))
                     break
+        cited = self._cited(texts.cited, forbidden, payload_id)
+        if cited is not None:
+            hits.append(cited)
         return tuple(hits)
+
+    def _cited(
+        self, passages: tuple[str, ...], forbidden: tuple[str, ...], payload_id: str
+    ) -> LeakHit | None:
+        """One hit when any retrieved passage contains a forbidden string."""
+        for passage in passages:
+            for needle in forbidden:
+                if needle and needle in passage:
+                    return LeakHit(field="cited", payload_id=payload_id)
+        return None
 
     def _fields(self, texts: ExposedText) -> tuple[tuple[str, str | None], ...]:
         fields: tuple[tuple[str, str | None], ...] = (

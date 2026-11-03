@@ -3,15 +3,19 @@
 from pathlib import Path
 from typing import TextIO
 
+from pydantic import ValidationError
+
 from tutor_sim.application.freeze import (
     ByteDigest,
     FreezeJob,
     Freezer,
+    FrozenVersion,
     ManifestFile,
     ManifestMismatch,
     ManifestVerifier,
     RejectedSource,
     StimulusFile,
+    StimulusMismatch,
 )
 from tutor_sim.application.oracle import ReportAssembly, ReportBuilder
 from tutor_sim.application.realise import (
@@ -140,9 +144,17 @@ class CampaignCommands:
             cases=cases,
             tree=tree,
         )
+        manifest_path = self._root() / tree / "manifest.json"
         try:
-            Freezer(self._clock, self._store).freeze(job, files)
-        except RejectedSource as exc:
+            existing = (
+                ManifestFile().load(manifest_path) if manifest_path.is_file() else None
+            )
+        except (OSError, ValidationError) as exc:
+            self._errors.write(f"tutor_sim: {exc}\n")
+            return 1
+        try:
+            Freezer(self._clock, self._store).freeze(job, files, existing)
+        except (RejectedSource, StimulusMismatch, FrozenVersion) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         return 0

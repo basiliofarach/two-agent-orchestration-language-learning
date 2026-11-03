@@ -31,6 +31,14 @@ class ManifestMismatch(ValueError):
     """A file or the test-split digest does not match the manifest."""
 
 
+class StimulusMismatch(ValueError):
+    """A realised case does not belong to this freeze."""
+
+
+class FrozenVersion(ValueError):
+    """This dataset version is already frozen with different bytes."""
+
+
 class FreezeJob(BaseModel):
     """What one freeze writes. Review status is copied, not judged."""
 
@@ -149,6 +157,31 @@ class ManifestWriter:
         )
 
 
+class StimulusAgreement:
+    """The cases on disk must be the ones this freeze claims to fix."""
+
+    def require(self, job: FreezeJob) -> None:
+        """Refuse a case stamped for another version or another role model."""
+        pin = job.role_model.weights_sha
+        for case in job.cases:
+            if (
+                case.dataset_version != job.dataset_version
+                or case.policy_version != job.policy_version
+                or case.generator.weights_sha != pin
+            ):
+                msg = "realised cases do not match the freeze metadata"
+                raise StimulusMismatch(msg)
+
+
+class FreezeIdentity:
+    """Two freezes of one version. The clock is not part of the identity."""
+
+    def same(self, existing: Manifest, proposed: Manifest) -> bool:
+        """True when only ``frozen_at`` could differ."""
+        kept = {"frozen_at"}
+        return existing.model_dump(exclude=kept) == proposed.model_dump(exclude=kept)
+
+
 class Freezer:
     """Admit the sources, then write the manifest through the dataset store."""
 
@@ -157,11 +190,24 @@ class Freezer:
         self._store = store
         self._gate = LicenceTermsGate()
         self._writer = ManifestWriter(clock)
+        self._cases = StimulusAgreement()
+        self._identity = FreezeIdentity()
 
-    def freeze(self, job: FreezeJob, files: tuple[FileDigest, ...]) -> Manifest:
-        """Pending is allowed. Rejected and a restricted public write are not."""
+    def freeze(
+        self,
+        job: FreezeJob,
+        files: tuple[FileDigest, ...],
+        existing: Manifest | None = None,
+    ) -> Manifest:
+        """Pending is allowed. A frozen version is not rewritten."""
         self._gate.admit(job.sources, job.tree)
+        self._cases.require(job)
         manifest = self._writer.build(job, files)
+        if existing is not None:
+            if not self._identity.same(existing, manifest):
+                msg = "this dataset version is already frozen"
+                raise FrozenVersion(msg)
+            return existing
         self._store.write(
             DatasetWrite(
                 relative_path="manifest.json",

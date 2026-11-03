@@ -266,6 +266,7 @@ class Tier1Runner:
             output_after_checks=record.output_after_checks,
             edited_output=decision.edited_output if accepted else None,
             edit_accepted=accepted,
+            cited=tuple(passage.content for passage in page.cited),
         )
         payload_id = case.payload_id if case.payload_id is not None else case.case_id
         observation = Observation(
