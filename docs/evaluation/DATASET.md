@@ -443,7 +443,7 @@ decision record.
 2. Pick the role model (§8).
 3. Confirm the TSCC licence through its form, or drop it.
 4. Have the licence readings in §3 confirmed by whoever reviews them.
-   Several are non-commercial, and the author is employed. This does not
+   Several are non-commercial research licences. This does not
    block freezing (§7). Start with the sources that are not permissive, so
    that a rejection costs as little as possible:
    - FCE, W&I+LOCNESS and TSCC (grounding)

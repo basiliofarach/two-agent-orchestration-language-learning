@@ -219,11 +219,11 @@ label depends on the author's judgement. They do not remove that dependence.
 - The published payload sets are English-only.
 - TSCC is unusable until its licence is read.
 
-**Negative.** Several grounding sources are non-commercial, and the author is
-employed. Their use in academic work is to be confirmed by whoever reviews
-such questions. That confirmation gates citation, not the freeze. FCE,
-W&I+LOCNESS and TSCC are the non-permissive sources to review first, so a
-rejection costs as little as possible.
+**Negative.** Several grounding sources are licensed for non-commercial
+research only, and TSCC's licence has not been read. Each licence reading is
+confirmed before a result built on it is cited. That confirmation gates
+citation, not the freeze. FCE, W&I+LOCNESS and TSCC are the non-permissive
+sources to review first, so a rejection costs as little as possible.
 
 **Negative.** Two code changes follow:
 
