@@ -11,7 +11,15 @@ from tutor_sim.adapters.digest import ArtefactDigest
 from tutor_sim.adapters.file_dataset_store import FileDatasetStore
 from tutor_sim.adapters.http_source_fetch import CachedOnlySourceFetch, HttpSourceFetch
 from tutor_sim.adapters.http_tutor_client import HttpTutorClient
-from tutor_sim.adapters.role_model import EchoRoleModel
+from tutor_sim.adapters.role_model import (
+    EchoRoleModel,
+    OllamaRoleModel,
+    RoleChatLimits,
+    RoleModelfile,
+    RoleModelPin,
+    TomlTable,
+    UrllibRoleChat,
+)
 from tutor_sim.adapters.system_clock import SystemClock
 from tutor_sim.application.commands import CampaignCommands
 from tutor_sim.application.roles import DiligentTutor
@@ -19,6 +27,7 @@ from tutor_sim.catalogue import SourceCatalogue
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.ports.clock import ClockPort
 from tutor_sim.domain.ports.dataset_store import DatasetStorePort
+from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.source_fetch import SourceFetchPort
 from tutor_sim.settings import SimulationSettings
 
@@ -40,6 +49,33 @@ class CatalogueHosts:
             msg = "source URL has no host"
             raise ValueError(msg)
         return host
+
+
+class RoleUnpinned(Exception):
+    """A live command has no role-model pin. Echo is a fixture, not that pin."""
+
+
+class RoleModelChoice:
+    """Echo only when the operator asked for the fixture. Otherwise the pin."""
+
+    def choose(self, settings: SimulationSettings) -> RoleModelPort:
+        """The model a command may freeze. A missing pin is a command error."""
+        if settings.role_fixture:
+            return EchoRoleModel()
+        try:
+            system = TomlTable(settings.runtime_pin_path, "model").field("weights_sha")
+            role = RoleModelPin(settings.runtime_pin_path, system).weights_sha()
+        except (OSError, TypeError, ValueError) as exc:
+            msg = (
+                "a role-model pin is required for a live run; "
+                "echo is only available with SIM_ROLE_FIXTURE"
+            )
+            raise RoleUnpinned(msg) from exc
+        return OllamaRoleModel(
+            role,
+            system,
+            UrllibRoleChat(settings.ollama_base_url, RoleModelfile(), RoleChatLimits()),
+        )
 
 
 class WiredHarness(BaseModel):
@@ -72,7 +108,7 @@ class SimulationCompositionRoot:
         catalogue = SourceCatalogue(self._settings.sources_path).load()
         store = FileDatasetStore(self._settings.dataset_dir)
         clock = SystemClock()
-        model = EchoRoleModel()
+        model = RoleModelChoice().choose(self._settings)
         role = DiligentTutor(model, "You are a diligent tutor. Answer with one action.")
         if self._settings.offline:
             commands = CampaignCommands(

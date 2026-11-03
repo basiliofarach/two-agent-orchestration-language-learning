@@ -63,6 +63,15 @@ class TurnOutcomeView(BaseModel):
     gates: tuple[GateRowView, ...] = ()
 
 
+class StoredPromptView(BaseModel):
+    """``TurnAuditRecord.learner_prompt``. The text is nested, not a string."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    redacted_categories: tuple[str, ...] = ()
+
+
 class RecordView(BaseModel):
     """The audit record fields the oracle and the tutor role read."""
 
@@ -71,7 +80,7 @@ class RecordView(BaseModel):
     retrieved_context_ids: tuple[str, ...] = ()
     output_before_checks: str | None = None
     output_after_checks: str | None = None
-    learner_prompt: str | None = None
+    learner_prompt: StoredPromptView | None = None
 
 
 class TurnDetailView(BaseModel):
@@ -100,10 +109,18 @@ class AuditView(BaseModel):
     intact: bool
 
 
-class RecordedActionView(BaseModel):
-    """``POST /sessions/{id}/turns/{id}/actions``."""
+class HumanActionView(BaseModel):
+    """The ``HumanAction`` nested on a successful action response."""
 
     model_config = ConfigDict(extra="ignore")
 
     action: str = Field(min_length=1)
+
+
+class RecordedActionView(BaseModel):
+    """``POST /sessions/{id}/turns/{id}/actions``. ``action`` is the row."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    action: HumanActionView
     stopped: bool

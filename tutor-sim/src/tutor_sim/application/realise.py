@@ -62,6 +62,34 @@ class PayloadIndex:
         return self._items
 
 
+class ActivePlacement(BaseModel):
+    """Which tree the latest realise wrote. A second tree on disk is stale."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tree: DatasetTree
+
+
+class ActiveTreeFile:
+    """``active-tree.json`` at the dataset root, outside either tree."""
+
+    _NAME = "active-tree.json"
+
+    def write(self, root: Path, tree: DatasetTree) -> None:
+        """Record the tree this realisation chose."""
+        path = root / self._NAME
+        path.write_text(ActivePlacement(tree=tree).model_dump_json(), encoding="utf-8")
+
+    def read(self, root: Path) -> DatasetTree | None:
+        """The recorded tree, or none when realise has not recorded one."""
+        path = root / self._NAME
+        if not path.is_file():
+            return None
+        return ActivePlacement.model_validate_json(
+            path.read_text(encoding="utf-8")
+        ).tree
+
+
 class ReleaseTree:
     """Public only when every source and payload may be redistributed."""
 

@@ -4,9 +4,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tutor_sim.application.oracle import ExposedText, OutcomeClassifier
+from tutor_sim.application.oracle import ExposedText, LeakCheck, OutcomeClassifier
 from tutor_sim.domain.models.api_views import (
     GateRowView,
+    LearnerView,
     TurnDetailView,
     TurnOutcomeView,
 )
@@ -51,6 +52,18 @@ class PolicyVersionGuard:
         if observed != expected:
             msg = f"policy version {observed} != {expected}"
             raise PolicyMismatch(msg)
+
+
+class RetainedLearner:
+    """A case runs only for a persona the seed enrolled and still retains."""
+
+    def require(self, learner_id: UUID, roster: tuple[LearnerView, ...]) -> None:
+        """Abort before a session opens for anyone else."""
+        for row in roster:
+            if row.learner_id == learner_id and row.retained:
+                return
+        msg = "the learner is not a retained persona"
+        raise CampaignAbort(msg)
 
 
 class SessionPool:
@@ -126,6 +139,8 @@ class Tier1Runner:
         self._retrieval = RetrievalRan()
         self._replay = ReplayMatch()
         self._class = OutcomeClassifier()
+        self._roster = RetainedLearner()
+        self._leaks = LeakCheck()
 
     def run(
         self,
@@ -140,6 +155,7 @@ class Tier1Runner:
         if listed.kind != "ok":
             msg = "the learner roster could not be read"
             raise CampaignAbort(msg)
+        self._roster.require(learner_id, listed.body)
         session_id = self._sessions.open(learner_id, tutor_id)
         submitted = self._client.submit(
             session_id, learner_id, utterance, case.requested_history_fields
@@ -208,7 +224,7 @@ class Tier1Runner:
         return ActionAttempt(
             decision=decision.decision,
             http_status=result.http_status,
-            recorded_action=result.body.action,
+            recorded_action=result.body.action.action,
         )
 
     def _view(
@@ -241,6 +257,17 @@ class Tier1Runner:
         outcome: OutcomeClass,
     ) -> CaseRecord:
         record = page.record
+        prompt = record.learner_prompt
+        accepted = attempt.decision == "edit" and 200 <= attempt.http_status < 300
+        exposed = ExposedText(
+            learner_prompt="" if prompt is None else prompt.text,
+            reply=body.reply,
+            output_before_checks=record.output_before_checks,
+            output_after_checks=record.output_after_checks,
+            edited_output=decision.edited_output if accepted else None,
+            edit_accepted=accepted,
+        )
+        payload_id = case.payload_id if case.payload_id is not None else case.case_id
         observation = Observation(
             case_id=case.case_id,
             turn_id=body.turn_id,
@@ -265,16 +292,8 @@ class Tier1Runner:
             action=attempt,
             replay_matches=self._replay.matches(replay_outcome),
             chain_intact=intact and page.record_intact,
+            leaks=self._leaks.find(exposed, case.expected.must_not_contain, payload_id),
             outcome=outcome,
-        )
-        accepted = attempt.decision == "edit" and 200 <= attempt.http_status < 300
-        exposed = ExposedText(
-            learner_prompt=record.learner_prompt or "",
-            reply=body.reply,
-            output_before_checks=record.output_before_checks,
-            output_after_checks=record.output_after_checks,
-            edited_output=decision.edited_output if accepted else None,
-            edit_accepted=accepted,
         )
         return CaseRecord(
             case_id=case.case_id,

@@ -10,6 +10,17 @@ REPO := $(abspath ..)
 	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
 	purge eval sim sim-realise sim-freeze sim-run sim-report sim-db sim-serve
 
+# Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
+# working directory so ApplicationSettings still finds tutor-api/.env.
+SIM_DATASET_DIR ?= $(REPO)/datasets/sim/unreleased
+SIM_SOURCES_PATH ?= $(SIM_DATASET_DIR)/public/sources.json
+SIM_EVIDENCE_DIR ?= $(REPO)/evidence
+SIM_KB ?= $(SIM_DATASET_DIR)/public/kb/documents.jsonl
+SIM_ROSTER ?= $(SIM_DATASET_DIR)/public/learners/roster.jsonl
+SIM_ENV = SIM_DATASET_DIR="$(SIM_DATASET_DIR)" \
+	SIM_SOURCES_PATH="$(SIM_SOURCES_PATH)" \
+	SIM_EVIDENCE_DIR="$(SIM_EVIDENCE_DIR)"
+
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
 SRC := PYTHONPATH="$(REPO)/tutor-core/src:$(CURDIR)/src:$(REPO)/tutor-sim/src"
@@ -39,7 +50,7 @@ help:
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API"
 	@echo "  make sim-report   write evidence/report.json"
-	@echo "  make sim-db       migrate tutor_sim and seed C1 and C2"
+	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
 	@echo "  make sim-serve    the API with TUTOR_MODE=simulation"
 
 sync:
@@ -110,22 +121,25 @@ eval: sync
 	RUBRIC_REPORT="$(REPO)/evidence/rubric-scores.jsonl" $(UV) --directory "$(REPO)" run pytest --no-cov -q "tests/integration/test_dashboard_and_scenarios.py::TestScriptedScenarios"
 
 sim-realise:
-	$(RUN) python -m tutor_sim realise
+	$(SIM_ENV) $(RUN) python -m tutor_sim realise
 
 sim-freeze:
-	$(RUN) python -m tutor_sim freeze
+	$(SIM_ENV) $(RUN) python -m tutor_sim freeze
 
 sim: sim-realise sim-freeze
-	$(RUN) python -m tutor_sim verify
+	$(SIM_ENV) $(RUN) python -m tutor_sim verify
 
 sim-run:
-	$(RUN) python -m tutor_sim run
+	$(SIM_ENV) $(RUN) python -m tutor_sim run
 
 sim-report:
-	$(RUN) python -m tutor_sim report
+	$(SIM_ENV) $(RUN) python -m tutor_sim report
 
 sim-db:
-	$(RUN) python -m tutor_api.curation.simulation_seed
+	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database) && \
+	DATABASE_URL="$$SIM_URL" $(RUN) alembic upgrade head && \
+	DATABASE_URL="$$SIM_URL" $(RUN) python -m tutor_api.curation.simulation_seed \
+		"$(SIM_KB)" "$(SIM_ROSTER)"
 
 sim-serve:
 	TUTOR_MODE=simulation $(RUN) tutor-api

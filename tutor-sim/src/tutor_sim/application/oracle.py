@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from tutor_sim.domain.models.case import CaseSpec, Expected, OutcomeClass
-from tutor_sim.domain.models.observation import LeakHit, Observation
+from tutor_sim.domain.models.observation import CampaignLine, LeakHit, Observation
 from tutor_sim.domain.models.report import (
     CaseResult,
     InvariantRow,
@@ -316,7 +316,7 @@ class LicenceStatus:
 
 
 class ReportRequest(BaseModel):
-    """The file ``report`` reads. It is not a campaign of its own."""
+    """What ``report`` asks the builder for, after comparison."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -357,3 +357,86 @@ class ReportBuilder:
             invariants=invariants,
             finished=all(row.passed for row in invariants),
         )
+
+
+class ReportAssembly:
+    """Score the frozen cases from the lines the run actually wrote."""
+
+    def request(
+        self,
+        run_id: str,
+        dataset_version: str,
+        label: str,
+        cases: tuple[CaseSpec, ...],
+        lines: tuple[CampaignLine, ...],
+    ) -> ReportRequest:
+        """Every frozen case is scored. A missing or errored line fails it."""
+        by_id = {line.case_id: line for line in lines}
+        scored: list[ScoredCase] = []
+        facts: list[InvariantFacts] = []
+        used: list[str] = []
+        seen: set[str] = set()
+        for case in cases:
+            line = by_id.get(case.case_id)
+            observation = None if line is None or line.errored else line.observation
+            scored.append(
+                ScoredCase(
+                    result=CaseComparator().compare(
+                        Comparison(
+                            case_id=case.case_id,
+                            expected=case.expected,
+                            outcome=(
+                                None if observation is None else observation.outcome
+                            ),
+                            halted_at=None
+                            if observation is None
+                            else observation.halted_at,
+                            rule_id=self._rule(observation),
+                            errored=line is None or line.errored,
+                        )
+                    ),
+                    basis=case.expected.basis,
+                )
+            )
+            if observation is None:
+                continue
+            for source in observation.sources:
+                if source not in seen:
+                    seen.add(source)
+                    used.append(source)
+            facts.append(
+                InvariantFacts(
+                    observation=observation,
+                    expected_model_called=case.expected.model_called,
+                    edit_accepted=self._accepted_edit(observation),
+                    session_stopped=self._stopped(observation),
+                )
+            )
+        return ReportRequest(
+            run_id=run_id,
+            dataset_version=dataset_version,
+            label=label,
+            used_source_ids=tuple(used),
+            scored=tuple(scored),
+            facts=tuple(facts),
+        )
+
+    def _rule(self, observation: Observation | None) -> str | None:
+        if observation is None or observation.halted_at is None:
+            return None
+        for gate in observation.gate_rows:
+            if gate.name == observation.halted_at:
+                return gate.policy_rule_id
+        return None
+
+    def _accepted_edit(self, observation: Observation) -> bool:
+        action = observation.action
+        if action is None or action.decision != "edit":
+            return False
+        return 200 <= action.http_status < 300
+
+    def _stopped(self, observation: Observation) -> bool:
+        action = observation.action
+        if action is None or action.decision != "stop":
+            return False
+        return action.recorded_action == "stop" and 200 <= action.http_status < 300

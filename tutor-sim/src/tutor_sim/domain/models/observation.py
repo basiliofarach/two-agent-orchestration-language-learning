@@ -58,3 +58,13 @@ class Observation(BaseModel):
     chain_intact: bool
     leaks: tuple[LeakHit, ...] = ()
     outcome: OutcomeClass
+
+
+class CampaignLine(BaseModel):
+    """One case the run kept. Exposed text stays out of the evidence file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    case_id: str = Field(min_length=1)
+    errored: bool
+    observation: Observation | None = None

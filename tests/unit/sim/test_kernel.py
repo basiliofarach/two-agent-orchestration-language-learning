@@ -96,6 +96,7 @@ class OfflineSettings:
             cache_dir=tmp_path / "cache",
             sources_path=catalogue,
             offline=offline,
+            role_fixture=True,
             evidence_dir=tmp_path / "evidence",
             runtime_pin_path=tmp_path / "runtime.toml",
         )

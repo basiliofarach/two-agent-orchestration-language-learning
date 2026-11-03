@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import TextIO
-from uuid import UUID
 
 from tutor_sim.application.freeze import (
     ByteDigest,
@@ -14,8 +13,9 @@ from tutor_sim.application.freeze import (
     RejectedSource,
     StimulusFile,
 )
-from tutor_sim.application.oracle import ReportBuilder, ReportRequest
+from tutor_sim.application.oracle import ReportAssembly, ReportBuilder
 from tutor_sim.application.realise import (
+    ActiveTreeFile,
     ConstructionCheck,
     DatasetBytes,
     DiscardLog,
@@ -28,7 +28,10 @@ from tutor_sim.application.realise import (
 )
 from tutor_sim.application.tier1 import CampaignAbort, PolicyMismatch, Tier1Runner
 from tutor_sim.domain.models.case import StimulusCase
+from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.manifest import RoleModelPin
+from tutor_sim.domain.models.observation import CampaignLine, Observation
+from tutor_sim.domain.models.report import CaseResult
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.models.storage import DatasetTree
 from tutor_sim.domain.ports.clock import ClockPort
@@ -106,6 +109,7 @@ class CampaignCommands:
         writer.write("stimuli/test.jsonl", lines.body(self._split(cases, "test")), tree)
         writer.write("stimuli/dev.jsonl", lines.body(self._split(cases, "dev")), tree)
         writer.write("discards.json", DiscardLog().body(cases), tree)
+        ActiveTreeFile().write(self._root(), tree)
         return 0
 
     def _freeze(self) -> int:
@@ -114,9 +118,8 @@ class CampaignCommands:
         except FileNotFoundError as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
-        tree = self._placed()
+        tree = self._resolve()
         if tree is None:
-            self._errors.write("tutor_sim: no realised stimuli\n")
             return 1
         cases = self._read(tree, "stimuli/test.jsonl") + self._read(
             tree, "stimuli/dev.jsonl"
@@ -129,7 +132,10 @@ class CampaignCommands:
             dataset_version=plan.dataset_version,
             seed=plan.seed,
             policy_version=plan.policy_version,
-            role_model=RoleModelPin(name="echo", weights_sha=self._model.weights_sha()),
+            role_model=RoleModelPin(
+                name="echo" if self._settings.role_fixture else "ollama",
+                weights_sha=self._model.weights_sha(),
+            ),
             sources=self._sources,
             cases=cases,
             tree=tree,
@@ -142,8 +148,11 @@ class CampaignCommands:
         return 0
 
     def _verify(self) -> int:
-        path = self._manifest()
-        if path is None:
+        tree = self._resolve()
+        if tree is None:
+            return 1
+        path = self._root() / tree / "manifest.json"
+        if not path.is_file():
             self._errors.write("tutor_sim: no manifest\n")
             return 1
         try:
@@ -158,32 +167,59 @@ class CampaignCommands:
         if tutor is None:
             self._errors.write("tutor_sim: run needs a tutor client\n")
             return 1
-        tree = self._placed()
+        if self._verify() != 0:
+            return 1
+        tree = self._resolve()
         if tree is None:
-            self._errors.write("tutor_sim: no realised stimuli\n")
             return 1
         runner = Tier1Runner(tutor, self._role)
-        lines: list[str] = []
+        learners = SimulationNamespace()
+        recorded: list[CampaignLine] = []
         try:
             for case in self._read(tree, "stimuli/test.jsonl"):
-                record = runner.run(case, case.utterance, UUID(int=1), "tutor-sim")
-                if record.observation is not None:
-                    lines.append(record.observation.model_dump_json())
+                record = runner.run(
+                    case,
+                    case.utterance,
+                    learners.learner_id(case.persona_id),
+                    "tutor-sim",
+                )
+                recorded.append(
+                    CampaignLine(
+                        case_id=record.case_id,
+                        errored=record.errored,
+                        observation=record.observation,
+                    )
+                )
         except (CampaignAbort, PolicyMismatch) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
-        destination = self._settings.evidence_dir / "observations.jsonl"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        text = "\n".join(lines) + ("\n" if lines else "")
-        destination.write_text(text, encoding="utf-8")
+        rows = tuple(recorded)
+        CampaignFile().write(self._settings.evidence_dir / "campaign.jsonl", rows)
+        ObservationFile().write(
+            self._settings.evidence_dir / "observations.jsonl",
+            self._observations(rows),
+        )
         return 0
 
     def _report(self) -> int:
-        path = self._root() / "report-input.json"
-        if not path.is_file():
-            self._errors.write("tutor_sim: no report input\n")
+        if self._verify() != 0:
             return 1
-        request = ReportRequest.model_validate_json(path.read_text(encoding="utf-8"))
+        tree = self._resolve()
+        if tree is None:
+            return 1
+        try:
+            lines = CampaignFile().read(self._settings.evidence_dir / "campaign.jsonl")
+        except FileNotFoundError:
+            self._errors.write("tutor_sim: no campaign results\n")
+            return 1
+        manifest = ManifestFile().load(self._root() / tree / "manifest.json")
+        request = ReportAssembly().request(
+            self._run_id(),
+            manifest.dataset_version,
+            "tier-1",
+            self._read(tree, "stimuli/test.jsonl"),
+            lines,
+        )
         report = ReportBuilder().build(
             request.run_id,
             request.dataset_version,
@@ -196,7 +232,21 @@ class CampaignCommands:
         destination = self._settings.evidence_dir / "report.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        ResultFile().write(
+            self._settings.evidence_dir / "results.jsonl",
+            tuple(item.result for item in request.scored),
+        )
         return 0
+
+    def _run_id(self) -> str:
+        return "run-" + self._clock.now().strftime("%Y%m%dT%H%M%S")
+
+    def _observations(self, rows: tuple[CampaignLine, ...]) -> tuple[Observation, ...]:
+        found: list[Observation] = []
+        for row in rows:
+            if row.observation is not None:
+                found.append(row.observation)
+        return tuple(found)
 
     def _root(self) -> Path:
         return self._settings.dataset_dir
@@ -214,15 +264,74 @@ class CampaignCommands:
     def _read(self, tree: DatasetTree, relative: str) -> tuple[StimulusCase, ...]:
         return StimulusFile().read(self._root() / tree / relative)
 
-    def _placed(self) -> DatasetTree | None:
-        for tree in ("public", "restricted"):
-            if (self._root() / tree / "stimuli/test.jsonl").is_file():
-                return tree
+    def _resolve(self) -> DatasetTree | None:
+        """The tree this realisation recorded. Two unmarked trees are refused."""
+        root = self._root()
+        recorded = ActiveTreeFile().read(root)
+        if recorded is not None:
+            if (root / recorded / "stimuli/test.jsonl").is_file():
+                return recorded
+            self._errors.write(
+                "tutor_sim: the active stimulus tree has no test split\n"
+            )
+            return None
+        candidates: tuple[DatasetTree, ...] = ("public", "restricted")
+        present = tuple(
+            tree
+            for tree in candidates
+            if (root / tree / "stimuli/test.jsonl").is_file()
+        )
+        if len(present) > 1:
+            self._errors.write(
+                "tutor_sim: both stimulus trees exist and none is active\n"
+            )
+            return None
+        if len(present) == 1:
+            return present[0]
+        self._errors.write("tutor_sim: no realised stimuli\n")
         return None
 
-    def _manifest(self) -> Path | None:
-        for tree in ("public", "restricted"):
-            path = self._root() / tree / "manifest.json"
-            if path.is_file():
-                return path
-        return None
+
+class JsonlFile:
+    """One JSON object per line. An empty sequence writes an empty file."""
+
+    def _write(self, path: Path, lines: tuple[str, ...]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+
+    def _read(self, path: Path) -> tuple[str, ...]:
+        if not path.is_file():
+            msg = "no campaign results"
+            raise FileNotFoundError(msg)
+        text = path.read_text(encoding="utf-8")
+        return tuple(line for line in text.splitlines() if line)
+
+
+class CampaignFile(JsonlFile):
+    """Every case, including those that errored and have no observation."""
+
+    def write(self, path: Path, rows: tuple[CampaignLine, ...]) -> None:
+        """Replace the file with one line per case."""
+        self._write(path, tuple(row.model_dump_json() for row in rows))
+
+    def read(self, path: Path) -> tuple[CampaignLine, ...]:
+        """The lines a report scores. A missing file is a command error."""
+        return tuple(
+            CampaignLine.model_validate_json(line) for line in self._read(path)
+        )
+
+
+class ObservationFile(JsonlFile):
+    """Observations only. An errored case is absent here and present in the campaign."""
+
+    def write(self, path: Path, rows: tuple[Observation, ...]) -> None:
+        """Replace the file. Learner text is not on an observation."""
+        self._write(path, tuple(row.model_dump_json() for row in rows))
+
+
+class ResultFile(JsonlFile):
+    """One comparison per frozen case, including the ones that errored."""
+
+    def write(self, path: Path, rows: tuple[CaseResult, ...]) -> None:
+        """Replace the results file the report just scored."""
+        self._write(path, tuple(row.model_dump_json() for row in rows))

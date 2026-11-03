@@ -55,6 +55,8 @@ class SimulationSettings(BaseSettings):
     seed: int = 0
     cache_dir: Path = Path(".cache/sim")
     offline: bool = False
+    # Echo copies the prompt. It is a test double, not a campaign model.
+    role_fixture: bool = False
     sources_path: Path = Path("datasets/sim/unreleased/public/sources.json")
 
     @field_validator("ollama_base_url")

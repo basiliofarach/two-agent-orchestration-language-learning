@@ -8,6 +8,7 @@ from uuid import UUID
 
 import httpx
 import pytest
+from pydantic import ValidationError
 from tests.unit.sim.test_kernel import OfflineSettings, PinnedSource
 
 from tutor_sim.adapters.file_dataset_store import FileDatasetStore
@@ -40,6 +41,7 @@ from tutor_sim.application.oracle import (
     MeasureSet,
     MetamorphicPairing,
     OutcomeClassifier,
+    ReportAssembly,
     ReportBuilder,
     ScoredCase,
     WilsonInterval,
@@ -70,7 +72,7 @@ from tutor_sim.application.tier1 import (
     Tier1Runner,
 )
 from tutor_sim.cli import SimulationCli
-from tutor_sim.composition import SimulationCompositionRoot
+from tutor_sim.composition import RoleUnpinned, SimulationCompositionRoot
 from tutor_sim.domain.models.api_views import GateRowView
 from tutor_sim.domain.models.case import CaseSpec, Expected
 from tutor_sim.domain.models.client_call import (
@@ -83,8 +85,10 @@ from tutor_sim.domain.models.client_call import (
     SessionCall,
     TurnCall,
 )
+from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.observation import (
     ActionAttempt,
+    CampaignLine,
     LeakHit,
     Observation,
     ObservedGate,
@@ -100,6 +104,7 @@ _WHEN = datetime(2026, 11, 3, tzinfo=UTC)
 _TURN = UUID(int=8)
 _SESSION = UUID(int=7)
 _LEARNER = UUID(int=6)
+_PERSONA = SimulationNamespace().learner_id("p-a2-es-12_14-01")
 
 
 def _case(
@@ -219,6 +224,7 @@ class ScriptedTutor(TutorClientPort):
         self.gate_decision = "pass"
         self.opens = 0
         self.acts = 0
+        self.persona_retained = True
 
     def health(self) -> HealthCall:
         if self.health_kind != "ok":
@@ -240,11 +246,10 @@ class ScriptedTutor(TutorClientPort):
             return LearnerCall(http_status=503, kind="errored", detail="down")
         from tutor_sim.domain.models.api_views import LearnerView
 
-        return LearnerCall(
-            http_status=200,
-            kind="ok",
-            body=(LearnerView(learner_id=_LEARNER, retained=True),),
-        )
+        rows = [LearnerView(learner_id=_LEARNER, retained=True)]
+        if self.persona_retained:
+            rows.append(LearnerView(learner_id=_PERSONA, retained=True))
+        return LearnerCall(http_status=200, kind="ok", body=tuple(rows))
 
     def open_session(self, learner_id: UUID, tutor_id: str) -> SessionCall:
         self.opens += 1
@@ -297,8 +302,13 @@ class ScriptedTutor(TutorClientPort):
     def detail(self, turn_id: UUID) -> DetailCall:
         if self.detail_kind != "ok":
             return DetailCall(http_status=404, kind="not_found", detail="missing")
-        from tutor_sim.domain.models.api_views import RecordView, TurnDetailView
+        from tutor_sim.domain.models.api_views import (
+            RecordView,
+            StoredPromptView,
+            TurnDetailView,
+        )
 
+        prompt = None if self.prompt is None else StoredPromptView(text=self.prompt)
         return DetailCall(
             http_status=200,
             kind="ok",
@@ -308,7 +318,7 @@ class ScriptedTutor(TutorClientPort):
                     retrieved_context_ids=self.ids,
                     output_before_checks=self.draft,
                     output_after_checks=self.after,
-                    learner_prompt=self.prompt,
+                    learner_prompt=prompt,
                 ),
             ),
         )
@@ -326,12 +336,17 @@ class ScriptedTutor(TutorClientPort):
             return ActionCall(http_status=self.act_status, kind="rejected", detail="no")
         if self.act_kind != "ok":
             return ActionCall(http_status=503, kind="errored", detail="down")
-        from tutor_sim.domain.models.api_views import RecordedActionView
+        from tutor_sim.domain.models.api_views import (
+            HumanActionView,
+            RecordedActionView,
+        )
 
         return ActionCall(
             http_status=self.act_status,
             kind="ok",
-            body=RecordedActionView(action=action, stopped=action == "stop"),
+            body=RecordedActionView(
+                action=HumanActionView(action=action), stopped=action == "stop"
+            ),
         )
 
     def audit(self, session_id: UUID) -> AuditCall:
@@ -1032,6 +1047,33 @@ class TestTier1:
         runner.run(_case("b"), "hello", _LEARNER, "tutor")
         assert client.opens == 2
 
+    def test_a_forbidden_string_in_the_reply_is_recorded_as_a_leak(self) -> None:
+        case = _case(payload_id="pay").model_copy(
+            update={
+                "expected": Expected(
+                    accept=("released_for_approval",),
+                    must_not_contain=("hello",),
+                    basis="construction",
+                )
+            }
+        )
+        client = ScriptedTutor()
+        client.prompt = "a question"
+        record = Tier1Runner(client, AbsentTutor()).run(
+            case, "hello", _LEARNER, "tutor"
+        )
+        assert record.observation is not None
+        assert [hit.field for hit in record.observation.leaks] == ["reply"]
+        assert record.observation.leaks[0].payload_id == "pay"
+
+    def test_an_unknown_learner_aborts_before_a_session_opens(self) -> None:
+        client = ScriptedTutor()
+        with pytest.raises(CampaignAbort, match="retained"):
+            Tier1Runner(client, AbsentTutor()).run(
+                _case(), "hello", UUID(int=99), "tutor"
+            )
+        assert client.opens == 0
+
 
 class TestCommands:
     def _plan(self, path: Path, payload: Payload | None = None) -> None:
@@ -1059,14 +1101,15 @@ class TestCommands:
         assert cli.main(["run"]) == 1
         assert "needs a tutor client" in errors.getvalue()
         assert cli.main(["report"]) == 1
-        request = {
-            "run_id": "run-1",
-            "dataset_version": "sim-dataset/0.1.0",
-            "label": "fixture",
-            "used_source_ids": ["ellipse"],
-        }
-        (dataset / "report-input.json").write_text(
-            json.dumps(request), encoding="utf-8"
+        line = CampaignLine(
+            case_id="c1",
+            errored=False,
+            observation=_observation(sources=("ellipse",)),
+        )
+        evidence = tmp_path / "evidence"
+        evidence.mkdir(exist_ok=True)
+        (evidence / "campaign.jsonl").write_text(
+            line.model_dump_json() + "\n", encoding="utf-8"
         )
         assert cli.main(["report"]) == 0
         report = json.loads(
@@ -1242,11 +1285,18 @@ class TestCommands:
             errors,
         )
         assert commands.dispatch("realise") == 0
+        assert commands.dispatch("run") == 1
+        assert "no manifest" in errors.getvalue()
+        assert commands.dispatch("freeze") == 0
         assert commands.dispatch("run") == 0
         text = (settings.evidence_dir / "observations.jsonl").read_text(
             encoding="utf-8"
         )
         assert "c1" in text
+        campaign = (settings.evidence_dir / "campaign.jsonl").read_text(
+            encoding="utf-8"
+        )
+        assert CampaignLine.model_validate_json(campaign).errored is False
         client.health_kind = "errored"
         assert commands.dispatch("run") == 1
         client.health_kind = "ok"
@@ -1256,11 +1306,102 @@ class TestCommands:
             encoding="utf-8"
         )
         assert written == ""
+        failed = (settings.evidence_dir / "campaign.jsonl").read_text(encoding="utf-8")
+        parsed = CampaignLine.model_validate_json(failed)
+        assert parsed.errored is True
+        assert parsed.case_id == "c1"
+        assert parsed.observation is None
+        (settings.dataset_dir / "public" / "stimuli" / "test.jsonl").write_bytes(
+            b"tampered\n"
+        )
+        assert commands.dispatch("run") == 1
         (settings.dataset_dir / "public" / "stimuli" / "test.jsonl").unlink()
         (settings.dataset_dir / "public" / "stimuli" / "dev.jsonl").unlink()
         assert commands.dispatch("run") == 1
         assert commands.dispatch("freeze") == 1
-        assert "no realised stimuli" in errors.getvalue()
+        assert "active stimulus tree" in errors.getvalue()
+
+    def test_an_errored_case_stays_in_the_report_denominator(self) -> None:
+        request = ReportAssembly().request(
+            "run-1",
+            "sim-dataset/0.1.0",
+            "tier-1",
+            (_case(),),
+            (CampaignLine(case_id="c1", errored=True),),
+        )
+        assert request.scored[0].result.errored is True
+        assert request.scored[0].result.outcome_ok is False
+        headline = MeasureSet().rates(request.scored)[0]
+        assert headline.n == 1
+        assert headline.k == 0
+
+    def test_a_later_restricted_realisation_is_the_one_that_freezes(
+        self, tmp_path: Path
+    ) -> None:
+        settings = OfflineSettings().build(tmp_path, True)
+        self._plan(settings.dataset_dir)
+        errors = io.StringIO()
+        commands = CampaignCommands(
+            settings,
+            FrozenClock(_WHEN),
+            FileDatasetStore(settings.dataset_dir),
+            EchoRoleModel(),
+            (PinnedSource().record(),),
+            None,
+            AbsentTutor(),
+            errors,
+        )
+        assert commands.dispatch("realise") == 0
+        self._plan(settings.dataset_dir, _payload(redistributable=False))
+        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("freeze") == 0
+        assert (settings.dataset_dir / "restricted" / "manifest.json").is_file()
+        assert not (settings.dataset_dir / "public" / "manifest.json").is_file()
+        (settings.dataset_dir / "active-tree.json").unlink()
+        assert commands.dispatch("freeze") == 1
+        assert "both stimulus trees" in errors.getvalue()
+
+    def test_a_live_command_refuses_the_echo_model(self, tmp_path: Path) -> None:
+        settings = (
+            OfflineSettings()
+            .build(tmp_path, False)
+            .model_copy(update={"role_fixture": False})
+        )
+        errors = io.StringIO()
+        status = SimulationCli(SimulationCompositionRoot(settings), errors).main(
+            ["realise"]
+        )
+        assert status == 1
+        assert "role-model pin" in errors.getvalue()
+        with pytest.raises(RoleUnpinned):
+            SimulationCompositionRoot(settings).wire(errors)
+
+    def test_a_distinct_role_pin_is_what_freeze_records(self, tmp_path: Path) -> None:
+        settings = OfflineSettings().build(tmp_path, True)
+        self._plan(settings.dataset_dir)
+        errors = io.StringIO()
+        assert (
+            SimulationCli(SimulationCompositionRoot(settings), errors).main(["realise"])
+            == 0
+        )
+        role = "cd" * 32
+        settings.runtime_pin_path.write_text(
+            '[model]\nweights_sha = "'
+            + ("ab" * 32)
+            + '"\n[role_model]\nweights_sha = "'
+            + role
+            + '"\n',
+            encoding="utf-8",
+        )
+        live = settings.model_copy(update={"role_fixture": False})
+        assert (
+            SimulationCli(SimulationCompositionRoot(live), errors).main(["freeze"]) == 0
+        )
+        manifest = ManifestFile().load(
+            settings.dataset_dir / "public" / "manifest.json"
+        )
+        assert manifest.role_model.name == "ollama"
+        assert manifest.role_model.weights_sha == role
 
 
 class TestHttpTutorClient:
@@ -1360,7 +1501,18 @@ class TestHttpTutorClient:
                         "policy_version": "prototype-2",
                     },
                 )
-            return httpx.Response(200, json={"action": "edit", "stopped": False})
+            return httpx.Response(
+                200,
+                json={
+                    "action": {
+                        "turn_id": str(_TURN),
+                        "tutor_id": "tutor",
+                        "action": "edit",
+                        "acted_at": "2026-11-03T00:00:00Z",
+                    },
+                    "stopped": False,
+                },
+            )
 
         client = self._client(handler)
         assert client.act(_SESSION, _TURN, "tutor", "edit", "the draft").kind == "ok"
@@ -1377,3 +1529,46 @@ class TestHttpTutorClient:
         )
         assert client.audit(_SESSION).kind == "ok"
         assert client.replay(_TURN).kind == "ok"
+        acted = client.act(_SESSION, _TURN, "tutor", "approve", None)
+        assert acted.body is not None
+        assert acted.body.action.action == "edit"
+        assert acted.body.stopped is False
+
+    def test_a_turn_detail_parses_the_nested_prompt_and_a_string_does_not(
+        self,
+    ) -> None:
+        from tutor_sim.domain.models.api_views import RecordView, StoredPromptView
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "session": {"session_id": str(_SESSION)},
+                    "record": {
+                        "turn_id": str(_TURN),
+                        "learner_prompt": {
+                            "text": "hello there",
+                            "redacted_categories": ["person"],
+                        },
+                        "retrieved_context_ids": ["chunk-1"],
+                        "output_before_checks": "a draft",
+                        "output_after_checks": "a draft",
+                    },
+                    "actions": [],
+                    "cited": [],
+                    "record_intact": True,
+                },
+            )
+
+        detail = self._client(handler).detail(_TURN)
+        assert detail.body is not None
+        prompt = detail.body.record.learner_prompt
+        assert isinstance(prompt, StoredPromptView)
+        assert prompt.text == "hello there"
+        assert prompt.redacted_categories == ("person",)
+        with pytest.raises(ValidationError):
+            RecordView.model_validate({"learner_prompt": "hello there"})
+        from tutor_sim.domain.models.api_views import RecordedActionView
+
+        with pytest.raises(ValidationError):
+            RecordedActionView.model_validate({"action": "approve", "stopped": False})
