@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ReviewStatus = Literal["pending", "approved", "rejected"]
+CefrLevel = Literal["A1", "A2", "B1", "B2", "C1", "C2"]
 
 
 class CorpusDocument(BaseModel):
@@ -21,6 +22,9 @@ class CorpusDocument(BaseModel):
     source_uri: str = Field(min_length=1)
     version: str = Field(min_length=1)
     review_status: ReviewStatus
+    licence: str = Field(min_length=1)
+    cefr_level: CefrLevel
+    level_method: str = Field(min_length=1)
     content: str = Field(min_length=1)
 
     @field_validator("content")

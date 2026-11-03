@@ -1,5 +1,5 @@
 target-version = "py312"
-src = ["tutor-core/src", "tutor-api/src"]
+src = ["tutor-core/src", "tutor-api/src", "tutor-sim/src"]
 exclude = [
     ".venv",
     "site",
@@ -27,7 +27,7 @@ select = [
 "typing.NamedTuple".msg = "DEC-0002: NamedTuple is prohibited for domain data"
 
 [lint.isort]
-known-first-party = ["tutor_core", "tutor_api"]
+known-first-party = ["tutor_core", "tutor_api", "tutor_sim"]
 
 [format]
 docstring-code-format = true

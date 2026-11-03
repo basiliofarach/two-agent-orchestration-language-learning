@@ -42,7 +42,7 @@ layer on top of the pipeline.
 
 | Article | Locus in this prototype |
 | --- | --- |
-| Art. 10 — Data governance | Curated knowledge base, student-history schema (allowlist), real-time PII redaction |
+| Art. 10 — Data governance | Curated knowledge base, student-history schema (allowlist), real-time PII redaction; the testing data set (REQ-TESTDATA) |
 | Art. 12 — Record-keeping | Per-turn audit log and versioned policy artifact |
 | Art. 14 — Human oversight | Four gates (REQ-GATES) and the tutor dashboard (REQ-DASH) |
 | Art. 15 — Accuracy and robustness | Retrieval-constrained generation, output checks, refusal, prompt-injection hardening |
@@ -191,18 +191,95 @@ Eight tutor-side cases, each an integration test:
 8. Prompt-injection attempt
 
 Rubric: correctness, clarity, source support, age-appropriateness, and safety.
-LLM-as-a-judge is a secondary signal; disagreements are resolved by humans.
-Never assert on a real model's generated text in automated tests — stub
+Each criterion is computed by comparing observed behaviour with the case's
+expected outcome. **No language model scores any output** (DEC-0015). Never
+assert on a real model's generated text in automated tests — stub
 `LanguageModelPort` and assert on pipeline behaviour.
+
+The eight cases are part of the simulation case plan (REQ-SIM). They are
+written in English, the target language (REQ-TESTDATA).
 
 ---
 
-## REQ-FIELD — Evaluation protocol
+## REQ-FIELD — Evaluation protocol *(superseded)*
 
-Field testing is gated on a usable dashboard. Roughly five to eight adult tutors
-(not minors) run guided sessions. Two passes: an early formative round and a
-later confirmatory round after disruptive issues are corrected.
+Superseded by REQ-SIM ([DEC-0015](decisions/0015-role-based-simulation-replaces-field-testing.md),
+2026-11-03): no tutors or learners take part in the evaluation. The
+identifier is kept so that existing citations resolve. Do not cite it in new
+work. The original text is kept for traceability:
 
-Metrics are first recorded on synthetic inputs, then re-applied to tutor-sourced
-material. A metric is treated as validated only when it has held up on
-tutor-sourced inputs; drift between the two is reported, not smoothed over.
+> Field testing is gated on a usable dashboard. Roughly five to eight adult
+> tutors (not minors) run guided sessions. Two passes: an early formative
+> round and a later confirmatory round after disruptive issues are
+> corrected. Metrics are first recorded on synthetic inputs, then re-applied
+> to tutor-sourced material. A metric is treated as validated only when it
+> has held up on tutor-sourced inputs; drift between the two is reported,
+> not smoothed over.
+
+---
+
+## REQ-SIM — Role-based simulation
+
+Role agents stand in for tutors and learners
+([DEC-0015](decisions/0015-role-based-simulation-replaces-field-testing.md)):
+
+- **virtual pupils**, each conditioned on a persona card
+- **four tutor roles**: diligent (model-driven), complacent, absent, and
+  stopper
+
+The system and its deployment premise are unchanged: an adult tutor is the
+only user (REQ-DASH). The harness reaches the system only through the tutor
+API.
+
+- Every case carries an expected outcome, fixed when the case is built and
+  derived from the policy version (REQ-POLICY). No language model scores a
+  system output, a pupil utterance, or a tutor-role decision.
+- **Tier 1** is frozen and open-loop. It yields every reported rate, each
+  with a 95% Wilson interval per stratum.
+- **Tier 2** is closed-loop, with episodes of at most eight turns. It
+  reports invariants only.
+
+Invariants, which must hold on every run:
+
+- No turn is released without the tutor action its outcome requires.
+- No `must_not_contain` string appears in any stored or released field.
+- A prompt-injection case never reaches the model.
+- Every turn has four gate rows, the hash chain verifies, and replay is
+  byte-identical.
+
+Reported, not asserted:
+
+- outcome accuracy and gate attribution per intent
+- detector recall on the dev and test splits
+- residual risk under the complacent tutor
+- metamorphic consistency of noisy twins
+- level fit of released drafts
+- pupil level fidelity and discard rate
+- differences between strata in how often benign requests are held
+
+Every figure is labelled `simulated:<dataset_version>`. A tutor-sourced
+stratum can be added later without changing the harness.
+
+**Limit.** This does not evidence the human side of Art. 14(4)(a)–(c): that
+an overseer understands the system, stays aware of automation bias, and
+interprets its output correctly.
+
+---
+
+## REQ-TESTDATA — Testing data governance (Art. 10(6))
+
+The prototype trains no model. The simulation dataset is therefore its
+Article 10 testing data set
+([DEC-0016](decisions/0016-evaluation-dataset-is-the-testing-data-set.md)).
+It is governed against Art. 10(2)(a)–(h) in
+[evaluation/DATASET.md](evaluation/DATASET.md).
+
+- **Scope:** English as the target language; learners aged 12–17; CEFR
+  A1–B2.
+- **Licences:** every source, and every item drawn from it, records its
+  licence. Text whose licence forbids redistribution is never committed.
+- **Splits:** dev and test. Tuning happens on dev only. The test split is
+  frozen and hashed before the first test run, and dataset versions are
+  never pooled.
+- **Content:** no personal data. Harmful content comes only from published
+  sets and is never generated.

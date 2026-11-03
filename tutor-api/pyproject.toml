@@ -27,8 +27,8 @@ build-backend = "hatchling.build"
 tutor-core = { workspace = true }
 
 [tool.pylint.main]
-source-roots = ["src", "../tutor-core/src"]
+source-roots = ["src", "../tutor-core/src", "../tutor-sim/src"]
 
 [tool.pylint.imports]
-known-first-party = ["tutor_core", "tutor_api"]
-init-hook = "import sys; from pathlib import Path; root = next((p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'uv.lock').is_file()), None); sys.path[:0] = [str(root / 'tutor-core' / 'src'), str(root / 'tutor-api' / 'src')] if root is not None else []"
+known-first-party = ["tutor_core", "tutor_api", "tutor_sim"]
+init-hook = "import sys; from pathlib import Path; root = next((p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'uv.lock').is_file()), None); sys.path[:0] = [str(root / 'tutor-core' / 'src'), str(root / 'tutor-api' / 'src'), str(root / 'tutor-sim' / 'src')] if root is not None else []"

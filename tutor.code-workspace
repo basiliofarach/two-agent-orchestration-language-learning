@@ -13,6 +13,10 @@
       "path": "tutor-api"
     },
     {
+      "name": "tutor-sim",
+      "path": "tutor-sim"
+    },
+    {
       "name": "app",
       "path": "app"
     }
@@ -21,21 +25,25 @@
     "python.defaultInterpreterPath": "${workspaceFolder:root}/.venv/bin/python",
     "python.analysis.extraPaths": [
       "${workspaceFolder:root}/tutor-core/src",
-      "${workspaceFolder:root}/tutor-api/src"
+      "${workspaceFolder:root}/tutor-api/src",
+      "${workspaceFolder:root}/tutor-sim/src"
     ],
     "basedpyright.analysis.extraPaths": [
       "${workspaceFolder:root}/tutor-core/src",
-      "${workspaceFolder:root}/tutor-api/src"
+      "${workspaceFolder:root}/tutor-api/src",
+      "${workspaceFolder:root}/tutor-sim/src"
     ],
     "pylint.args": [
       "--source-roots",
       "${workspaceFolder:root}/tutor-core/src",
       "--source-roots",
       "${workspaceFolder:root}/tutor-api/src",
+      "--source-roots",
+      "${workspaceFolder:root}/tutor-sim/src",
       "--init-hook",
-      "import sys; sys.path[:0] = [r'${workspaceFolder:root}/tutor-core/src', r'${workspaceFolder:root}/tutor-api/src']",
+      "import sys; sys.path[:0] = [r'${workspaceFolder:root}/tutor-core/src', r'${workspaceFolder:root}/tutor-api/src', r'${workspaceFolder:root}/tutor-sim/src']",
       "--known-first-party",
-      "tutor_core,tutor_api"
+      "tutor_core,tutor_api,tutor_sim"
     ],
     "python.terminal.useEnvFile": true,
     "python.envFile": "${workspaceFolder:tutor-api}/.env",

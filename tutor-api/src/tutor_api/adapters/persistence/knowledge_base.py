@@ -166,8 +166,14 @@ class PostgresCorpusIngestion(BaseRepository, CorpusIngestionPort):
     """
 
     _DOCUMENT = """
-        INSERT INTO kb_document (id, source_uri, version, review_status)
-        VALUES (:id, :source_uri, :version, :review_status)
+        INSERT INTO kb_document (
+            id, source_uri, version, review_status,
+            licence, cefr_level, level_method
+        )
+        VALUES (
+            :id, :source_uri, :version, :review_status,
+            :licence, :cefr_level, :level_method
+        )
         """
 
     _CHUNK = """
@@ -204,6 +210,11 @@ class PostgresCorpusIngestion(BaseRepository, CorpusIngestionPort):
                 "source_uri": document.source_uri,
                 "version": document.version,
                 "review_status": document.review_status,
+                "licence": self._cipher.encrypt(document.licence.encode("utf-8")),
+                "cefr_level": self._cipher.encrypt(document.cefr_level.encode("utf-8")),
+                "level_method": self._cipher.encrypt(
+                    document.level_method.encode("utf-8")
+                ),
             },
         )
         chunk_ids = [

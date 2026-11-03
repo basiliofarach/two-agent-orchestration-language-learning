@@ -65,6 +65,23 @@ hash chain like turns. `AuditQueryPort` gains `session_actions` and
 `citations` (curated chunk text, not learner text). `CohortReportPort`
 added: read-only counts for the periodic review, with no verdict method.
 
+*Amended:* 2026-11-03
+([DEC-0015](0015-role-based-simulation-replaces-field-testing.md)) —
+`RoleModelPort`, `TutorClientPort` and `TutorRolePort` were added for the
+simulation harness. They live in the `tutor-sim` workspace member, which
+imports no system package, so none of them can be registered in the
+system's container. `RoleModelPort` is not `LanguageModelPort`: it serves
+a different model, pinned separately, and holds no client to the tutor
+API. The system's port set is unchanged.
+
+*Amended:* 2026-11-03
+([architecture/SIMULATION.md §7.1](../architecture/SIMULATION.md#71-harness-ports))
+— `SourceFetchPort` and `DatasetStorePort` were added for the harness.
+Both stay in `tutor-sim`. `SourceFetchPort` fetches a pinned source and
+checks its digest. `DatasetStorePort` writes the dataset tree and refuses
+a non-redistributable item under `public/`. Neither is registered in the
+system container.
+
 ## Context
 
 The prototype must produce *evidence* that Articles 10, 12, 14 and 15 are
@@ -119,6 +136,12 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `CipherPort` | Encrypt / decrypt bytes at the persistence boundary | Bytes only; no domain types; holds no store | REQ-MINOR, DEC-0012 |
 | `UnitOfWorkPort` | One transaction for a turn's writes | Adapters enlist; they do not open a connection | REQ-AUDIT, DEC-0006 |
 | `TransactionConnection` | Commit, rollback, close, execute, and fetch one row or all rows on the enlisted transaction | No connect, no engine, no cursor; a holder cannot open a second transaction | REQ-AUDIT, DEC-0006 |
+| `RoleModelPort` *(harness)* | Persona-conditioned completion for a virtual pupil or a tutor role | `tutor-sim` only; never in the system container; no tutor-API client; pinned digest recorded per stimulus | REQ-SIM, DEC-0015 |
+| `TutorClientPort` *(harness)* | Submit a turn, read its outcome, act on a held turn, stop a session | The tutor API's HTTP surface only; nothing the dashboard cannot do | REQ-SIM, DEC-0015 |
+| `TutorRolePort` *(harness)* | Choose the dashboard action for a held turn | Sees only the turn view the API returns; returns approve, edit, override, stop, or none; its choice is a stimulus, never a score | REQ-SIM, DEC-0015 |
+| `SourceFetchPort` *(harness)* | Fetch one pinned source and check its digest | `tutor-sim` only; no tutor-API client; a mismatch is fatal | REQ-TESTDATA, DEC-0016 |
+| `PosTaggerPort` *(harness)* | Tag one sentence as `word_TAG_lemma` for a Grammar Profile regex | `tutor-sim` only; build-time and measures; the system never tags | REQ-TESTDATA, DEC-0016 |
+| `DatasetStorePort` *(harness)* | Write a dataset file into the public or restricted tree | Refuses a non-redistributable item under `public/` | REQ-TESTDATA, DEC-0016 |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
 takes an explicit field allowlist at construction and selects only those
@@ -145,9 +168,10 @@ second implementation (a stub counts) or enforces a scope boundary. Ports
 failing both tests get collapsed.
 
 `CipherPort` was added to the table above by
-[DEC-0012](0012-encryption-at-rest-by-default.md). The table is a registry, so
-it is kept current as ports are introduced; the decision this record makes is
-unchanged.
+[DEC-0012](0012-encryption-at-rest-by-default.md), and the three *(harness)*
+ports by [DEC-0015](0015-role-based-simulation-replaces-field-testing.md).
+The table is a registry, so it is kept current as ports are introduced; the
+decision this record makes is unchanged.
 
 See also
 [DEC-0011](0011-layer-roles-and-service-lifecycle.md) for authoring order,

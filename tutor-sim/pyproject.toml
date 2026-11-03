@@ -1,0 +1,14 @@
+[project]
+name = "tutor-sim"
+version = "0.1.0"
+description = "Role-based simulation harness. It reaches the tutor API over HTTP only."
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "tutor-core",
     "tutor-api",
+    "tutor-sim",
 ]
 
 [tool.uv]
@@ -15,18 +16,19 @@ required-version = ">=0.12.5"
 # Pylint does not read pytest's pythonpath. These roots match it, so
 # tutor_core stays first-party beside tutor_api (ruff known-first-party).
 [tool.pylint.main]
-source-roots = ["tutor-core/src", "tutor-api/src"]
+source-roots = ["tutor-core/src", "tutor-api/src", "tutor-sim/src"]
 
 [tool.pylint.imports]
-known-first-party = ["tutor_core", "tutor_api"]
-init-hook = "import sys; from pathlib import Path; root = next((p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'uv.lock').is_file()), None); sys.path[:0] = [str(root / 'tutor-core' / 'src'), str(root / 'tutor-api' / 'src')] if root is not None else []"
+known-first-party = ["tutor_core", "tutor_api", "tutor_sim"]
+init-hook = "import sys; from pathlib import Path; root = next((p for p in [Path.cwd(), *Path.cwd().parents] if (p / 'uv.lock').is_file()), None); sys.path[:0] = [str(root / 'tutor-core' / 'src'), str(root / 'tutor-api' / 'src'), str(root / 'tutor-sim' / 'src')] if root is not None else []"
 
 [tool.uv.workspace]
-members = ["tutor-core", "tutor-api"]
+members = ["tutor-core", "tutor-api", "tutor-sim"]
 
 [tool.uv.sources]
 tutor-core = { workspace = true }
 tutor-api = { workspace = true }
+tutor-sim = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -44,11 +46,12 @@ dev = [
 [tool.pytest.ini_options]
 # The src roots are explicit so the suite does not depend on the editable
 # .pth files, which Python skips once macOS flags them hidden (gh-113659).
-pythonpath = [".", "tutor-core/src", "tutor-api/src"]
+pythonpath = [".", "tutor-core/src", "tutor-api/src", "tutor-sim/src"]
 testpaths = ["tests", "tutor-core/tests", "tutor-api/tests"]
 addopts = [
     "--cov=tutor_core",
     "--cov=tutor_api",
+    "--cov=tutor_sim",
     "--cov-fail-under=100",
     "--cov-report=term-missing",
     # Starts the real sandbox compose project; `make sandbox-lifecycle` runs it.
@@ -73,7 +76,7 @@ branch = true
 # resume are invisible unless the greenlet tracer is on. ``thread`` stays
 # so the FastAPI tests keep the default tracer.
 concurrency = ["greenlet", "thread"]
-source = ["tutor_core", "tutor_api"]
+source = ["tutor_core", "tutor_api", "tutor_sim"]
 omit = ["*/tests/*", "*/fixtures/*"]
 
 [tool.coverage.report]
@@ -83,7 +86,7 @@ exclude_lines = [
 ]
 
 [tool.importlinter]
-root_packages = ["tutor_core", "tutor_api"]
+root_packages = ["tutor_core", "tutor_api", "tutor_sim"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -117,3 +120,24 @@ name = "Application does not import the API package"
 type = "forbidden"
 source_modules = ["tutor_core.application"]
 forbidden_modules = ["tutor_api"]
+
+[[tool.importlinter.contracts]]
+name = "The harness reaches the system only over HTTP (DEC-0015)"
+type = "forbidden"
+source_modules = ["tutor_sim"]
+forbidden_modules = ["tutor_core", "tutor_api"]
+
+[[tool.importlinter.contracts]]
+name = "The system never imports the harness"
+type = "forbidden"
+source_modules = ["tutor_core", "tutor_api"]
+forbidden_modules = ["tutor_sim"]
+
+[[tool.importlinter.contracts]]
+name = "Harness layers"
+type = "layers"
+layers = [
+    "tutor_sim.adapters",
+    "tutor_sim.application",
+    "tutor_sim.domain",
+]

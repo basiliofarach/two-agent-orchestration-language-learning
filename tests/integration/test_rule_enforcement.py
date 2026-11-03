@@ -58,3 +58,25 @@ class TestRuleEnforcement:
         combined = result.stdout + result.stderr
         assert result.returncode != 0
         assert "fastapi" in combined.lower()
+
+    def test_harness_import_of_tutor_core_fails_import_linter(self) -> None:
+        root = RepositoryPaths().root()
+        planted = root / "tutor-sim" / "src" / "tutor_sim" / "_be01_core_import.py"
+        fixture = (
+            root
+            / "tests"
+            / "fixtures"
+            / "rule_violations"
+            / "harness_imports_tutor_core.py"
+        )
+        shutil.copyfile(fixture, planted)
+        try:
+            result = GuardrailCommand().run(
+                ["uv", "run", "lint-imports"],
+                cwd=root,
+            )
+        finally:
+            planted.unlink(missing_ok=True)
+        combined = result.stdout + result.stderr
+        assert result.returncode != 0
+        assert "tutor_core" in combined

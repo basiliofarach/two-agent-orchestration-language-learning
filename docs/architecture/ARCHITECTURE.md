@@ -959,7 +959,12 @@ REQ-HISTORY). The gate count stays at four.
 - **Drift gate is per-session.** REQ-GATES specifies monitoring behaviour
   against an expected envelope; true cross-cohort drift detection needs a
   longitudinal corpus this prototype does not collect. Report that bound with
-  REQ-FIELD metrics.
+  REQ-SIM metrics.
+- **No human participants in the evaluation.** Role agents stand in for
+  tutors and learners (DEC-0015). The evidence shows that the oversight
+  controls exist, are enforced and are logged. It does not show the human
+  side of Art. 14(4)(a)–(c). The system is still designed for an adult tutor
+  as its only user.
 - **The safety classifier is a pattern list.** It catches the phrasings it
   names and misses paraphrases. `make eval` runs a paraphrase of each
   detector-facing case (5, 6, 8); each is a recorded miss today, marked as

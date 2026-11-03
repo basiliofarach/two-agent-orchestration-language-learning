@@ -1,5 +1,7 @@
 """Liveness, and a statement that configuration resolved through the graph."""
 
+from typing import Literal
+
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
@@ -13,6 +15,7 @@ class HealthStatus(BaseModel):
 
     status: str
     database_configured: bool
+    mode: Literal["prototype", "simulation"] = "prototype"
 
 
 class HealthRouter:
@@ -45,4 +48,5 @@ class HealthRouter:
         return HealthStatus(
             status="ok",
             database_configured=bool(settings.database_url or settings.postgres_db),
+            mode=settings.tutor_mode,
         )

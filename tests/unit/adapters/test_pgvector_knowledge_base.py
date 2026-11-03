@@ -253,6 +253,9 @@ class TestPostgresCorpusIngestion:
         assert ingested.document_id == document.document_id
         assert ingested.chunk_ids == (_CHUNK,)
         assert connection.parameters[0]["review_status"] == "pending"
+        assert connection.parameters[0]["licence"] == b"sealed:author-own"
+        assert connection.parameters[0]["cefr_level"] == b"sealed:A1"
+        assert connection.parameters[0]["level_method"] == b"sealed:author-assigned"
         assert all(
             statement.lstrip().upper().startswith("INSERT")
             for statement in connection.statements

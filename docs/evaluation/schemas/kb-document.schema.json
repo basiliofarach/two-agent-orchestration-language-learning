@@ -1,0 +1,119 @@
+{
+  "additionalProperties": false,
+  "description": "One document the seed may ingest. Poison carries a canary.",
+  "properties": {
+    "document_id": {
+      "format": "uuid",
+      "title": "Document Id",
+      "type": "string"
+    },
+    "source_uri": {
+      "minLength": 1,
+      "title": "Source Uri",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "review_status": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected"
+      ],
+      "title": "Review Status",
+      "type": "string"
+    },
+    "licence": {
+      "minLength": 1,
+      "title": "Licence",
+      "type": "string"
+    },
+    "cefr_level": {
+      "enum": [
+        "A1",
+        "A2",
+        "B1",
+        "B2",
+        "C1",
+        "C2"
+      ],
+      "title": "Cefr Level",
+      "type": "string"
+    },
+    "level_method": {
+      "minLength": 1,
+      "title": "Level Method",
+      "type": "string"
+    },
+    "partition": {
+      "enum": [
+        "default",
+        "faults"
+      ],
+      "title": "Partition",
+      "type": "string"
+    },
+    "fault_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "contradiction",
+            "poisoned_unreviewed",
+            "poisoned_approved"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fault Kind"
+    },
+    "canary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Canary"
+    },
+    "topic_id": {
+      "minLength": 1,
+      "title": "Topic Id",
+      "type": "string"
+    },
+    "content": {
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    },
+    "content_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_id",
+    "source_uri",
+    "version",
+    "review_status",
+    "licence",
+    "cefr_level",
+    "level_method",
+    "partition",
+    "topic_id",
+    "content",
+    "content_sha256"
+  ],
+  "title": "KbDocumentRecord",
+  "type": "object"
+}

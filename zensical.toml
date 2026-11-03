@@ -29,7 +29,9 @@ nav = [
   { "Architecture" = [
     { "Overview" = "architecture/ARCHITECTURE.md" },
     { "Implementation plan" = "architecture/IMPLEMENTATION-PLAN.md" },
+    { "Role-based simulation" = "architecture/SIMULATION.md" },
   ] },
+  { "Evaluation dataset" = "evaluation/DATASET.md" },
   { "Decisions" = [
     { "All records" = "decisions/README.md" },
     { "DEC-0001 Interface-first OOP" = "decisions/0001-interface-first-oop-di-capability-scoping.md" },
@@ -46,6 +48,8 @@ nav = [
     { "DEC-0012 Encryption at rest" = "decisions/0012-encryption-at-rest-by-default.md" },
     { "DEC-0013 First-party composition root" = "decisions/0013-first-party-composition-root.md" },
     { "DEC-0014 One request connection" = "decisions/0014-one-request-connection.md" },
+    { "DEC-0015 Role-based simulation" = "decisions/0015-role-based-simulation-replaces-field-testing.md" },
+    { "DEC-0016 Testing data set" = "decisions/0016-evaluation-dataset-is-the-testing-data-set.md" },
   ] },
 ]
 

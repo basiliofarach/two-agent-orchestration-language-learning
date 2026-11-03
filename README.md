@@ -99,11 +99,11 @@ outbound network off to confirm there is no egress.
 
 ## Checks
 
-Ruff reviews Python (`tutor-core`, `tutor-api`). Strict mypy checks both
-packages. import-linter enforces the hexagonal boundary. Biome reviews the
-dashboard once TypeScript files exist. The same hook config works with
-**prek** or **pre-commit**. CI runs those
-hooks and `pytest` (coverage gate in `pyproject.toml`).
+Ruff reviews Python (`tutor-core`, `tutor-api`, `tutor-sim`). Strict mypy
+checks the same three packages. import-linter enforces the hexagonal
+boundary. Biome reviews the dashboard once TypeScript files exist. The same
+hook config works with **prek** or **pre-commit**. CI runs those hooks and
+`pytest` (coverage gate in `pyproject.toml`).
 
 ```text
 cd tutor-api

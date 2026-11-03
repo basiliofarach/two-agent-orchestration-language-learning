@@ -84,7 +84,11 @@ class TestHealthRouter:
     def test_returns_ok_with_the_graph_wired(self, client: TestClient) -> None:
         response = client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "database_configured": True}
+        assert response.json() == {
+            "status": "ok",
+            "database_configured": True,
+            "mode": "prototype",
+        }
 
     def test_settings_are_injected_not_constructed(self) -> None:
         """Swap the provider; the handler must follow the container.
@@ -94,7 +98,11 @@ class TestHealthRouter:
         """
         with _client(UnconfiguredSettingsProvider()) as started:
             body = started.get("/health").json()
-        assert body == {"status": "ok", "database_configured": False}
+        assert body == {
+            "status": "ok",
+            "database_configured": False,
+            "mode": "prototype",
+        }
 
     def test_the_real_container_wires_the_route(self) -> None:
         """The graph ``main.py`` composes must serve the route.
@@ -152,3 +160,21 @@ class TestApplicationWiring:
         ):
             assert first.get("/health").json()["database_configured"] is False
             assert second.get("/health").json()["database_configured"] is True
+
+
+class SimulationModeSettings(ConfiguredSettingsProvider):
+    """The same graph, with the process in simulation mode."""
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        return ApplicationSettings(
+            _env_file=None,
+            postgres_user="tutor_owner",
+            postgres_db="tutor",
+            tutor_mode="simulation",
+        )
+
+
+class TestSimulationMode:
+    def test_health_reports_simulation_mode(self) -> None:
+        with _client(SimulationModeSettings()) as started:
+            assert started.get("/health").json()["mode"] == "simulation"

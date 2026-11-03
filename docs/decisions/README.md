@@ -18,7 +18,7 @@ in the [Implementation plan](../architecture/IMPLEMENTATION-PLAN.md).
 
 | ID | Decision | Status |
 | ---- | ---------- | -------- |
-| [DEC-0001](0001-interface-first-oop-di-capability-scoping.md) | Interface-first OOP; DI as capability scoping | Accepted |
+| [DEC-0001](0001-interface-first-oop-di-capability-scoping.md) | Interface-first OOP; DI as capability scoping | Accepted (amended: harness source and dataset ports) |
 | [DEC-0002](0002-pydantic-basemodel-only.md) | Pydantic `BaseModel` as the only model type | Accepted |
 | [DEC-0003](0003-python-toolchain-uv-fastapi-wireup.md) | uv + FastAPI + wireup | Accepted (wireup clause superseded by DEC-0013) |
 | [DEC-0004](0004-langgraph-orchestration-backbone.md) | LangGraph as deterministic backbone | Accepted |
@@ -32,6 +32,8 @@ in the [Implementation plan](../architecture/IMPLEMENTATION-PLAN.md).
 | [DEC-0012](0012-encryption-at-rest-by-default.md) | Encryption at rest by default; plaintext is the exception | Accepted |
 | [DEC-0013](0013-first-party-composition-root.md) | First-party composition root; FastAPI `Depends()` only | Accepted (amended: request scope) |
 | [DEC-0014](0014-one-request-connection.md) | One connection per request; persistence ports enlist in it | Accepted |
+| [DEC-0015](0015-role-based-simulation-replaces-field-testing.md) | Role-based simulation replaces field testing; no LLM judge | Accepted (supersedes REQ-FIELD; amends DEC-0001) |
+| [DEC-0016](0016-evaluation-dataset-is-the-testing-data-set.md) | The evaluation dataset is the Article 10(6) testing data set | Accepted (amended: licence review gates publication, not the freeze) |
 
 ## Article coverage
 
@@ -40,10 +42,10 @@ Article it speaks to, so the columns do not partition.
 
 | AI Act article | Records |
 | --- | --- |
-| Art. 10 — Data governance | 0002, 0006, 0007, 0012 |
+| Art. 10 — Data governance | 0002, 0006, 0007, 0012, 0016 |
 | Art. 12 — Logging and traceability | 0002, 0004, 0006, 0009, 0010, 0012, 0014 |
-| Art. 14 — Human oversight | 0004, 0005, 0008 |
-| Art. 15 — Accuracy and robustness | 0001, 0005, 0007, 0011, 0013 |
+| Art. 14 — Human oversight | 0004, 0005, 0008, 0015 |
+| Art. 15 — Accuracy and robustness | 0001, 0005, 0007, 0011, 0013, 0015, 0016 |
 
 !!! warning "DEC-0012 is not an AI Act control"
 

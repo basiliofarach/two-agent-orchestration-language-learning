@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "InvariantRow": {
+      "additionalProperties": false,
+      "description": "One invariant. A failure fails the run.",
+      "properties": {
+        "invariant_id": {
+          "minLength": 1,
+          "title": "Invariant Id",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "invariant_id",
+        "passed"
+      ],
+      "title": "InvariantRow",
+      "type": "object"
+    },
+    "RateRow": {
+      "additionalProperties": false,
+      "description": "A count and its 95% Wilson interval.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "enum": [
+                "construction",
+                "requirement",
+                "output_dependent"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Basis"
+        },
+        "k": {
+          "minimum": 0,
+          "title": "K",
+          "type": "integer"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "low": {
+          "title": "Low",
+          "type": "number"
+        },
+        "high": {
+          "title": "High",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "k",
+        "n",
+        "low",
+        "high"
+      ],
+      "title": "RateRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Rates, invariants, and whether the licence review is still pending.",
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "label": {
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "licence_status": {
+      "enum": [
+        "confirmed",
+        "pending"
+      ],
+      "title": "Licence Status",
+      "type": "string"
+    },
+    "pending_sources": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Pending Sources",
+      "type": "array"
+    },
+    "rates": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RateRow"
+      },
+      "title": "Rates",
+      "type": "array"
+    },
+    "invariants": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/InvariantRow"
+      },
+      "title": "Invariants",
+      "type": "array"
+    },
+    "finished": {
+      "title": "Finished",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "run_id",
+    "dataset_version",
+    "label",
+    "licence_status",
+    "finished"
+  ],
+  "title": "SimulationReport",
+  "type": "object"
+}

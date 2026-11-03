@@ -1688,3 +1688,39 @@ class ReleaseRequiresPassedGates:
             END;
             $$
             """
+
+
+class KbDocumentProvenance:
+    """Licence, level, and level method on a knowledge-base document.
+
+    The three columns are ciphertext and nullable together (DEC-0016). A row
+    from before this revision has none of them and is reported as unlevelled.
+    There is no exemption: the database holds no key (DEC-0012).
+    """
+
+    def statements(self) -> tuple[str, ...]:
+        """Add the three columns and the together-check."""
+        return (
+            """
+            ALTER TABLE kb_document
+                ADD COLUMN licence ciphertext,
+                ADD COLUMN cefr_level ciphertext,
+                ADD COLUMN level_method ciphertext,
+                ADD CONSTRAINT kb_document_provenance_together CHECK (
+                    (licence IS NULL) = (cefr_level IS NULL)
+                    AND (cefr_level IS NULL) = (level_method IS NULL)
+                )
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Remove the check and the three columns."""
+        return (
+            """
+            ALTER TABLE kb_document
+                DROP CONSTRAINT kb_document_provenance_together,
+                DROP COLUMN level_method,
+                DROP COLUMN cefr_level,
+                DROP COLUMN licence
+            """,
+        )
