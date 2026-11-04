@@ -79,6 +79,7 @@ class RecordingTutor(TutorClientPort):
         self.probed = False
         self.refuse_after_stop = True
         self.status_override: str | None = None
+        self.sources: tuple[str, ...] = ()
         self.retained = (_LEARNER,)
         self._halt_on = halt_on
 
@@ -135,6 +136,7 @@ class RecordingTutor(TutorClientPort):
                 status=self.status_override or status,
                 halted_at=halted,
                 refused=False,
+                sources=self.sources,
                 policy_version="sim-1",
                 reply=f"release-{index}",
                 gates=tuple(

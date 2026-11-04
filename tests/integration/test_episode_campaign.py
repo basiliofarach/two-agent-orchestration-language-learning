@@ -162,6 +162,47 @@ def test_an_api_that_accepts_a_turn_after_the_stop_fails_the_tier_2_run(
     assert report.finished is False
 
 
+def test_a_source_every_turn_cites_is_counted_once_and_keeps_licence_pending(
+    tmp_path: Path,
+) -> None:
+    settings = OfflineSettings().build(tmp_path, True)
+    _plan(settings, (_episode("e-open", "T2", "open", None),))
+    client = _client()
+    client.sources = ("ellipse",)
+    commands = _commands(settings, client, io.StringIO())
+    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("freeze") == 0
+    assert commands.dispatch("episodes") == 0
+    run = sorted((settings.evidence_dir / "runs").iterdir())[-1]
+    report = SimulationReport.model_validate_json(
+        (run / "report.json").read_text(encoding="utf-8")
+    )
+    assert report.licence_status == "pending"
+    assert report.pending_sources == ("ellipse",)
+
+
+def test_a_tree_frozen_before_episodes_existed_has_no_episode_plan(
+    tmp_path: Path,
+) -> None:
+    settings = OfflineSettings().build(tmp_path, True)
+    _plan(settings, (_episode("e-open", "T2", "open", None),))
+    errors = io.StringIO()
+    commands = _commands(settings, _client(), errors)
+    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("freeze") == 0
+    tree = settings.dataset_dir / "public"
+    manifest = json.loads((tree / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = [
+        item for item in manifest["files"] if item["path"] != "episodes/plan.jsonl"
+    ]
+    (tree / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tree / "episodes" / "plan.jsonl").unlink()
+    assert commands.dispatch("verify") == 0
+    assert commands.dispatch("episodes") == 1
+    assert "no episode plan" in errors.getvalue()
+    assert not (settings.evidence_dir / "runs").exists()
+
+
 def test_episodes_refuses_without_a_client_a_plan_or_a_known_role(
     tmp_path: Path,
 ) -> None:
