@@ -749,6 +749,7 @@ class TestOracle:
                 ScoredCase(result=ok, basis="requirement"),
                 ScoredCase(result=bad, basis="construction"),
                 ScoredCase(result=bad, basis="output_dependent"),
+                ScoredCase(result=ok, basis="requirement", tier="2"),
             )
         )
         assert rates[0].name == "headline_accuracy"

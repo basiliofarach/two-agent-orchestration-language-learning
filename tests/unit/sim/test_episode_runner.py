@@ -1,15 +1,27 @@
 """Tier 2: the pupil reads a release, a stop ends the episode, eight is the cap."""
 
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
-from tutor_sim.adapters.role_model import EchoRoleModel
-from tutor_sim.application.episode import EpisodeRunner
-from tutor_sim.application.roles import AbsentTutor, ComplacentTutor, StoppingTutor
+from tutor_sim.adapters.role_model import EchoRoleModel, ScriptedRoleModel
+from tutor_sim.application.episode import EpisodeArchive, EpisodeRunner
+from tutor_sim.application.roles import (
+    AbsentTutor,
+    ComplacentTutor,
+    DiligentTutor,
+    StoppingTutor,
+)
 from tutor_sim.application.tier1 import CampaignAbort, ModeGuard
-from tutor_sim.domain.models.api_views import HealthView, SessionView, TurnOutcomeView
+from tutor_sim.domain.models.api_views import (
+    HealthView,
+    ReplayView,
+    SessionView,
+    TurnDetailView,
+    TurnOutcomeView,
+)
 from tutor_sim.domain.models.case import EpisodeSpec
 from tutor_sim.domain.models.client_call import (
     ActionCall,
@@ -35,6 +47,8 @@ class RecordingTutor(TutorClientPort):
     def __init__(self, halt_on: int | None = None) -> None:
         self.prompts: list[str] = []
         self.actions: list[str] = []
+        self.reads: list[UUID] = []
+        self.replays: list[UUID] = []
         self._halt_on = halt_on
 
     def health(self) -> HealthCall:
@@ -79,7 +93,12 @@ class RecordingTutor(TutorClientPort):
         )
 
     def detail(self, turn_id: UUID) -> DetailCall:
-        raise NotImplementedError
+        self.reads.append(turn_id)
+        return DetailCall(
+            http_status=200,
+            kind="ok",
+            body=TurnDetailView(record_intact=True),
+        )
 
     def act(
         self,
@@ -96,7 +115,30 @@ class RecordingTutor(TutorClientPort):
         raise NotImplementedError
 
     def replay(self, turn_id: UUID) -> ReplayCall:
-        raise NotImplementedError
+        self.replays.append(turn_id)
+        return ReplayCall(
+            http_status=200,
+            kind="ok",
+            body=ReplayView(turn_id=turn_id, outcome="reproduced"),
+        )
+
+
+class UnreadableEarlierTurn(RecordingTutor):
+    """The stop is recorded, then an earlier turn cannot be read or replayed."""
+
+    def __init__(self, failing: str) -> None:
+        super().__init__()
+        self._failing = failing
+
+    def detail(self, turn_id: UUID) -> DetailCall:
+        if self._failing == "detail":
+            return DetailCall(http_status=503, kind="errored")
+        return super().detail(turn_id)
+
+    def replay(self, turn_id: UUID) -> ReplayCall:
+        if self._failing == "replay":
+            return ReplayCall(http_status=503, kind="errored")
+        return super().replay(turn_id)
 
 
 class FailingTutor(RecordingTutor):
@@ -220,6 +262,48 @@ class TestEpisodeRunner:
         assert [turn.turn_index for turn in transcript.turns] == [0, 1]
         assert client.actions[-1] == "stop"
         assert len(client.prompts) == 2
+        assert client.reads == [transcript.turns[0].turn_id]
+        assert client.replays == client.reads
+        assert transcript.turns[0].replay_outcome == "reproduced"
+        assert transcript.turns[1].replay_outcome is None
+
+    def test_a_stop_writes_the_transcript_beside_the_run(self, tmp_path: Path) -> None:
+        client = RecordingTutor()
+        archive = EpisodeArchive(tmp_path)
+        transcript = EpisodeRunner(
+            client, StoppingTutor(1), EchoRoleModel(), ModeGuard(), archive
+        ).run(_spec("T4", "S2_stop", 4, 1), _LEARNER, "tutor", "You are a learner.")
+        written = (tmp_path / "episode-1.json").read_text(encoding="utf-8")
+        assert transcript.episode_id in written
+        assert '"replay_outcome": "reproduced"' in written
+
+    def test_a_stop_aborts_when_an_earlier_turn_cannot_be_read(self) -> None:
+        client = UnreadableEarlierTurn("detail")
+        with pytest.raises(CampaignAbort, match="could not be read"):
+            EpisodeRunner(client, StoppingTutor(1), EchoRoleModel(), ModeGuard()).run(
+                _spec("T4", "S2_stop", 4, 1), _LEARNER, "tutor", "You are a learner."
+            )
+
+    def test_a_stop_aborts_when_an_earlier_turn_cannot_be_replayed(self) -> None:
+        client = UnreadableEarlierTurn("replay")
+        with pytest.raises(CampaignAbort, match="could not be replayed"):
+            EpisodeRunner(client, StoppingTutor(1), EchoRoleModel(), ModeGuard()).run(
+                _spec("T4", "S2_stop", 4, 1), _LEARNER, "tutor", "You are a learner."
+            )
+
+    def test_the_pupil_and_the_tutor_role_each_use_a_stubbed_model(self) -> None:
+        client = RecordingTutor()
+        pupil = ScriptedRoleModel("ab" * 32, "The pupil asks about habits.")
+        tutor = ScriptedRoleModel("cd" * 32, "approve")
+        transcript = EpisodeRunner(
+            client,
+            DiligentTutor(tutor, "You approve a draft the dashboard shows."),
+            pupil,
+            ModeGuard(),
+        ).run(_spec("T1", "open", 1, None), _LEARNER, "tutor", "You are a learner.")
+        assert transcript.turns[0].prompt == "The pupil asks about habits."
+        assert transcript.turns[0].decision == "approve"
+        assert transcript.turns[0].released == "release-0"
 
     def test_an_edit_releases_the_edited_text_and_the_pupil_reads_it(
         self,

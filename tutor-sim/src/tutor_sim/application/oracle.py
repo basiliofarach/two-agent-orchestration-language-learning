@@ -147,14 +147,19 @@ class ScoredCase(BaseModel):
 
     result: CaseResult
     basis: Literal["construction", "requirement", "output_dependent"]
+    tier: Literal["1", "2"] = "1"
 
 
 class MeasureSet:
     """Headline accuracy, and the output-dependent rate on its own line."""
 
     def rates(self, cases: tuple[ScoredCase, ...]) -> tuple[RateRow, ...]:
-        """Two rows. Headline excludes the output-dependent basis."""
-        headline = tuple(case for case in cases if case.basis != "output_dependent")
+        """Two rows. Headline excludes output-dependent cases and Tier 2."""
+        headline = tuple(
+            case
+            for case in cases
+            if case.basis != "output_dependent" and case.tier == "1"
+        )
         dependent = tuple(case for case in cases if case.basis == "output_dependent")
         return (
             self._row("headline_accuracy", None, headline),

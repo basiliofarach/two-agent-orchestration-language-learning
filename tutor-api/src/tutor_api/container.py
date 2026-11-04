@@ -101,7 +101,9 @@ from tutor_core.application.services.read_audit import (
 )
 from tutor_core.application.services.read_simulation_reports import (
     ExecuteSimulationReports,
-    FinaliseSimulationReports,
+    FinaliseSimulationList,
+    FinaliseSimulationReport,
+    ListSimulationReports,
     PrepareSimulationReports,
     ReadSimulationReports,
 )
@@ -998,11 +1000,18 @@ class ApplicationContainer:
                 Lifetime.SINGLETON,
                 (SimulationReportPort,),
             ),
-            StatelessProvider(FinaliseSimulationReports),
+            StatelessProvider(FinaliseSimulationList),
+            StatelessProvider(FinaliseSimulationReport),
+            ServiceProvider(
+                ListSimulationReports,
+                PrepareSimulationReports,
+                ExecuteSimulationReports,
+                FinaliseSimulationList,
+            ),
             ServiceProvider(
                 ReadSimulationReports,
                 PrepareSimulationReports,
                 ExecuteSimulationReports,
-                FinaliseSimulationReports,
+                FinaliseSimulationReport,
             ),
         )

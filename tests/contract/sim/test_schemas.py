@@ -45,9 +45,9 @@ class TestCrossPackageSchemas:
         )
 
     def test_simulation_report_matches_the_committed_schema(self) -> None:
-        assert SchemaFile().load("simulation-report.schema.json") == (
-            SimulationReport.model_json_schema()
-        )
+        schema = SchemaFile().load("simulation-report.schema.json")
+        assert schema == SimulationReport.model_json_schema()
+        assert schema == ReadReport.model_json_schema()
 
     def test_run_summary_matches_the_committed_schema(self) -> None:
         assert SchemaFile().load("simulation-run-summary.schema.json") == (

@@ -9,7 +9,10 @@ from tutor_core.application.services.service import (
     PrepareHandler,
 )
 from tutor_core.domain.models.simulation import SimulationReport, SimulationRunSummary
-from tutor_core.domain.ports.simulation_report import SimulationReportPort
+from tutor_core.domain.ports.simulation_report import (
+    ReportMissing,
+    SimulationReportPort,
+)
 
 
 class SimulationQuery(BaseModel):
@@ -50,15 +53,40 @@ class ExecuteSimulationReports(ExecuteHandler[SimulationQuery, SimulationRead]):
         return SimulationRead(report=self._reports.report(prepared.run_id))
 
 
-class FinaliseSimulationReports(FinaliseHandler[SimulationRead, SimulationRead]):
-    """The read is the result."""
+class FinaliseSimulationList(
+    FinaliseHandler[SimulationRead, tuple[SimulationRunSummary, ...]]
+):
+    """The list is the result."""
 
-    def run(self, executed: SimulationRead) -> SimulationRead:
-        """Return the read."""
-        return executed
+    def run(self, executed: SimulationRead) -> tuple[SimulationRunSummary, ...]:
+        """Return every summary."""
+        return executed.runs
+
+
+class FinaliseSimulationReport(FinaliseHandler[SimulationRead, SimulationReport]):
+    """The one report is the result. A read that found nothing is a 404."""
+
+    def run(self, executed: SimulationRead) -> SimulationReport:
+        """Return the report."""
+        if executed.report is None:
+            raise ReportMissing("the simulation report was not read")
+        return executed.report
+
+
+class ListSimulationReports(
+    ApplicationService[
+        SimulationQuery,
+        SimulationQuery,
+        SimulationRead,
+        tuple[SimulationRunSummary, ...],
+    ]
+):
+    """The list route. Adds no method (DEC-0011)."""
 
 
 class ReadSimulationReports(
-    ApplicationService[SimulationQuery, SimulationQuery, SimulationRead, SimulationRead]
+    ApplicationService[
+        SimulationQuery, SimulationQuery, SimulationRead, SimulationReport
+    ]
 ):
-    """The container key. Adds no method (DEC-0011)."""
+    """The run route. Adds no method (DEC-0011)."""

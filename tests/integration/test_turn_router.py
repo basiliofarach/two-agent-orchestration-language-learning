@@ -126,6 +126,17 @@ class TestConductTurnOverHttp:
         assert outcome["policy_version"] == "prototype-2"
         assert served.model.calls == 1
         assert [row[1] for row in served.gates(outcome["turn_id"])] == ["pass"] * 4
+        stamps = served.rows(
+            """
+            SELECT g.evaluated_at, t.recorded_at
+            FROM gate_evaluation AS g
+            JOIN turn_audit AS t ON t.turn_id = g.turn_id
+            WHERE g.turn_id = %s
+            """,
+            UUID(outcome["turn_id"]),
+        )
+        assert stamps
+        assert any(evaluated != recorded for evaluated, recorded in stamps)
         audit = served.rows(
             "SELECT turn_index, model_revision, record_hash FROM turn_audit"
         )

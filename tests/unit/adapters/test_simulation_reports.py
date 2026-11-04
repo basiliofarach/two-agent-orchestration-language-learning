@@ -8,7 +8,9 @@ import pytest
 from tutor_api.adapters.evidence.simulation_reports import EvidenceDirectoryReports
 from tutor_core.application.services.read_simulation_reports import (
     ExecuteSimulationReports,
-    FinaliseSimulationReports,
+    FinaliseSimulationList,
+    FinaliseSimulationReport,
+    ListSimulationReports,
     PrepareSimulationReports,
     ReadSimulationReports,
     SimulationQuery,
@@ -59,12 +61,8 @@ def _report(run_id: str) -> dict[str, object]:
     }
 
 
-def _service(root: Path) -> ReadSimulationReports:
-    return ReadSimulationReports(
-        PrepareSimulationReports(),
-        ExecuteSimulationReports(EvidenceDirectoryReports(root)),
-        FinaliseSimulationReports(),
-    )
+def _execute(root: Path) -> ExecuteSimulationReports:
+    return ExecuteSimulationReports(EvidenceDirectoryReports(root))
 
 
 class TestEvidenceDirectoryReports:
@@ -143,14 +141,23 @@ class TestEvidenceDirectoryReports:
         self, tmp_path: Path
     ) -> None:
         Directory().write(tmp_path, "run-1", _summary("run-1", True), _report("run-1"))
-        service = _service(tmp_path)
-        listed = (await service.prepare(SimulationQuery()).execute()).finalise()
-        assert [item.run_id for item in listed.runs] == ["run-1"]
-        one = (
-            await service.prepare(SimulationQuery(run_id="run-1")).execute()
+        execute = _execute(tmp_path)
+        listed = (
+            await ListSimulationReports(
+                PrepareSimulationReports(), execute, FinaliseSimulationList()
+            )
+            .prepare(SimulationQuery())
+            .execute()
         ).finalise()
-        assert one.report is not None
-        assert one.report.run_id == "run-1"
+        assert [item.run_id for item in listed] == ["run-1"]
+        one = (
+            await ReadSimulationReports(
+                PrepareSimulationReports(), execute, FinaliseSimulationReport()
+            )
+            .prepare(SimulationQuery(run_id="run-1"))
+            .execute()
+        ).finalise()
+        assert one.run_id == "run-1"
 
 
 class TestReadReportModel:

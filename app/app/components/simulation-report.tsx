@@ -26,10 +26,10 @@ export function SimulationRunList({
                 <span className="font-medium">{run.run_id}</span>
                 <span className="mt-1 block text-sm text-muted-foreground">
                   {run.label} · tier {run.tier} ·{" "}
-                  {run.complete ? "finished" : "incomplete"} ·{" "}
+                  {run.complete ? "finished" : "incomplete"}
                   {run.licence_status === "pending"
-                    ? "licence review pending"
-                    : "licence confirmed"}
+                    ? " · licence review pending"
+                    : ""}
                 </span>
               </Link>
             </li>
@@ -57,9 +57,7 @@ export function SimulationRunDetail({
               ? `: ${report.pending_sources.join(", ")}`
               : ""}
           </p>
-        ) : (
-          <p>Licence confirmed</p>
-        )}
+        ) : null}
       </header>
       <table>
         <caption className="text-left font-medium">Invariants</caption>

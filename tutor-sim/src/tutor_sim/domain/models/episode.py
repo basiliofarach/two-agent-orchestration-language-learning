@@ -1,5 +1,7 @@
 """What one closed-loop episode recorded. No model prose is a score."""
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -8,11 +10,13 @@ class EpisodeTurn(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    turn_id: UUID
     turn_index: int = Field(ge=0, le=7)
     prompt: str = Field(min_length=1)
     released: str | None = None
     halted_at: str | None = None
     decision: str = Field(min_length=1)
+    replay_outcome: str | None = None
 
 
 class EpisodeTranscript(BaseModel):

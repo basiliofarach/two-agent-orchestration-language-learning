@@ -1,5 +1,6 @@
 """Run one episode of at most eight turns (DEC-0015)."""
 
+from pathlib import Path
 from uuid import UUID
 
 from tutor_sim.application.tier1 import CampaignAbort, ModeGuard
@@ -9,6 +10,20 @@ from tutor_sim.domain.models.tutor_role import DashboardView, TutorDecision
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.tutor_client import TutorClientPort
 from tutor_sim.domain.ports.tutor_role import TutorRolePort
+
+
+class EpisodeArchive:
+    """The transcript written beside the run. One file per episode."""
+
+    def __init__(self, directory: Path) -> None:
+        self._directory = directory
+
+    def write(self, transcript: EpisodeTranscript) -> Path:
+        """Replace ``<episode_id>.json`` with this transcript."""
+        self._directory.mkdir(parents=True, exist_ok=True)
+        path = self._directory / f"{transcript.episode_id}.json"
+        path.write_text(transcript.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        return path
 
 
 class EpisodeRunner:
@@ -26,11 +41,13 @@ class EpisodeRunner:
         role: TutorRolePort,
         pupil: RoleModelPort,
         mode: ModeGuard,
+        archive: EpisodeArchive | None = None,
     ) -> None:
         self._client = client
         self._role = role
         self._pupil = pupil
         self._mode = mode
+        self._archive = archive
 
     def run(
         self,
@@ -71,6 +88,7 @@ class EpisodeRunner:
             released = self._released(body.reply, decision)
             turns.append(
                 EpisodeTurn(
+                    turn_id=body.turn_id,
                     turn_index=index,
                     prompt=prompt,
                     released=released,
@@ -88,9 +106,26 @@ class EpisodeRunner:
             ):
                 msg = "S1 did not pause at drift on the planned turn"
                 raise CampaignAbort(msg)
-        return EpisodeTranscript(
+        if stopped:
+            turns = [self._reread(turn) for turn in turns[:-1]] + turns[-1:]
+        transcript = EpisodeTranscript(
             episode_id=spec.episode_id, turns=tuple(turns), stopped=stopped
         )
+        if self._archive is not None:
+            self._archive.write(transcript)
+        return transcript
+
+    def _reread(self, turn: EpisodeTurn) -> EpisodeTurn:
+        """Read and replay one turn that was submitted before the stop."""
+        detail = self._client.detail(turn.turn_id)
+        if detail.kind != "ok" or detail.body is None:
+            msg = "an earlier turn could not be read"
+            raise CampaignAbort(msg)
+        replay = self._client.replay(turn.turn_id)
+        if replay.kind != "ok" or replay.body is None:
+            msg = "an earlier turn could not be replayed"
+            raise CampaignAbort(msg)
+        return turn.model_copy(update={"replay_outcome": replay.body.outcome})
 
     def _released(self, reply: str | None, decision: TutorDecision) -> str | None:
         if decision.decision == "approve":

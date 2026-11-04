@@ -109,5 +109,6 @@ class TestSimulationReportRouter:
             if provider.provides() is not ExecuteSimulationReports
         )
         for client in app.client((*providers, EmptyReadProvider())):
-            with pytest.raises(ValueError, match="was not read"):
-                client.get(f"/reports/simulation/{_RUN}")
+            response = client.get(f"/reports/simulation/{_RUN}")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "the simulation report was not read"
