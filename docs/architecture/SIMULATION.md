@@ -527,13 +527,14 @@ One row per intent and variant. This is the single place a label comes from
 | `test_split_sha256` | SHA-256 over the canonical JSON of `stimuli/test.jsonl` sorted by `case_id` |
 | `frozen_at` | `AwareDatetime` (UTC) |
 
-### 5.3 Run artefacts — `evidence/sim-<dataset_version>/<run_id>/`
+### 5.3 Run artefacts — `evidence/runs/<run_id>/`
 
 | File | Record | Content |
 | --- | --- | --- |
 | `run.json` | `RunHeader` | `run_id`, `dataset_version`, `manifest_sha256`, `tier`, tutor roles, API base URL, observed `policy_version`, observed system `model_revision`, role-model SHA, `started_at`, `finished_at` |
 | `observations.jsonl` | `Observation` | One per case or episode turn (§9.1). It stores no learner text: only booleans, counts, ids, gate rows and `LeakHit` (`field`, `payload_id`) |
 | `results.jsonl` | `CaseResult` | Comparison per case (§9.3) |
+| `summary.json` | `RunSummary` | Contract C4: the row `GET /reports/simulation` lists. Written after `report.json`, so a listed run always has its report |
 | `report.json` | `SimulationReport` | Contract C3, served to the dashboard. Carries `licence_status: Literal["confirmed", "pending"]` and `pending_sources: tuple[str, ...]`, computed from the `sources.json` in force **when the report is written** (§5.5) |
 | `transcripts/<episode_id>.jsonl` | `TranscriptTurn` | Tier 2 only: utterance, released text, action |
 
@@ -550,6 +551,7 @@ Schemas:
 | C1 | `kb/documents.jsonl` | `tutor_sim` build | `tutor_api.curation.simulation_seed` into `CorpusDocument` | `docs/evaluation/schemas/kb-document.schema.json` |
 | C2 | `learners/roster.jsonl` | `tutor_sim` build | `simulation_seed` | `docs/evaluation/schemas/persona-learner.schema.json` |
 | C3 | `report.json` | `tutor_sim` report | `EvidenceDirectoryReports` into `SimulationReport` | `docs/evaluation/schemas/simulation-report.schema.json` |
+| C4 | `summary.json` | `tutor_sim` report | `EvidenceDirectoryReports` into `SimulationRunSummary` | `docs/evaluation/schemas/simulation-run-summary.schema.json` |
 
 Each side has a contract test asserting that its model's
 `model_json_schema()` equals the committed file. Changing a contract means

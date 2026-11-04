@@ -1732,7 +1732,21 @@ class SessionChainHead:
     The digest is a hash, so it stays cleartext (DEC-0012), the same
     reason ``record_hash`` does. The insert trigger writes it as the
     migration owner. A later read compares it with the last row, so a
-    deleted tail is a break.
+    deleted tail — or every row deleted — is a break.
+
+    The column has the shape of ``record_hash`` and no stricter check: a
+    check the copied column does not have would refuse, inside the
+    trigger, an insert ``turn_audit`` itself accepts.
+
+    The trigger takes ``FOR UPDATE``, not ``FOR SHARE``, because it now
+    writes the row it locks. A share lock upgraded to a write deadlocks
+    against a stop: the stop's ``human_action`` insert holds a share lock
+    and ``mark_session_stopped`` then asks for ``FOR UPDATE``. Taking the
+    write lock first orders the turn behind the stop, which then refuses
+    the turn with ``TS001``.
+
+    The application role gets SELECT on ``turn_chain_head`` only, so the
+    audit route verifies against the same anchor as the evidence pack.
     """
 
     _REASON = (
@@ -1741,8 +1755,12 @@ class SessionChainHead:
     )
     _GENESIS = "0" * 64
 
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
     def statements(self) -> tuple[str, ...]:
         """Register the exemption, add the column, backfill, then the trigger."""
+        role = self._role.identifier()
         return (
             f"""
             INSERT INTO protected_column_exemption (
@@ -1757,8 +1775,6 @@ class SessionChainHead:
             ALTER TABLE tutoring_session
                 ADD COLUMN turn_chain_head text NOT NULL
                     DEFAULT '{self._GENESIS}'
-                    CONSTRAINT tutoring_session_turn_chain_head_shape
-                    CHECK (turn_chain_head ~ '^[0-9a-f]{{64}}$')
             """,
             """
             UPDATE tutoring_session AS session
@@ -1770,7 +1786,7 @@ class SessionChainHead:
             ) AS tail
             WHERE session.id = tail.session_id
             """,
-            """
+            f"""
             CREATE OR REPLACE FUNCTION reject_turn_in_stopped_session()
             RETURNS trigger
             LANGUAGE plpgsql
@@ -1783,10 +1799,10 @@ class SessionChainHead:
                 SELECT stopped_at INTO stopped
                 FROM public.tutoring_session
                 WHERE id = NEW.session_id
-                FOR SHARE;
+                FOR UPDATE;
                 IF stopped IS NOT NULL THEN
                     RAISE EXCEPTION 'session is stopped'
-                        USING ERRCODE = 'TS001';
+                        USING ERRCODE = '{TurnAuditOpenSession.SQLSTATE}';
                 END IF;
                 UPDATE public.tutoring_session
                 SET turn_chain_head = NEW.record_hash
@@ -1795,36 +1811,19 @@ class SessionChainHead:
             END;
             $$
             """,
+            f"GRANT SELECT (turn_chain_head) ON TABLE tutoring_session TO {role}",
         )
 
     def downgrade_statements(self) -> tuple[str, ...]:
-        """Restore the trigger, then drop the column and its exemption."""
+        """Restore the trigger, then drop the grant, column and exemption."""
+        role = self._role.identifier()
+        original = TurnAuditOpenSession().statements()[0]
         return (
-            """
-            CREATE OR REPLACE FUNCTION reject_turn_in_stopped_session()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            SECURITY DEFINER
-            SET search_path = pg_catalog, public
-            AS $$
-            DECLARE
-                stopped timestamptz;
-            BEGIN
-                SELECT stopped_at INTO stopped
-                FROM public.tutoring_session
-                WHERE id = NEW.session_id
-                FOR SHARE;
-                IF stopped IS NOT NULL THEN
-                    RAISE EXCEPTION 'session is stopped'
-                        USING ERRCODE = 'TS001';
-                END IF;
-                RETURN NEW;
-            END;
-            $$
-            """,
+            original.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1),
+            f"REVOKE SELECT (turn_chain_head) ON TABLE tutoring_session FROM {role}",
             """
             ALTER TABLE tutoring_session
-                DROP CONSTRAINT tutoring_session_turn_chain_head_shape,
+                DROP CONSTRAINT IF EXISTS tutoring_session_turn_chain_head_shape,
                 DROP COLUMN turn_chain_head
             """,
             """

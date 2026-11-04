@@ -102,8 +102,10 @@ class Article12:
             "The check links each record to its predecessor, starting at the "
             "genesis hash, and compares the last digest with the session's "
             "stored chain head. A missing tail is a break.\n\n"
-            "`evaluated_at` is the clock time stored on that gate row, not "
-            "a copy made when the pack is written.\n\n"
+            "`evaluated_at` is the injected clock read when the gate was "
+            "consulted, before the stage it guards ran. A gate never reached "
+            "carries the time of the gate that halted the turn. Neither is a "
+            "copy made when the pack is written.\n\n"
             "History snapshots are not copied. Learner-facing text in this "
             "pack has been redacted. Safety-flag messages are omitted; "
             "categories are kept.\n\n" + turns.text()

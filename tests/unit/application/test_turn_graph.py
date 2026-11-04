@@ -1,5 +1,7 @@
 """The LangGraph turn: each gate at its own node, a non-pass ends the graph."""
 
+from datetime import UTC, datetime, timedelta
+
 from tests.support.samples import Samples
 from tests.support.turn_stubs import (
     Agents,
@@ -17,8 +19,54 @@ from tutor_core.application.turn.orchestrator import (
     TurnNodes,
 )
 from tutor_core.application.turn.state import TurnGraphState
+from tutor_core.domain.models.retrieval import (
+    RedactedRetrievalRequest,
+    RetrievalResult,
+)
+from tutor_core.domain.models.safety import ModelCompletion, RenderedPrompt
 from tutor_core.domain.models.turn import TurnState
 from tutor_core.domain.models.verdict import GateDecision
+from tutor_core.domain.ports.clock import ClockPort
+
+
+class Timeline:
+    """The order in which the clock, retrieval and the model were reached."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+
+class TimelineClock(ClockPort):
+    """One second later on every read, and each read is on the timeline."""
+
+    def __init__(self, timeline: Timeline) -> None:
+        self._timeline = timeline
+
+    def now(self) -> datetime:
+        self._timeline.events.append("clock")
+        return datetime(2026, 1, 1, tzinfo=UTC) + timedelta(
+            seconds=len(self._timeline.events)
+        )
+
+
+class TimelineKnowledge(CountingKnowledge):
+    def __init__(self, timeline: Timeline) -> None:
+        super().__init__()
+        self._timeline = timeline
+
+    async def retrieve(self, request: RedactedRetrievalRequest) -> RetrievalResult:
+        self._timeline.events.append("retrieval")
+        return await super().retrieve(request)
+
+
+class TimelineModel(RecordingModel):
+    def __init__(self, timeline: Timeline) -> None:
+        super().__init__()
+        self._timeline = timeline
+
+    async def complete(self, prompt: RenderedPrompt) -> ModelCompletion:
+        self._timeline.events.append("model")
+        return await super().complete(prompt)
 
 
 class Graph:
@@ -31,9 +79,10 @@ class Graph:
         sensitivity: GateDecision = "pass",
         drift: GateDecision = "pass",
     ) -> None:
-        self.knowledge = CountingKnowledge()
+        self.timeline = Timeline()
+        self.knowledge = TimelineKnowledge(self.timeline)
         self.history = CountingHistory()
-        self.model = RecordingModel()
+        self.model = TimelineModel(self.timeline)
         self.permission = ScriptedGate(permission, "context_and_permission")
         self.conflict = ScriptedGate(conflict, "conflict_and_ambiguity")
         self.sensitivity = ScriptedGate(sensitivity, "sensitivity_and_high_stakes")
@@ -48,6 +97,7 @@ class Graph:
                 ),
                 self.sensitivity,
                 self.drift,
+                TimelineClock(self.timeline),
             )
         )
 
@@ -116,6 +166,29 @@ class TestTurnGraph:
         graph = Graph(drift="pause")
         state = await graph.run()
         assert Decisions().of(state) == ["pass", "pass", "pass", "pause"]
+
+    async def test_each_gate_is_stamped_before_the_stage_it_guards(self) -> None:
+        graph = Graph()
+        state = await graph.run()
+        assert graph.timeline.events == [
+            "clock",
+            "retrieval",
+            "clock",
+            "model",
+            "clock",
+            "clock",
+        ]
+        stamps = [verdict.evaluated_at for verdict in state.verdicts]
+        assert None not in stamps
+        assert stamps == sorted(stamps)
+
+    async def test_a_halting_gate_is_stamped_and_nothing_after_it_runs(
+        self,
+    ) -> None:
+        graph = Graph(permission="stop")
+        state = await graph.run()
+        assert graph.timeline.events == ["clock"]
+        assert state.verdicts[0].evaluated_at is not None
 
     async def test_a_state_with_no_verdict_is_not_halted(self) -> None:
         assert TurnGraphState(turn=Graph().fresh_turn()).halted() is False

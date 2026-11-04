@@ -1,0 +1,69 @@
+{
+  "additionalProperties": false,
+  "description": "One row of the dashboard's run list (contract C4, ``summary.json``).\n\nWritten beside ``report.json`` and after it, so a listed run always\nhas its report. ``label`` is the report's label; the evidence pack\nrefuses a pair that disagree.",
+  "properties": {
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "tier": {
+      "enum": [
+        "1",
+        "2"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "label": {
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "passed_invariants": {
+      "title": "Passed Invariants",
+      "type": "boolean"
+    },
+    "licence_status": {
+      "enum": [
+        "confirmed",
+        "pending"
+      ],
+      "title": "Licence Status",
+      "type": "string"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "run_id",
+    "dataset_version",
+    "tier",
+    "label",
+    "passed_invariants",
+    "licence_status",
+    "complete"
+  ],
+  "title": "RunSummary",
+  "type": "object"
+}

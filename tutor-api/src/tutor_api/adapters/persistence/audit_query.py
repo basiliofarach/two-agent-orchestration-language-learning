@@ -113,8 +113,9 @@ class AuditRecordDecoder(RowReader):
 class PostgresAuditQuery(BaseRepository, AuditQueryPort):
     """Select the audit tables. There is no insert, update, or delete.
 
-    The application role already holds SELECT on the audit tables and on
-    ``kb_chunk`` and ``kb_document``. This adapter does not ask for more.
+    The application role already holds SELECT on the audit tables, on
+    ``kb_chunk`` and ``kb_document``, and on ``tutoring_session`` column
+    ``turn_chain_head``. This adapter does not ask for more.
     Learner text comes back redacted, because that is what was stored
     (REQ-MINOR).
     """
@@ -134,6 +135,12 @@ class PostgresAuditQuery(BaseRepository, AuditQueryPort):
         FROM turn_audit
         WHERE session_id = :session_id
         ORDER BY turn_index
+        """
+
+    _CHAIN_HEAD = """
+        SELECT turn_chain_head
+        FROM tutoring_session
+        WHERE id = :session_id
         """
 
     _TURN = f"""
@@ -208,6 +215,11 @@ class PostgresAuditQuery(BaseRepository, AuditQueryPort):
         """Return the session chain, oldest turn first."""
         rows = await self._fetch_all(self._TURNS, {"session_id": session_id})
         return tuple([await self._complete(row) for row in rows])
+
+    async def chain_head(self, session_id: UUID) -> str | None:
+        """Return the anchored head, or ``None`` for an unknown session."""
+        row = await self._fetch_one(self._CHAIN_HEAD, {"session_id": session_id})
+        return None if row is None else str(row[0])
 
     async def turn(self, turn_id: UUID) -> TurnAuditRecord | None:
         """Return one record, or ``None`` when it was never appended."""

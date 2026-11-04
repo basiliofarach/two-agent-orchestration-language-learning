@@ -14,8 +14,10 @@ from tutor_sim.domain.ports.tutor_role import TutorRolePort
 class EpisodeRunner:
     """The pupil replies to what was released. A stop submits nothing further.
 
-    T3 records ``none`` and releases nothing. S1 records a drift halt on
-    the planned turn. S2 records the stop and leaves the later turns out.
+    ``approve`` releases the draft and ``edit`` releases the tutor's text,
+    as the API does. ``override`` sets the draft aside and T3 records
+    ``none``; neither releases anything. S1 records a drift halt on the
+    planned turn. S2 records the stop and leaves the later turns out.
     """
 
     def __init__(
@@ -23,11 +25,12 @@ class EpisodeRunner:
         client: TutorClientPort,
         role: TutorRolePort,
         pupil: RoleModelPort,
+        mode: ModeGuard,
     ) -> None:
         self._client = client
         self._role = role
         self._pupil = pupil
-        self._mode = ModeGuard()
+        self._mode = mode
 
     def run(
         self,
@@ -65,7 +68,7 @@ class EpisodeRunner:
             )
             decision = self._role.decide(view)
             self._act(session_id, body.turn_id, tutor_id, decision)
-            released = body.reply if decision.decision == "approve" else None
+            released = self._released(body.reply, decision)
             turns.append(
                 EpisodeTurn(
                     turn_index=index,
@@ -88,6 +91,13 @@ class EpisodeRunner:
         return EpisodeTranscript(
             episode_id=spec.episode_id, turns=tuple(turns), stopped=stopped
         )
+
+    def _released(self, reply: str | None, decision: TutorDecision) -> str | None:
+        if decision.decision == "approve":
+            return reply
+        if decision.decision == "edit":
+            return decision.edited_output
+        return None
 
     def _act(
         self,

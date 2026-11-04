@@ -1,6 +1,7 @@
 """The tutoring turn as a LangGraph state graph (DEC-0004, DEC-0005)."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from langgraph.graph import END, START, StateGraph
 
@@ -42,7 +43,7 @@ class TurnNodes:
         generation: GenerationGuard,
         sensitivity: OversightGatePort,
         drift: OversightGatePort,
-        clock: ClockPort | None = None,
+        clock: ClockPort,
     ) -> None:
         self._retrieval = retrieval
         self._generation = generation
@@ -50,29 +51,40 @@ class TurnNodes:
         self._drift = drift
         self._clock = clock
 
-    def _stamp(self, verdict: GateVerdict) -> GateVerdict:
-        """Record the clock at this node. A missing clock leaves the verdict."""
-        if self._clock is None or verdict.evaluated_at is not None:
-            return verdict
-        return verdict.model_copy(update={"evaluated_at": self._clock.now()})
+    def _stamp(self, verdict: GateVerdict, consulted: datetime) -> GateVerdict:
+        """Record when the gate was consulted. Recording is this class's job.
+
+        A gate returns a decision, not a time (rule 4), so the clock read
+        taken before the gate ran is the one the row carries.
+        """
+        return verdict.model_copy(update={"evaluated_at": consulted})
 
     async def permission_then_retrieval(
         self, state: TurnGraphState
     ) -> dict[str, object]:
-        """Permission gate, then retrieval only on ``pass`` (REQ-GATES)."""
+        """Permission gate, then retrieval only on ``pass`` (REQ-GATES).
+
+        The clock is read before the guard runs, so the gate's
+        ``evaluated_at`` precedes retrieval, as the gate does.
+        """
+        consulted = self._clock.now()
         result = await self._retrieval.run(state.turn)
         if result.context is not None:
             state.turn.retrieved = result.context.knowledge
             state.turn.history = result.context.history
         return {
             "turn": state.turn,
-            "verdicts": (*state.verdicts, self._stamp(result.verdict)),
+            "verdicts": (*state.verdicts, self._stamp(result.verdict, consulted)),
         }
 
     async def conflict_then_generation(
         self, state: TurnGraphState
     ) -> dict[str, object]:
-        """Conflict gate, then generation only on ``pass`` (REQ-GATES)."""
+        """Conflict gate, then generation only on ``pass`` (REQ-GATES).
+
+        Stamped before the guard runs, so before the model is called.
+        """
+        consulted = self._clock.now()
         result = await self._generation.run(state.turn)
         draft = result.draft
         if draft is not None:
@@ -80,19 +92,21 @@ class TurnNodes:
             state.turn.safety_flags = draft.safety_flags
         return {
             "turn": state.turn,
-            "verdicts": (*state.verdicts, self._stamp(result.verdict)),
+            "verdicts": (*state.verdicts, self._stamp(result.verdict, consulted)),
             "draft": draft,
         }
 
     async def sensitivity(self, state: TurnGraphState) -> dict[str, object]:
         """Sensitivity gate, after generation."""
+        consulted = self._clock.now()
         verdict = await self._sensitivity.evaluate(state.turn)
-        return {"verdicts": (*state.verdicts, self._stamp(verdict))}
+        return {"verdicts": (*state.verdicts, self._stamp(verdict, consulted))}
 
     async def drift(self, state: TurnGraphState) -> dict[str, object]:
         """Drift gate, after generation."""
+        consulted = self._clock.now()
         verdict = await self._drift.evaluate(state.turn)
-        return {"verdicts": (*state.verdicts, self._stamp(verdict))}
+        return {"verdicts": (*state.verdicts, self._stamp(verdict, consulted))}
 
     def proceed(self, state: TurnGraphState) -> bool:
         """Continue only after a ``pass``. A pause or stop ends the graph."""

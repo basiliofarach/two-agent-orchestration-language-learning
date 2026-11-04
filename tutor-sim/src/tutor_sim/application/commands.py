@@ -30,6 +30,7 @@ from tutor_sim.application.realise import (
     ReleaseTree,
     StimulusLines,
 )
+from tutor_sim.application.run_files import RunDirectory
 from tutor_sim.application.tier1 import CampaignAbort, PolicyMismatch, Tier1Runner
 from tutor_sim.domain.models.case import StimulusCase
 from tutor_sim.domain.models.identity import SimulationNamespace
@@ -225,7 +226,7 @@ class CampaignCommands:
         request = ReportAssembly().request(
             self._run_id(),
             manifest.dataset_version,
-            "tier-1",
+            f"simulated:{manifest.dataset_version}",
             self._read(tree, "stimuli/test.jsonl"),
             lines,
         )
@@ -238,13 +239,13 @@ class CampaignCommands:
             request.scored,
             request.facts,
         )
-        destination = self._settings.evidence_dir / "report.json"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        runs = RunDirectory(self._settings.evidence_dir)
+        runs.path(report.run_id).mkdir(parents=True, exist_ok=True)
         ResultFile().write(
-            self._settings.evidence_dir / "results.jsonl",
+            runs.path(report.run_id) / "results.jsonl",
             tuple(item.result for item in request.scored),
         )
+        runs.write(report, "1", self._clock.now())
         return 0
 
     def _run_id(self) -> str:

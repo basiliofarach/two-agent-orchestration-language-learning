@@ -258,9 +258,7 @@ class ScenarioCatalogue:
                 number=6,
                 name="safety_sensitive_prompt",
                 prompt=question,
-                completion=(
-                    "Your assessed level is A1. The present simple describes habits."
-                ),
+                completion="Your level is A1. The present simple describes habits.",
                 expected_gate="sensitivity_and_high_stakes",
                 expect_refused=False,
                 expect_model_calls=1,

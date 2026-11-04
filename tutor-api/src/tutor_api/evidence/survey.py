@@ -34,13 +34,12 @@ class ChainSurvey(TransactionalWork):
     """Walk every session on the owner's connection. Selects only.
 
     Each session's turn chain and action chain are verified the way the
-    audit route verifies them, so the pack reports the log as it is rather
-    than a value the command was handed.
+    audit route verifies them — through the same port, against the same
+    stored head — so the pack reports the log as it is rather than a value
+    the command was handed.
     """
 
-    _SESSIONS = (
-        "SELECT id, turn_chain_head FROM tutoring_session ORDER BY started_at, id"
-    )
+    _SESSIONS = "SELECT id FROM tutoring_session ORDER BY started_at, id"
 
     _POLICY = """
         SELECT version FROM policy_version
@@ -66,13 +65,14 @@ class ChainSurvey(TransactionalWork):
         rows = await connection.fetch_all(self._SESSIONS, {})
         for row in rows:
             session_id = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
-            if not await self._intact(session_id, str(row[1])):
+            if not await self._intact(session_id):
                 broken.append(session_id)
         self._result.sessions = len(rows)
         self._result.broken_sessions = tuple(broken)
 
-    async def _intact(self, session_id: UUID, anchored_head: str) -> bool:
+    async def _intact(self, session_id: UUID) -> bool:
         actions = await self._query.session_actions(session_id)
+        head = await self._query.chain_head(session_id)
         self._result.actions += len(actions)
         self._result.unchained_actions += sum(
             1 for action in actions if not action.chained()
@@ -83,6 +83,6 @@ class ChainSurvey(TransactionalWork):
             return False
         self._result.turns += len(records)
         return (
-            self._verifier.find_break(records, anchored_head) is None
+            self._verifier.find_break(records, head) is None
             and self._verifier.find_action_break(actions) is None
         )

@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.integration.test_turn_router import Served
 from tests.support.migrated_database import MigratedDatabase, PostgresUrl
-from tests.support.turn_app import TurnApp
+from tests.support.turn_app import GrammarPlan, TurnApp
 from tests.support.turn_stubs import RecordingModel
 
 from tutor_api.adapters.persistence.audit_query import (
@@ -43,6 +43,8 @@ from tutor_core.domain.audit.chain import ChainVerifier
 from tutor_core.domain.models.conduct import TurnOutcome
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
+from tutor_sim.application.run_files import RunDirectory
+from tutor_sim.domain.models.report import SimulationReport
 
 QUESTION = "What does hola mean in Spanish?"
 
@@ -376,7 +378,7 @@ class ScenarioRun:
         self, fresh_database: str, case: ScenarioCase
     ) -> tuple[ScenarioObservation, RubricScore]:
         served = Served(fresh_database, RecordingModel(case.completion))
-        await served.install()
+        await served.install(GrammarPlan().plan())
         for client in served.client():
             response = client.post(
                 "/turns",
@@ -587,6 +589,38 @@ class TestOperatorCommands:
         )
         assert manifest["field_comparison"] == "not_in_this_pack"
         assert manifest["rubric_lines"] == 0
+
+    async def test_the_pack_reports_the_licence_status_of_the_latest_run(
+        self, dashboard: Dashboard, tmp_path: Path
+    ) -> None:
+        dashboard.turn()
+        written = SimulationReport(
+            run_id="run-20261104T120000",
+            dataset_version="sim-dataset/0.1.0",
+            label="simulated:sim-dataset/0.1.0",
+            licence_status="pending",
+            pending_sources=("grammar-profile",),
+            finished=True,
+        )
+        RunDirectory(tmp_path / "sim").write(
+            written, "1", datetime(2026, 11, 4, 12, tzinfo=UTC)
+        )
+        settings = (
+            TurnApp(dashboard.served.url)
+            .settings()
+            .model_copy(update={"simulation_reports_dir": tmp_path / "sim" / "runs"})
+        )
+        destination = tmp_path / "evidence"
+        code = await EvidenceMain(PackPaths(Path(__file__)).root(), destination).run(
+            settings
+        )
+        assert code == 0
+        article = (destination / "article-15.md").read_text()
+        assert "Run label: simulated:sim-dataset/0.1.0." in article
+        assert "Licence status: pending." in article
+        assert "Pending sources: grammar-profile." in article
+        manifest = json.loads((destination / "manifest.json").read_text())
+        assert manifest["field_label"] == "simulated:sim-dataset/0.1.0"
 
     async def test_an_address_in_the_prompt_is_redacted_in_the_pack(
         self, dashboard: Dashboard, tmp_path: Path

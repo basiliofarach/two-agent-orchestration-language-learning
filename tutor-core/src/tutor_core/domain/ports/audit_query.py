@@ -43,6 +43,16 @@ class AuditQueryPort(ABC):
         raise NotImplementedError  # pragma: no cover
 
     @abstractmethod
+    async def chain_head(self, session_id: UUID) -> str | None:
+        """Return the digest stored beside the session, not read from its rows.
+
+        The insert trigger writes it with each turn, so a removed tail —
+        or every row removed — no longer matches the last record. ``None``
+        when the session is not known.
+        """
+        raise NotImplementedError  # pragma: no cover
+
+    @abstractmethod
     async def turn(self, turn_id: UUID) -> TurnAuditRecord | None:
         """Return one record, or ``None`` when the turn was not logged."""
         raise NotImplementedError  # pragma: no cover

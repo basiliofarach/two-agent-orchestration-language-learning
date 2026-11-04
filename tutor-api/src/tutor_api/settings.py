@@ -56,7 +56,9 @@ class ApplicationSettings(BaseSettings):
     api_port: int = 8000
     # prototype serves the dashboard. simulation is the campaign under test.
     tutor_mode: Literal["prototype", "simulation"] = "prototype"
-    simulation_reports_dir: Path = Path("evidence")
+    # One directory per run, as `tutor_sim report` writes them. Relative to
+    # tutor-api/, the working directory every backend command runs from.
+    simulation_reports_dir: Path = Path("../evidence/runs")
     # Origins the dashboard is served from. The Vite dev server by default;
     # a comma-separated list in CORS_ORIGINS overrides it. No wildcard: the
     # API carries learner data, redacted or not.

@@ -1182,6 +1182,19 @@ class TestTier1:
         assert client.opens == 0
 
 
+class LatestRun:
+    """The newest run directory under ``evidence/runs``; run ids sort by time."""
+
+    def __init__(self, evidence: Path) -> None:
+        self._directory = sorted((evidence / "runs").iterdir())[-1]
+
+    def name(self) -> str:
+        return self._directory.name
+
+    def load(self, name: str) -> dict[str, object]:
+        return json.loads((self._directory / name).read_text(encoding="utf-8"))
+
+
 class TestCommands:
     def _plan(self, path: Path, payload: Payload | None = None) -> None:
         plan = RealisePlan(
@@ -1219,10 +1232,21 @@ class TestCommands:
             line.model_dump_json() + "\n", encoding="utf-8"
         )
         assert cli.main(["report"]) == 0
-        report = json.loads(
-            (tmp_path / "evidence" / "report.json").read_text(encoding="utf-8")
-        )
+        run = LatestRun(tmp_path / "evidence")
+        report = run.load("report.json")
+        summary = run.load("summary.json")
         assert report["licence_status"] == "pending"
+        assert report["label"] == "simulated:sim-dataset/0.1.0"
+        assert summary["run_id"] == report["run_id"] == run.name()
+        assert summary["label"] == report["label"]
+        assert summary["tier"] == "1"
+        assert summary["complete"] is True
+        assert summary["finished_at"] is not None
+        assert summary["passed_invariants"] is report["finished"]
+        assert not (tmp_path / "evidence" / "report.json").exists()
+        from tutor_sim.domain.models.report import RunSummary
+
+        RunSummary.model_validate(summary)
         from tutor_sim.domain.models.report import SimulationReport
 
         SimulationReport.model_validate(report)
@@ -1241,9 +1265,7 @@ class TestCommands:
         catalogue = tmp_path / "sources.json"
         catalogue.write_text("[" + confirmed.model_dump_json() + "]", encoding="utf-8")
         assert cli.main(["report"]) == 0
-        again = json.loads(
-            (tmp_path / "evidence" / "report.json").read_text(encoding="utf-8")
-        )
+        again = LatestRun(tmp_path / "evidence").load("report.json")
         assert again["licence_status"] == "confirmed"
         assert (dataset / "public" / "manifest.json").read_bytes() == manifest
         (dataset / "public" / "stimuli" / "test.jsonl").write_bytes(b"tampered")
@@ -1457,6 +1479,7 @@ class TestCommands:
         )
         assert commands.dispatch("report") == 1
         assert not (settings.evidence_dir / "report.json").exists()
+        assert not (settings.evidence_dir / "runs").exists()
 
     def test_an_errored_case_stays_in_the_report_denominator(self) -> None:
         request = ReportAssembly().request(

@@ -434,7 +434,7 @@ class TestChainSurvey:
         connection = KeyedConnection(
             {
                 "FROM policy_version": (("policy-1",),),
-                "FROM tutoring_session": ((str(SESSION_ID), "0" * 64),),
+                "FROM tutoring_session": ((str(SESSION_ID),),),
             }
         )
         result = ChainSurveyResult()
@@ -447,6 +447,25 @@ class TestChainSurvey:
         assert result.chain_status() == "broken"
         assert result.broken_sessions == (SESSION_ID,)
         assert result.policy_version == "policy-1"
+
+    async def test_a_removed_tail_is_reported_broken(self) -> None:
+        first = SealedRecords().generated(0)
+        second = SealedRecords().generated(1, first.record_hash)
+        connection = KeyedConnection(
+            {
+                "FROM policy_version": (("policy-1",),),
+                "FROM tutoring_session": ((str(SESSION_ID),),),
+            }
+        )
+        result = ChainSurveyResult()
+        survey = ChainSurvey(
+            MemoryAuditQuery((first,), heads={SESSION_ID: second.record_hash}),
+            ChainVerifier(AuditRecordHash(), ActionRecordHash()),
+            result,
+        )
+        await survey.run(connection)
+        assert result.broken_sessions == (SESSION_ID,)
+        assert result.turns == 1
 
     async def test_an_empty_log_is_intact_with_no_policy(self) -> None:
         result = ChainSurveyResult()

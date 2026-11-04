@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tutor_core.domain.models.timestamps import AwareDatetime
+from tutor_core.domain.models.timestamps import AwareDatetime, Timestamped
 
 LabelBasis = Literal["construction", "requirement", "output_dependent"]
 
@@ -52,10 +52,8 @@ class SimulationReport(BaseModel):
     finished: bool
 
 
-class SimulationRunSummary(BaseModel):
-    """One row of the simulation report list."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class SimulationRunSummary(Timestamped):
+    """One row of the simulation report list (contract C4, ``summary.json``)."""
 
     run_id: str = Field(min_length=1)
     dataset_version: str = Field(min_length=1)

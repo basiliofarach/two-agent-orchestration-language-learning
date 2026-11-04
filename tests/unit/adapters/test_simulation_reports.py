@@ -13,6 +13,7 @@ from tutor_core.application.services.read_simulation_reports import (
     ReadSimulationReports,
     SimulationQuery,
 )
+from tutor_core.domain.models.simulation import RateRow
 from tutor_core.domain.ports.simulation_report import ReportMissing, ReportUnreadable
 
 
@@ -91,6 +92,49 @@ class TestEvidenceDirectoryReports:
         with pytest.raises(ReportUnreadable):
             EvidenceDirectoryReports(tmp_path).report("run-1")
 
+    def test_a_half_written_summary_does_not_hide_the_other_runs(
+        self, tmp_path: Path
+    ) -> None:
+        Directory().write(tmp_path, "run-a", _summary("run-a", True), _report("run-a"))
+        (tmp_path / "run-b").mkdir()
+        (tmp_path / "run-b" / "summary.json").write_text('{"run_id": "ru', "utf-8")
+        listed = EvidenceDirectoryReports(tmp_path).runs()
+        assert [item.run_id for item in listed] == ["run-a"]
+
+    def test_a_summary_naming_another_run_is_not_listed(self, tmp_path: Path) -> None:
+        Directory().write(tmp_path, "run-a", _summary("run-z", True), None)
+        assert EvidenceDirectoryReports(tmp_path).runs() == ()
+
+    def test_a_report_that_is_not_utf8_is_unreadable(self, tmp_path: Path) -> None:
+        Directory().write(tmp_path, "run-1", _summary("run-1", True), None)
+        (tmp_path / "run-1" / "report.json").write_bytes(b"\xff\xfe{")
+        with pytest.raises(ReportUnreadable):
+            EvidenceDirectoryReports(tmp_path).report("run-1")
+
+    def test_a_report_filed_under_another_run_is_unreadable(
+        self, tmp_path: Path
+    ) -> None:
+        Directory().write(tmp_path, "run-1", _summary("run-1", True), _report("run-2"))
+        with pytest.raises(ReportUnreadable):
+            EvidenceDirectoryReports(tmp_path).report("run-1")
+
+    def test_a_directory_without_a_summary_is_not_a_run(self, tmp_path: Path) -> None:
+        (tmp_path / "scratch").mkdir()
+        assert EvidenceDirectoryReports(tmp_path).runs() == ()
+
+    def test_a_run_linked_outside_the_directory_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside"
+        Directory().write(
+            tmp_path, "outside", _summary("run-1", True), _report("run-1")
+        )
+        root = tmp_path / "runs"
+        root.mkdir()
+        (root / "run-1").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(ReportMissing):
+            EvidenceDirectoryReports(root).report("run-1")
+
     def test_a_path_outside_the_directory_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ReportMissing):
             EvidenceDirectoryReports(tmp_path).report("../secret")
@@ -107,3 +151,12 @@ class TestEvidenceDirectoryReports:
         ).finalise()
         assert one.report is not None
         assert one.report.run_id == "run-1"
+
+
+class TestReadReportModel:
+    def test_a_count_above_its_cases_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="k cannot exceed n"):
+            RateRow(name="outcome", k=3, n=2)
+
+    def test_a_count_within_its_cases_is_kept(self) -> None:
+        assert RateRow(name="outcome", k=2, n=2).k == 2
