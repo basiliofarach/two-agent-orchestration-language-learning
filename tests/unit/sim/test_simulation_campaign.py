@@ -65,6 +65,7 @@ from tutor_sim.application.roles import (
     ComplacentTutor,
     DiligentTutor,
     StoppingTutor,
+    TutorRoster,
 )
 from tutor_sim.application.tier1 import (
     CampaignAbort,
@@ -1308,6 +1309,7 @@ class TestCommands:
             (source,),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1328,6 +1330,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1360,6 +1363,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 1
@@ -1379,6 +1383,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1412,6 +1417,7 @@ class TestCommands:
             (PinnedSource().record(),),
             client,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1465,6 +1471,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("verify") == 1
@@ -1510,6 +1517,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1536,6 +1544,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0

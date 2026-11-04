@@ -22,7 +22,14 @@ from tutor_sim.adapters.role_model import (
 )
 from tutor_sim.adapters.system_clock import SystemClock
 from tutor_sim.application.commands import CampaignCommands
-from tutor_sim.application.roles import DiligentTutor
+from tutor_sim.application.personas import TutorRoleCards
+from tutor_sim.application.roles import (
+    AbsentTutor,
+    ComplacentTutor,
+    DiligentTutor,
+    StoppingTutor,
+    TutorRoster,
+)
 from tutor_sim.catalogue import SourceCatalogue
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.ports.clock import ClockPort
@@ -78,6 +85,21 @@ class RoleModelChoice:
         )
 
 
+class TutorRosterChoice:
+    """T1 is the model-driven role. T2–T4 are scripts; T4 stops where its card says."""
+
+    def build(self, diligent: DiligentTutor) -> TutorRoster:
+        """The four roles a Tier 2 episode may name."""
+        stop_at = next(
+            card.stop_at_turn
+            for card in TutorRoleCards().cards()
+            if card.role == "T4" and card.stop_at_turn is not None
+        )
+        return TutorRoster(
+            (diligent, ComplacentTutor(), AbsentTutor(), StoppingTutor(stop_at))
+        )
+
+
 class WiredHarness(BaseModel):
     """The objects one command run holds."""
 
@@ -110,6 +132,7 @@ class SimulationCompositionRoot:
         clock = SystemClock()
         model = RoleModelChoice().choose(self._settings)
         role = DiligentTutor(model, "You are a diligent tutor. Answer with one action.")
+        roster = TutorRosterChoice().build(role)
         if self._settings.offline:
             commands = CampaignCommands(
                 self._settings,
@@ -119,6 +142,7 @@ class SimulationCompositionRoot:
                 tuple(catalogue),
                 None,
                 role,
+                roster,
                 stream,
             )
             return WiredHarness(
@@ -132,7 +156,15 @@ class SimulationCompositionRoot:
         client = httpx.Client()
         tutor = HttpTutorClient(client, self._settings.api_base_url)
         commands = CampaignCommands(
-            self._settings, clock, store, model, tuple(catalogue), tutor, role, stream
+            self._settings,
+            clock,
+            store,
+            model,
+            tuple(catalogue),
+            tutor,
+            role,
+            roster,
+            stream,
         )
         return WiredHarness(
             clock=clock,

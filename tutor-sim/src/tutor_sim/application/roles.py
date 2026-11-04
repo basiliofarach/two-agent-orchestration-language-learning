@@ -99,3 +99,29 @@ class StoppingTutor(TutorRolePort):
         if view.status == "awaiting_tutor_approval":
             return TutorDecision(decision="approve")
         return TutorDecision(decision="override")
+
+
+class UnknownTutorRole(Exception):
+    """An episode names a tutor role the harness was not given."""
+
+
+class TutorRoster:
+    """The tutor roles one command may use, looked up by their own name.
+
+    The roles are built in the composition root. An episode chooses one by
+    ``EpisodeSpec.tutor_role``; it never constructs one.
+    """
+
+    def __init__(self, roles: tuple[TutorRolePort, ...]) -> None:
+        self._roles = {role.role(): role for role in roles}
+        if len(self._roles) != len(roles):
+            msg = "two tutor roles share a name"
+            raise ValueError(msg)
+
+    def role(self, name: str) -> TutorRolePort:
+        """The role registered under ``name``."""
+        try:
+            return self._roles[name]
+        except KeyError as exc:
+            msg = f"no tutor role {name}"
+            raise UnknownTutorRole(msg) from exc

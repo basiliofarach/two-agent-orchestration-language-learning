@@ -141,7 +141,13 @@ class LeakCheck:
 
 
 class ScoredCase(BaseModel):
-    """A comparison plus the basis the rate table uses."""
+    """A comparison plus the basis the rate table uses.
+
+    ``tier`` is a guard, not a live path. Tier 2 records invariant rows
+    only (SIMULATION §8.3), so the ``episodes`` command scores no case and
+    nothing sets ``"2"`` today. Should Tier 2 scoring be added, the
+    headline still cannot absorb it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

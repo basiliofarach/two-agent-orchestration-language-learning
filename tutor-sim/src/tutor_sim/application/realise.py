@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 from tutor_sim.domain.models.case import (
     CaseSpec,
     Construction,
+    EpisodeSpec,
     GeneratorStamp,
     StimulusCase,
 )
@@ -18,7 +19,7 @@ from tutor_sim.domain.ports.role_model import RoleModelPort
 
 
 class RealisePlan(BaseModel):
-    """The cases and the payloads a realise command reads."""
+    """The cases, the payloads and the Tier 2 episodes a realise command reads."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -27,6 +28,7 @@ class RealisePlan(BaseModel):
     seed: int
     cases: tuple[CaseSpec, ...]
     payloads: tuple[Payload, ...] = ()
+    episodes: tuple[EpisodeSpec, ...] = ()
 
 
 class PlanFile:
@@ -105,7 +107,11 @@ class PupilPrompt:
 
     def system(self, case: CaseSpec) -> str:
         """The persona card. The system under test never sees it."""
-        return f"persona {case.persona_id}"
+        return self.persona(case.persona_id)
+
+    def persona(self, persona_id: str) -> str:
+        """The system prompt for one persona. Tier 2 episodes use it too."""
+        return f"persona {persona_id}"
 
     def user(self, case: CaseSpec, payload: str | None) -> str:
         """The instruction. A payload is included verbatim."""

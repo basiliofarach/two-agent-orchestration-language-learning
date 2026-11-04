@@ -8,7 +8,7 @@ REPO := $(abspath ..)
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
 	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
-	purge eval sim sim-realise sim-freeze sim-run sim-report sim-db sim-serve
+	purge eval sim sim-realise sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
 
 # Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
 # working directory so ApplicationSettings still finds tutor-api/.env.
@@ -51,6 +51,7 @@ help:
 	@echo "  make sim-realise  rebuild stimuli from plan.json"
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API"
+	@echo "  make sim-episodes Tier 2 episodes; writes evidence/runs/<run_id>/ with transcripts"
 	@echo "  make sim-report   write evidence/runs/<run_id>/{report,summary}.json"
 	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
 	@echo "  make sim-serve    the API in simulation mode, on tutor_sim"
@@ -133,6 +134,9 @@ sim: sim-realise sim-freeze
 
 sim-run:
 	$(SIM_ENV) $(RUN) python -m tutor_sim run
+
+sim-episodes:
+	$(SIM_ENV) $(RUN) python -m tutor_sim episodes
 
 sim-report:
 	$(SIM_ENV) $(RUN) python -m tutor_sim report
