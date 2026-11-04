@@ -78,6 +78,7 @@ def _commands(
 def _client() -> RecordingTutor:
     client = RecordingTutor()
     client.retained = (SimulationNamespace().learner_id(_PERSONA),)
+    client.policy = "prototype-2"
     return client
 
 
@@ -85,7 +86,13 @@ def test_a_stopping_tutor_ends_the_episode_before_the_cap(tmp_path: Path) -> Non
     client = RecordingTutor()
     record = EpisodeRunner(
         client, StoppingTutor(0), EchoRoleModel(), ModeGuard(), TranscriptFile(tmp_path)
-    ).run(_spec("T4", "S2_stop", 8, 0), UUID(int=2), "tutor", "You are a learner.")
+    ).run(
+        _spec("T4", "S2_stop", 8, 0),
+        UUID(int=2),
+        "tutor",
+        "You are a learner.",
+        "sim-1",
+    )
     assert record.transcript.stopped is True
     assert len(record.transcript.turns) == 1
     assert len(client.prompts) == 2
@@ -201,6 +208,38 @@ def test_a_tree_frozen_before_episodes_existed_has_no_episode_plan(
     assert commands.dispatch("episodes") == 1
     assert "no episode plan" in errors.getvalue()
     assert not (settings.evidence_dir / "runs").exists()
+
+
+def test_an_api_under_another_policy_fails_the_command_and_writes_no_run(
+    tmp_path: Path,
+) -> None:
+    settings = OfflineSettings().build(tmp_path, True)
+    _plan(settings, (_episode("e-open", "T2", "open", None),))
+    client = _client()
+    client.policy = "prototype-9"
+    errors = io.StringIO()
+    commands = _commands(settings, client, errors)
+    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("freeze") == 0
+    assert commands.dispatch("episodes") == 1
+    assert "policy version prototype-9 != prototype-2" in errors.getvalue()
+    assert not any((settings.evidence_dir / "runs").glob("*/summary.json"))
+
+
+def test_a_plan_with_a_repeated_episode_id_fails_before_any_turn(
+    tmp_path: Path,
+) -> None:
+    settings = OfflineSettings().build(tmp_path, True)
+    repeated = _episode("e-open", "T2", "open", None)
+    _plan(settings, (repeated, repeated))
+    client = _client()
+    errors = io.StringIO()
+    commands = _commands(settings, client, errors)
+    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("freeze") == 0
+    assert commands.dispatch("episodes") == 1
+    assert "appears twice" in errors.getvalue()
+    assert client.prompts == []
 
 
 def test_episodes_refuses_without_a_client_a_plan_or_a_known_role(

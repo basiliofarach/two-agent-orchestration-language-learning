@@ -10,6 +10,7 @@ from tutor_sim.application.tier1 import (
     CampaignAbort,
     HaltedDecision,
     ModeGuard,
+    PolicyVersionGuard,
     RetainedLearner,
     TurnObservation,
     TutorAction,
@@ -24,6 +25,10 @@ from tutor_sim.domain.ports.tutor_client import TutorClientPort
 from tutor_sim.domain.ports.tutor_role import TutorRolePort
 
 
+class DuplicateEpisode(Exception):
+    """Two episodes share an id, so one transcript would replace the other."""
+
+
 class EpisodePlanFile:
     """``episodes/plan.jsonl`` in the frozen tree. One ``EpisodeSpec`` per line."""
 
@@ -36,15 +41,22 @@ class EpisodePlanFile:
         )
 
     def read(self, path: Path) -> tuple[EpisodeSpec, ...]:
-        """Parse every non-blank line. A missing file is a command error."""
+        """Parse every non-blank line. A missing file or a repeated id is refused."""
         if not path.is_file():
             msg = "no episode plan"
             raise FileNotFoundError(msg)
-        return tuple(
+        specs = tuple(
             EpisodeSpec.model_validate_json(line)
             for line in path.read_text(encoding="utf-8").splitlines()
             if line
         )
+        seen: set[str] = set()
+        for spec in specs:
+            if spec.episode_id in seen:
+                msg = f"episode {spec.episode_id} appears twice in the plan"
+                raise DuplicateEpisode(msg)
+            seen.add(spec.episode_id)
+        return specs
 
 
 class TranscriptFile:
@@ -95,10 +107,15 @@ class EpisodeRunner:
     audited, so Tier 2 records the same observation Tier 1 does.
 
     S1 must pause at drift on the planned turn, or the campaign aborts.
-    S2 records the stop, then checks INV-7: one more ``POST /turns`` must
-    be refused, and every turn up to the stop must still read and replay.
-    A failure there is an invariant fact, not an abort: it fails the run
-    in the report instead of hiding it.
+    After any ``stop`` decision, accepted by the API or not, INV-7 is
+    checked: one more ``POST /turns`` must be refused, and every turn up
+    to the stop must still read and replay. A stop the API rejected
+    therefore fails INV-7 unless the session is in fact stopped. A failure
+    there is an invariant fact, not an abort: it fails the run in the
+    report instead of hiding it.
+
+    Only an approve or edit the API accepted counts as released. Every
+    turn's ``policy_version`` must be the frozen manifest's, as in Tier 1.
     """
 
     def __init__(
@@ -119,6 +136,7 @@ class EpisodeRunner:
         self._observe = TurnObservation()
         self._class = OutcomeClassifier()
         self._halted = HaltedDecision()
+        self._policy = PolicyVersionGuard()
 
     def run(
         self,
@@ -126,6 +144,7 @@ class EpisodeRunner:
         learner_id: UUID,
         tutor_id: str,
         persona: str,
+        policy_version: str,
     ) -> EpisodeRecord:
         """Submit up to ``spec.max_turns``, write the transcript, return both."""
         self._mode.check(self._client.health())
@@ -151,6 +170,7 @@ class EpisodeRunner:
                 msg = "a turn in the episode was not accepted"
                 raise CampaignAbort(msg)
             body = submitted.body
+            self._policy.check(body.policy_version, policy_version)
             decision = self._role.decide(self._view(body, index))
             attempt = self._action.attempt(session_id, body.turn_id, tutor_id, decision)
             if attempt is None:
@@ -160,7 +180,7 @@ class EpisodeRunner:
                 spec, index, session_id, body, attempt
             )
             observations.append(observation)
-            released = self._released(body.reply, decision)
+            released = self._released(body.reply, decision, attempt)
             turns.append(
                 EpisodeTurn(
                     turn_id=body.turn_id,
@@ -187,7 +207,7 @@ class EpisodeRunner:
         )
         self._transcripts.write(transcript)
         check = None
-        if stop is not None and self._recorded(stop):
+        if stop is not None:
             check = self._after_stop(session_id, learner_id, prompt, tuple(turns))
         return EpisodeRecord(
             transcript=transcript,
@@ -287,11 +307,9 @@ class EpisodeRunner:
             )
         return tuple(facts)
 
-    def _recorded(self, attempt: ActionAttempt) -> bool:
-        return attempt.recorded_action == "stop" and 200 <= attempt.http_status < 300
-
     def _is_stop(self, observation: Observation) -> bool:
-        return observation.action is not None and self._recorded(observation.action)
+        """The turn the tutor role stopped on, whether or not the API accepted it."""
+        return observation.action is not None and observation.action.decision == "stop"
 
     def _accepted_edit(self, observation: Observation) -> bool:
         action = observation.action
@@ -299,7 +317,16 @@ class EpisodeRunner:
             return False
         return 200 <= action.http_status < 300
 
-    def _released(self, reply: str | None, decision: TutorDecision) -> str | None:
+    def _released(
+        self, reply: str | None, decision: TutorDecision, attempt: ActionAttempt
+    ) -> str | None:
+        """A rejected approve or edit released nothing the pupil could read."""
+        accepted = (
+            attempt.recorded_action == decision.decision
+            and 200 <= attempt.http_status < 300
+        )
+        if not accepted:
+            return None
         if decision.decision == "approve":
             return reply
         if decision.decision == "edit":

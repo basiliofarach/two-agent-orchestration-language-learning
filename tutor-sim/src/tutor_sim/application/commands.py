@@ -6,6 +6,7 @@ from typing import TextIO
 from pydantic import ValidationError
 
 from tutor_sim.application.episode import (
+    DuplicateEpisode,
     EpisodePlanFile,
     EpisodeRunner,
     TranscriptFile,
@@ -254,7 +255,7 @@ class CampaignCommands:
             return 1
         try:
             specs = EpisodePlanFile().read(self._root() / tree / "episodes/plan.jsonl")
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, DuplicateEpisode) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         if not specs:
@@ -281,9 +282,10 @@ class CampaignCommands:
                     learners.learner_id(spec.persona_id),
                     "tutor-sim",
                     pupil.persona(spec.persona_id),
+                    manifest.policy_version,
                 )
                 facts.extend(record.facts)
-        except (CampaignAbort, UnknownTutorRole) as exc:
+        except (CampaignAbort, PolicyMismatch, UnknownTutorRole) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         used: list[str] = []

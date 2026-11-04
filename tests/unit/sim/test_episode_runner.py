@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from tutor_sim.adapters.role_model import EchoRoleModel, ScriptedRoleModel
 from tutor_sim.application.episode import (
+    DuplicateEpisode,
     EpisodePlanFile,
     EpisodeRecord,
     EpisodeRunner,
@@ -22,7 +23,7 @@ from tutor_sim.application.roles import (
     TutorRoster,
     UnknownTutorRole,
 )
-from tutor_sim.application.tier1 import CampaignAbort, ModeGuard
+from tutor_sim.application.tier1 import CampaignAbort, ModeGuard, PolicyMismatch
 from tutor_sim.domain.models.api_views import (
     AuditView,
     GateRowView,
@@ -80,6 +81,8 @@ class RecordingTutor(TutorClientPort):
         self.refuse_after_stop = True
         self.status_override: str | None = None
         self.sources: tuple[str, ...] = ()
+        self.policy = "sim-1"
+        self.rejected: frozenset[str] = frozenset()
         self.retained = (_LEARNER,)
         self._halt_on = halt_on
 
@@ -137,7 +140,7 @@ class RecordingTutor(TutorClientPort):
                 halted_at=halted,
                 refused=False,
                 sources=self.sources,
-                policy_version="sim-1",
+                policy_version=self.policy,
                 reply=f"release-{index}",
                 gates=tuple(
                     GateRowView(
@@ -167,6 +170,8 @@ class RecordingTutor(TutorClientPort):
         edited_output: str | None,
     ) -> ActionCall:
         self.actions.append(action)
+        if action in self.rejected:
+            return ActionCall(http_status=409, kind="rejected", detail="no")
         if action == "stop":
             self.stopped = True
         return ActionCall(
@@ -302,7 +307,7 @@ def _run(
         EchoRoleModel() if pupil is None else pupil,
         ModeGuard() if mode is None else mode,
         TranscriptFile(tmp_path),
-    ).run(spec, _LEARNER, "tutor", "You are a learner.")
+    ).run(spec, _LEARNER, "tutor", "You are a learner.", "sim-1")
 
 
 def _inv7(record: EpisodeRecord) -> list[bool]:
@@ -421,10 +426,22 @@ class TestEpisodeRunner:
         assert record.facts[1].earlier_turns_readable is False
         assert _inv7(record) == [True, False]
 
-    def test_a_stop_the_api_did_not_record_is_not_checked_as_a_stop(
+    def test_a_rejected_stop_still_checks_inv7_and_fails_when_the_session_runs_on(
         self, tmp_path: Path
     ) -> None:
-        class RejectingStop(RecordingTutor):
+        client = RecordingTutor()
+        client.rejected = frozenset({"stop"})
+        record = _run(tmp_path, client, StoppingTutor(0), _spec("T4", "S2_stop", 4, 0))
+        assert record.transcript.stopped is True
+        assert len(client.prompts) == 2
+        assert [facts.session_stopped for facts in record.facts] == [True]
+        assert record.facts[0].later_turns_refused is False
+        assert _inv7(record) == [False]
+
+    def test_a_rejected_stop_passes_inv7_when_the_session_is_in_fact_stopped(
+        self, tmp_path: Path
+    ) -> None:
+        class AlreadyStopped(RecordingTutor):
             def act(
                 self,
                 session_id: UUID,
@@ -434,13 +451,52 @@ class TestEpisodeRunner:
                 edited_output: str | None,
             ) -> ActionCall:
                 self.actions.append(action)
-                return ActionCall(http_status=409, kind="rejected", detail="no")
+                self.stopped = True
+                return ActionCall(http_status=409, kind="rejected", detail="stopped")
 
-        client = RejectingStop()
-        record = _run(tmp_path, client, StoppingTutor(0), _spec("T4", "S2_stop", 4, 0))
-        assert record.transcript.stopped is True
-        assert len(client.prompts) == 1
-        assert [facts.session_stopped for facts in record.facts] == [False]
+        record = _run(
+            tmp_path, AlreadyStopped(), StoppingTutor(0), _spec("T4", "S2_stop", 4, 0)
+        )
+        assert _inv7(record) == [True]
+
+    @pytest.mark.parametrize("action", ["approve", "edit"])
+    def test_a_rejected_release_reaches_neither_the_transcript_nor_the_pupil(
+        self, tmp_path: Path, action: str
+    ) -> None:
+        client = RecordingTutor()
+        client.rejected = frozenset({action})
+        decision = (
+            TutorDecision(decision="edit", edited_output="Corrected text")
+            if action == "edit"
+            else TutorDecision(decision="approve")
+        )
+        role = ScriptedDecisions(decision, TutorDecision(decision="override"))
+        record = _run(tmp_path, client, role, _spec("T2", "open", 2, None))
+        assert record.transcript.turns[0].released is None
+        assert "release-0" not in client.prompts[1]
+        assert "Corrected text" not in client.prompts[1]
+        assert record.facts[0].edit_accepted is False
+
+    def test_a_turn_under_another_policy_aborts_before_the_tutor_acts(
+        self, tmp_path: Path
+    ) -> None:
+        client = RecordingTutor()
+        client.policy = "prototype-9"
+        with pytest.raises(PolicyMismatch, match="prototype-9 != sim-1"):
+            _run(tmp_path, client, ComplacentTutor(), _spec("T2", "open", 2, None))
+        assert client.actions == []
+        assert not (tmp_path / "episode-1.jsonl").exists()
+
+    @pytest.mark.parametrize(
+        "episode_id", ["../report", "a/b", "/tmp/x", ".hidden", ""]
+    )
+    def test_an_episode_id_that_is_not_a_file_name_slug_is_refused(
+        self, episode_id: str
+    ) -> None:
+        with pytest.raises(ValidationError):
+            _spec("T2", "open", 2, None).model_validate(
+                {**_spec("T2", "open", 2, None).model_dump(), "episode_id": episode_id}
+            )
 
     def test_the_transcript_is_one_line_per_turn_at_the_episode_path(
         self, tmp_path: Path
@@ -566,9 +622,20 @@ class TestEpisodePlanFile:
         plan = EpisodePlanFile()
         path = tmp_path / "plan.jsonl"
         assert plan.body(()) == b""
-        specs = (_spec("T4", "S2_stop", 4, 1), _spec("T3", "open", 2, None))
+        specs = (
+            _spec("T4", "S2_stop", 4, 1),
+            _spec("T3", "open", 2, None).model_copy(update={"episode_id": "e-2"}),
+        )
         path.write_bytes(plan.body(specs))
         assert plan.read(path) == specs
+
+    def test_a_repeated_episode_id_is_refused(self, tmp_path: Path) -> None:
+        plan = EpisodePlanFile()
+        path = tmp_path / "plan.jsonl"
+        spec = _spec("T2", "open", 2, None)
+        path.write_bytes(plan.body((spec, spec)))
+        with pytest.raises(DuplicateEpisode, match="episode-1 appears twice"):
+            plan.read(path)
 
     def test_a_missing_plan_is_a_command_error(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="no episode plan"):
