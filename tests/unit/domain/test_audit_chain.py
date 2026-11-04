@@ -136,3 +136,41 @@ class TestChainVerifier:
             is None
         )
         assert ChainVerifier(hasher, ActionRecordHash()).find_break(()) is None
+
+    def test_a_missing_tail_breaks_against_the_anchored_head(self) -> None:
+        hasher = AuditRecordHash()
+        sealer = SealedTurn(hasher)
+        first = sealer.at(Samples().stopped_audit_record(), AuditRecordHash.GENESIS)
+        second = sealer.at(
+            Samples()
+            .stopped_audit_record()
+            .model_copy(
+                update={
+                    "turn_id": UUID("00000000-0000-4000-8000-000000000014"),
+                    "turn_index": 1,
+                }
+            ),
+            first.record_hash,
+        )
+        verifier = ChainVerifier(hasher, ActionRecordHash())
+        found = verifier.find_break((first,), second.record_hash)
+        assert found is not None
+        assert found.reason == "excised"
+        assert found.turn_id == first.turn_id
+        assert verifier.find_break((first, second), second.record_hash) is None
+
+    def test_every_record_removed_breaks_against_the_anchored_head(self) -> None:
+        hasher = AuditRecordHash()
+        sealed = SealedTurn(hasher).at(
+            Samples().stopped_audit_record(), AuditRecordHash.GENESIS
+        )
+        found = ChainVerifier(hasher, ActionRecordHash()).find_break(
+            (), sealed.record_hash
+        )
+        assert found is not None
+        assert found.reason == "excised"
+        assert found.turn_id is None
+
+    def test_an_empty_session_at_genesis_is_intact(self) -> None:
+        verifier = ChainVerifier(AuditRecordHash(), ActionRecordHash())
+        assert verifier.find_break((), AuditRecordHash.GENESIS) is None

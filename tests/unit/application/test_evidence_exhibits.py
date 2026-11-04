@@ -103,7 +103,7 @@ class TestExcerptProjector:
         assert body.turns[0].safety_flag_categories == ("contact",)
         assert "history_snapshot" not in dumped["turns"][0]
         assert body.actions[0].edited_output_redacted == "Send it to [REDACTED:email]"
-        assert body.rubric_label == "synthetic-only"
+        assert body.rubric_label == "simulated:unreleased"
         assert body.field_comparison == "not_in_this_pack"
 
     def test_a_second_pass_adds_a_category_once(self) -> None:

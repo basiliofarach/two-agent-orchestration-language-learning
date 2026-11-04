@@ -323,6 +323,31 @@ class TestReadAudit:
         assert len(view.actions) == 1
         assert view.unchained_actions == 0
 
+    async def test_a_removed_tail_breaks_the_view_against_the_stored_head(
+        self,
+    ) -> None:
+        first = SealedRecords().generated(0)
+        second = SealedRecords().generated(1, first.record_hash)
+        query = MemoryAuditQuery((first,), heads={SESSION_ID: second.record_hash})
+        service = audit_service(query, MemoryDirectory())
+        view = (
+            await service.prepare(AuditCommand(session_id=SESSION_ID)).execute()
+        ).finalise()
+        assert view.intact is False
+        assert view.break_reason == "excised"
+        assert view.break_turn_id == first.turn_id
+
+    async def test_every_record_removed_breaks_the_view(self) -> None:
+        sealed = SealedRecords().generated(0)
+        query = MemoryAuditQuery((), heads={SESSION_ID: sealed.record_hash})
+        service = audit_service(query, MemoryDirectory())
+        view = (
+            await service.prepare(AuditCommand(session_id=SESSION_ID)).execute()
+        ).finalise()
+        assert view.intact is False
+        assert view.break_reason == "excised"
+        assert view.break_turn_id is None
+
     async def test_a_tampered_action_breaks_the_view(self) -> None:
         record = SealedRecords().generated()
         forged = (

@@ -114,7 +114,12 @@ class SealedRecords:
 
 
 class MemoryAuditQuery(AuditQueryPort):
-    """Records and actions held in memory. ``unreadable`` simulates tampering."""
+    """Records and actions held in memory. ``unreadable`` simulates tampering.
+
+    The chain head follows the last record, as the insert trigger keeps it.
+    ``heads`` pins a session's head, so a test can remove records and leave
+    the anchor where the database would have left it.
+    """
 
     def __init__(
         self,
@@ -122,11 +127,21 @@ class MemoryAuditQuery(AuditQueryPort):
         actions: tuple[HumanAction, ...] = (),
         cited: tuple[Snippet, ...] = (),
         unreadable: UUID | None = None,
+        heads: dict[UUID, str] | None = None,
     ) -> None:
         self.records = list(records)
         self.stored_actions = list(actions)
         self._cited = cited
         self._unreadable = unreadable
+        self._heads = dict(heads or {})
+
+    async def chain_head(self, session_id: UUID) -> str | None:
+        if session_id in self._heads:
+            return self._heads[session_id]
+        mine = [r for r in self.records if r.session_id == session_id]
+        if not mine:
+            return AuditRecordHash.GENESIS
+        return max(mine, key=lambda r: r.turn_index).record_hash
 
     async def for_session(self, session_id: UUID) -> tuple[TurnAuditRecord, ...]:
         if self._unreadable is not None:

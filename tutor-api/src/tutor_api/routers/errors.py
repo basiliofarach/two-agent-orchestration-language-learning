@@ -11,6 +11,7 @@ from tutor_core.domain.ports.session_directory import (
     SessionNotFound,
     SessionOpenRejected,
 )
+from tutor_core.domain.ports.simulation_report import ReportMissing, ReportUnreadable
 from tutor_core.domain.ports.tutoring_session import SessionRejected
 
 
@@ -54,8 +55,10 @@ class ProblemMapping:
     _STATUSES: tuple[tuple[type[Exception], int], ...] = (
         (SessionNotFound, 404),
         (TurnNotFound, 404),
+        (ReportMissing, 404),
         (ActionRejected, 409),
         (AuditRecordUnreadable, 409),
+        (ReportUnreadable, 409),
         (SessionRejected, 422),
         (SessionOpenRejected, 422),
         (TurnFailed, 503),

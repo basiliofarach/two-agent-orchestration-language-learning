@@ -1,0 +1,10 @@
+{
+  "dataset_version": "sim-dataset/unreleased",
+  "mode": "simulation",
+  "banner": "Simulated campaign — no real learner or tutor",
+  "screenshots": [
+    "simulation-runs.png",
+    "simulation-run.png",
+    "held-turn.png"
+  ]
+}

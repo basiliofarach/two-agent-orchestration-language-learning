@@ -28,7 +28,7 @@ class EvidencePack:
     def files(self, sources: EvidenceSources, body: PackBody) -> dict[str, str]:
         """Return path to text. ``manifest.json`` holds the only timestamp."""
         if sources.field_label != body.rubric_label:
-            msg = "the field label must be synthetic-only"
+            msg = "the field label must match the rubric label"
             raise ValueError(msg)
         generated = self._clock.now().isoformat()
         return {

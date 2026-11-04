@@ -45,7 +45,10 @@ class AuditCommand(BaseModel):
 class AuditView(BaseModel):
     """The chain, the tutor actions, and whether both still link.
 
-    ``intact`` covers the turn chain and the action chain. A turn whose rows
+    ``intact`` covers the turn chain and the action chain. The turn chain is
+    checked against the head stored beside the session, so a removed tail
+    is a break here exactly as it is in the evidence pack. ``break_turn_id``
+    is ``None`` on an ``excised`` break when no record is left. A turn whose rows
     no longer validate is a break with reason ``unreadable``: the records
     cannot be shown, and the view says which turn stopped them, rather than
     the route failing (REQ-AUDIT). ``unchained_actions`` counts actions
@@ -103,6 +106,7 @@ class AuditWork(TransactionalWork):
             msg = "session is not known"
             raise SessionNotFound(msg)
         actions = await self._query.session_actions(session_id)
+        head = await self._query.chain_head(session_id)
         try:
             records = await self._query.for_session(session_id)
         except AuditRecordUnreadable as unreadable:
@@ -114,14 +118,15 @@ class AuditWork(TransactionalWork):
                 break_reason="unreadable",
             )
             return
-        self._receipt.view = self._view(records, actions)
+        self._receipt.view = self._view(records, actions, head)
 
     def _view(
         self,
         records: tuple[TurnAuditRecord, ...],
         actions: tuple[HumanAction, ...],
+        head: str | None,
     ) -> AuditView:
-        broken = self._verifier.find_break(records)
+        broken = self._verifier.find_break(records, head)
         action_break = self._verifier.find_action_break(actions)
         if broken is None and action_break is not None:
             break_turn: UUID | None = action_break.turn_id

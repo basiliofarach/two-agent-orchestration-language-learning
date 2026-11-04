@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tutor_sim.domain.models.case import LabelBasis, OutcomeClass
+from tutor_sim.domain.models.timestamps import AwareDatetime
 
 
 class CaseResult(BaseModel):
@@ -60,3 +61,23 @@ class SimulationReport(BaseModel):
     rates: tuple[RateRow, ...] = ()
     invariants: tuple[InvariantRow, ...] = ()
     finished: bool
+
+
+class RunSummary(BaseModel):
+    """One row of the dashboard's run list (contract C4, ``summary.json``).
+
+    Written beside ``report.json`` and after it, so a listed run always
+    has its report. ``label`` is the report's label; the evidence pack
+    refuses a pair that disagree.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(min_length=1)
+    dataset_version: str = Field(min_length=1)
+    tier: Literal["1", "2"]
+    finished_at: AwareDatetime | None = None
+    label: str = Field(min_length=1)
+    passed_invariants: bool
+    licence_status: Literal["confirmed", "pending"]
+    complete: bool

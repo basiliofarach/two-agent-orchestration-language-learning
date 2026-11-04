@@ -22,10 +22,28 @@ test("axe passes on every tutor route", async ({ page }) => {
     `/sessions/${HALTED}`,
     `/sessions/${REFUSED}`,
     `/audit/${REFUSED_TURN}`,
+    "/simulation",
+    "/simulation/sim-1",
   ]) {
     await page.goto(path);
+    await expect(page.getByRole("heading").first()).toBeVisible();
     await expectNoSeriousViolations(page);
   }
+});
+
+test("the simulation list opens a run, then a held turn", async ({ page }) => {
+  await page.goto("/simulation");
+  await page.getByRole("link", { name: /sim-1/ }).click();
+  await expect(page.getByRole("heading", { name: "sim-1" })).toBeVisible();
+  await expect(page.getByText("1/2")).toBeVisible();
+  await page.goto(`/sessions/${HALTED}`);
+  await expect(page.getByRole("heading").first()).toBeVisible();
+  const link = page.getByRole("link", { name: "Simulation", exact: true });
+  await link.focus();
+  const width = await link.evaluate(
+    (element) => getComputedStyle(element).outlineWidth,
+  );
+  expect(width).not.toBe("0px");
 });
 
 test("gate state stays readable when colour is removed", async ({ page }) => {

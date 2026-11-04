@@ -2,7 +2,11 @@ import { ActionRejected } from "~/.server/action-rejected";
 import { FixtureEditBoundary } from "~/.server/fixture-edit";
 import { FixtureDigest, FixtureLog } from "~/.server/fixture-log";
 import { SessionEvents } from "~/.server/session-events";
-import { TutorApi } from "~/.server/tutor-api";
+import {
+  type HealthStatus,
+  TutorApi,
+  type TutorMode,
+} from "~/.server/tutor-api";
 import type {
   ActionCommand,
   AuditJson,
@@ -10,6 +14,8 @@ import type {
   HumanActionJson,
   RecordedActionResult,
   SessionSummaryJson,
+  SimulationReportJson,
+  SimulationRunSummaryJson,
   TurnDetailJson,
   TurnRecordJson,
 } from "~/.server/tutor-api.types";
@@ -51,8 +57,46 @@ export class FixtureTutorApi extends TutorApi {
   private readonly digest = new FixtureDigest();
   private readonly edits = new FixtureEditBoundary();
 
-  constructor(private readonly log: FixtureLog = FixtureLog.empty()) {
+  constructor(
+    private readonly log: FixtureLog = FixtureLog.empty(),
+    private readonly mode: TutorMode = "prototype",
+  ) {
     super();
+  }
+
+  async health(): Promise<HealthStatus> {
+    return { status: "ok", mode: this.mode };
+  }
+
+  async simulationRuns(): Promise<SimulationRunSummaryJson[]> {
+    return [
+      {
+        run_id: "sim-1",
+        dataset_version: "sim-dataset/unreleased",
+        tier: "1",
+        finished_at: null,
+        label: "simulated:unreleased",
+        passed_invariants: false,
+        licence_status: "pending",
+        complete: false,
+      },
+    ];
+  }
+
+  async simulationReport(runId: string): Promise<SimulationReportJson> {
+    if (runId !== "sim-1") {
+      throw new Response("Not Found", { status: 404 });
+    }
+    return {
+      run_id: "sim-1",
+      dataset_version: "sim-dataset/unreleased",
+      label: "simulated:unreleased",
+      licence_status: "pending",
+      pending_sources: ["grammar-profile"],
+      rates: [{ name: "headline_accuracy", basis: null, k: 1, n: 2 }],
+      invariants: [{ invariant_id: "INV-8", passed: true }],
+      finished: false,
+    };
   }
 
   async sessions(): Promise<SessionSummaryJson[]> {

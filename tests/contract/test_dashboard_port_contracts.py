@@ -37,6 +37,11 @@ class AuditQueryPortContract:
         records = await self.port().for_session(SESSION_ID)
         assert [r.turn_index for r in records] == sorted(r.turn_index for r in records)
 
+    async def test_the_chain_head_is_the_last_record_digest(self) -> None:
+        port = self.port()
+        records = await port.for_session(SESSION_ID)
+        assert await port.chain_head(SESSION_ID) == records[-1].record_hash
+
 
 class HumanActionPortContract:
     def port(self) -> HumanActionPort:

@@ -142,6 +142,7 @@ Ports defined before implementation, each traced to the requirement it carries:
 | `SourceFetchPort` *(harness)* | Fetch one pinned source and check its digest | `tutor-sim` only; no tutor-API client; a mismatch is fatal | REQ-TESTDATA, DEC-0016 |
 | `PosTaggerPort` *(harness)* | Tag one sentence as `word_TAG_lemma` for a Grammar Profile regex | `tutor-sim` only; build-time and measures; the system never tags | REQ-TESTDATA, DEC-0016 |
 | `DatasetStorePort` *(harness)* | Write a dataset file into the public or restricted tree | Refuses a non-redistributable item under `public/` | REQ-TESTDATA, DEC-0016 |
+| `SimulationReportPort` | Read a simulation run summary and its C3 report | Read-only; no write method; refuses a path outside the evidence directory | REQ-SIM |
 
 `AuditSinkPort` exposes `append()` and no mutating method. `LearnerHistoryPort`
 takes an explicit field allowlist at construction and selects only those

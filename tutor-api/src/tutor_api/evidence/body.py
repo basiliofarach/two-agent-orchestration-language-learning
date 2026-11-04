@@ -128,10 +128,14 @@ class PackBody(BaseModel):
     actions: tuple[ActionExcerpt, ...]
     unreadable_sessions: tuple[str, ...]
     rubric_lines: tuple[str, ...] = ()
-    rubric_label: Literal["synthetic-only"] = "synthetic-only"
+    rubric_label: str = Field(default="simulated:unreleased", pattern=r"^simulated:.+")
+    licence_status: Literal["confirmed", "pending", "not_in_this_pack"] = (
+        "not_in_this_pack"
+    )
+    pending_sources: tuple[str, ...] = ()
     field_comparison: Literal["not_in_this_pack"] = "not_in_this_pack"
 
     @classmethod
     def empty(cls) -> Self:
-        """A pack with nothing read yet. The label is still synthetic-only."""
+        """A pack with nothing read yet. The label names no frozen dataset."""
         return cls(documents=(), turns=(), actions=(), unreadable_sessions=())

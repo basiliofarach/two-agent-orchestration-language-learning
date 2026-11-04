@@ -1724,3 +1724,112 @@ class KbDocumentProvenance:
                 DROP COLUMN licence
             """,
         )
+
+
+class SessionChainHead:
+    """Store each session's latest turn digest beside the session.
+
+    The digest is a hash, so it stays cleartext (DEC-0012), the same
+    reason ``record_hash`` does. The insert trigger writes it as the
+    migration owner. A later read compares it with the last row, so a
+    deleted tail — or every row deleted — is a break.
+
+    The column has the shape of ``record_hash`` and no stricter check: a
+    check the copied column does not have would refuse, inside the
+    trigger, an insert ``turn_audit`` itself accepts.
+
+    The trigger takes ``FOR UPDATE``, not ``FOR SHARE``, because it now
+    writes the row it locks. A share lock upgraded to a write deadlocks
+    against a stop: the stop's ``human_action`` insert holds a share lock
+    and ``mark_session_stopped`` then asks for ``FOR UPDATE``. Taking the
+    write lock first orders the turn behind the stop, which then refuses
+    the turn with ``TS001``.
+
+    The application role gets SELECT on ``turn_chain_head`` only, so the
+    audit route verifies against the same anchor as the evidence pack.
+    """
+
+    _REASON = (
+        "Digest of the latest turn record. Encrypting it would make the "
+        "Article 12 check depend on key availability (DEC-0012)."
+    )
+    _GENESIS = "0" * 64
+
+    def __init__(self, role: ApplicationRole) -> None:
+        self._role = role
+
+    def statements(self) -> tuple[str, ...]:
+        """Register the exemption, add the column, backfill, then the trigger."""
+        role = self._role.identifier()
+        return (
+            f"""
+            INSERT INTO protected_column_exemption (
+                schema_name, table_name, column_name, reason, decision_ref
+            ) VALUES (
+                'public', 'tutoring_session', 'turn_chain_head',
+                '{self._REASON}', 'DEC-0012'
+            )
+            ON CONFLICT (schema_name, table_name, column_name) DO NOTHING
+            """,
+            f"""
+            ALTER TABLE tutoring_session
+                ADD COLUMN turn_chain_head text NOT NULL
+                    DEFAULT '{self._GENESIS}'
+            """,
+            """
+            UPDATE tutoring_session AS session
+            SET turn_chain_head = tail.record_hash
+            FROM (
+                SELECT DISTINCT ON (session_id) session_id, record_hash
+                FROM turn_audit
+                ORDER BY session_id, turn_index DESC
+            ) AS tail
+            WHERE session.id = tail.session_id
+            """,
+            f"""
+            CREATE OR REPLACE FUNCTION reject_turn_in_stopped_session()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                stopped timestamptz;
+            BEGIN
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = NEW.session_id
+                FOR UPDATE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = '{TurnAuditOpenSession.SQLSTATE}';
+                END IF;
+                UPDATE public.tutoring_session
+                SET turn_chain_head = NEW.record_hash
+                WHERE id = NEW.session_id;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            f"GRANT SELECT (turn_chain_head) ON TABLE tutoring_session TO {role}",
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Restore the trigger, then drop the grant, column and exemption."""
+        role = self._role.identifier()
+        original = TurnAuditOpenSession().statements()[0]
+        return (
+            original.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1),
+            f"REVOKE SELECT (turn_chain_head) ON TABLE tutoring_session FROM {role}",
+            """
+            ALTER TABLE tutoring_session
+                DROP CONSTRAINT IF EXISTS tutoring_session_turn_chain_head_shape,
+                DROP COLUMN turn_chain_head
+            """,
+            """
+            DELETE FROM protected_column_exemption
+            WHERE schema_name = 'public'
+              AND table_name = 'tutoring_session'
+              AND column_name = 'turn_chain_head'
+            """,
+        )

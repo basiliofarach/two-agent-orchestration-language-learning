@@ -17,11 +17,15 @@ class ChainBreak(BaseModel):
     record). The missing record is gone, so the report names the record
     that no longer links. ``tampered`` means the link holds and the stored
     ``record_hash`` is not the digest of this record.
+
+    ``turn_id`` is ``None`` only when the session's stored chain head names
+    a turn and no record is left: the whole chain was excised, so there is
+    no surviving record to name.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    turn_id: UUID
+    turn_id: UUID | None
     reason: Literal["tampered", "excised"]
 
 
@@ -47,8 +51,18 @@ class ChainVerifier:
         self._hasher = hasher
         self._actions = actions
 
-    def find_break(self, records: tuple[TurnAuditRecord, ...]) -> ChainBreak | None:
-        """Return the first break, or ``None`` when the chain holds."""
+    def find_break(
+        self,
+        records: tuple[TurnAuditRecord, ...],
+        anchored_head: str | None = None,
+    ) -> ChainBreak | None:
+        """Return the first break, or ``None`` when the chain holds.
+
+        ``anchored_head`` is the digest stored beside the session, not
+        derived from these rows. A missing tail still links from the
+        genesis hash, so without the anchor it would look intact. A head
+        that is not genesis over no records means every record was removed.
+        """
         previous = AuditRecordHash.GENESIS
         for record in records:
             if record.previous_record_hash != previous:
@@ -56,7 +70,13 @@ class ChainVerifier:
             if record.record_hash != self._hasher.digest(record):
                 return ChainBreak(turn_id=record.turn_id, reason="tampered")
             previous = record.record_hash
-        return None
+        if anchored_head is None:
+            return None
+        tail = AuditRecordHash.GENESIS if not records else records[-1].record_hash
+        if tail == anchored_head:
+            return None
+        last = records[-1].turn_id if records else None
+        return ChainBreak(turn_id=last, reason="excised")
 
     def find_action_break(
         self, actions: tuple[HumanAction, ...]

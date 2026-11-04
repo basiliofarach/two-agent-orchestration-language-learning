@@ -51,7 +51,7 @@ help:
 	@echo "  make sim-realise  rebuild stimuli from plan.json"
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API"
-	@echo "  make sim-report   write evidence/report.json"
+	@echo "  make sim-report   write evidence/runs/<run_id>/{report,summary}.json"
 	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
 	@echo "  make sim-serve    the API in simulation mode, on tutor_sim"
 
@@ -102,10 +102,10 @@ seed:
 	$(RUN) python -m tutor_api.curation.prototype_seed
 
 evidence:
-	$(RUN) python -m tutor_api.evidence
+	SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) python -m tutor_api.evidence
 
 serve:
-	$(RUN) tutor-api
+	SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) tutor-api
 
 down:
 	docker compose down
@@ -144,4 +144,5 @@ sim-db:
 		"$(SIM_KB)" "$(SIM_ROSTER)"
 
 sim-serve:
-	TUTOR_MODE=simulation POSTGRES_DB=tutor_sim $(RUN) tutor-api
+	TUTOR_MODE=simulation POSTGRES_DB=tutor_sim \
+		SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) tutor-api

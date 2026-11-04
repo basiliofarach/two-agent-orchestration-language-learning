@@ -5,6 +5,8 @@ import type {
   RecordedActionJson,
   RecordedActionResult,
   SessionSummaryJson,
+  SimulationReportJson,
+  SimulationRunSummaryJson,
   TurnDetailJson,
 } from "~/.server/tutor-api.types";
 
@@ -15,6 +17,13 @@ import type {
  * A missing resource is thrown as a 404 `Response`, so a loader renders the
  * route's error boundary either way. The browser never calls these URLs.
  */
+export type TutorMode = "prototype" | "simulation";
+
+export type HealthStatus = {
+  status: string;
+  mode: TutorMode;
+};
+
 export abstract class TutorApi {
   abstract sessions(): Promise<SessionSummaryJson[]>;
   abstract session(sessionId: string): Promise<SessionSummaryJson>;
@@ -22,6 +31,9 @@ export abstract class TutorApi {
   abstract turn(turnId: string): Promise<TurnDetailJson>;
   abstract recordAction(command: ActionCommand): Promise<RecordedActionResult>;
   abstract events(sessionId: string, after: string | null): Promise<string>;
+  abstract health(): Promise<HealthStatus>;
+  abstract simulationRuns(): Promise<SimulationRunSummaryJson[]>;
+  abstract simulationReport(runId: string): Promise<SimulationReportJson>;
 }
 
 export class HttpTutorApi extends TutorApi {
@@ -62,6 +74,18 @@ export class HttpTutorApi extends TutorApi {
       body,
     );
     return { action: recorded.action, setCookie: null };
+  }
+
+  health(): Promise<HealthStatus> {
+    return this.get<HealthStatus>(["health"]);
+  }
+
+  simulationRuns(): Promise<SimulationRunSummaryJson[]> {
+    return this.get<SimulationRunSummaryJson[]>(["reports", "simulation"]);
+  }
+
+  simulationReport(runId: string): Promise<SimulationReportJson> {
+    return this.get<SimulationReportJson>(["reports", "simulation", runId]);
   }
 
   async events(sessionId: string, after: string | null): Promise<string> {

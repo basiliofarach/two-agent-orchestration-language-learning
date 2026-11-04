@@ -1,7 +1,16 @@
 import { GraduationCap } from "lucide-react";
-import { Link, NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet, useLoaderData } from "react-router";
+
+import { CompositionRoot } from "~/.server/composition-root";
+import { SimulationBanner } from "~/components/simulation-banner";
+
+export async function loader() {
+  const health = await new CompositionRoot(process.env).health();
+  return { mode: health.mode };
+}
 
 export default function BaseLayout() {
+  const { mode } = useLoaderData<typeof loader>();
   return (
     <div className="min-h-svh">
       <a
@@ -27,9 +36,16 @@ export default function BaseLayout() {
             >
               Sessions
             </NavLink>
+            <NavLink
+              to="/simulation"
+              className="ml-4 text-sm underline-offset-4 hover:underline aria-[current=page]:font-medium aria-[current=page]:underline"
+            >
+              Simulation
+            </NavLink>
           </nav>
         </div>
       </header>
+      {mode === "simulation" ? <SimulationBanner /> : null}
       <main
         id="main"
         tabIndex={-1}

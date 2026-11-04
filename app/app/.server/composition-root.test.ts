@@ -31,4 +31,16 @@ describe("CompositionRoot", () => {
     const root = new CompositionRoot({ TUTOR_API_MODE: "liev" });
     expect(() => root.dashboardSource()).toThrow('not "liev"');
   });
+
+  it("reports prototype unless the process is in simulation mode", async () => {
+    const prototype = await new CompositionRoot({
+      TUTOR_API_MODE: "fixture",
+    }).health();
+    const simulation = await new CompositionRoot({
+      TUTOR_API_MODE: "fixture",
+      TUTOR_MODE: "simulation",
+    }).health();
+    expect(prototype.mode).toBe("prototype");
+    expect(simulation.mode).toBe("simulation");
+  });
 });

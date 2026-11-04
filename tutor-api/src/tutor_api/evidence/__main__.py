@@ -22,12 +22,14 @@ from tutor_api.evidence.catalogue import ExhibitRead, ExhibitResult, PackRead
 from tutor_api.evidence.pack import EvidencePack, EvidenceSources, RepositoryPins
 from tutor_api.evidence.project import ExcerptProjector
 from tutor_api.evidence.rubric_file import RubricScores
+from tutor_api.evidence.simulation import LatestSimulationRun
 from tutor_api.evidence.survey import ChainSurvey, ChainSurveyResult
 from tutor_api.settings import ApplicationSettings
 from tutor_core.domain.audit.chain import ChainVerifier
 from tutor_core.domain.ports.cipher import CipherPort
 from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.pii_redaction import PiiRedactionPort
+from tutor_core.domain.ports.simulation_report import SimulationReportPort
 
 
 class PackPaths:
@@ -62,7 +64,8 @@ class EvidenceMain:
     """Compose the pack from the log, on the owner URL, as the seed does.
 
     The chain status and the policy version are read from the database by
-    ``ChainSurvey``, never supplied as constants. The cipher, clock and
+    ``ChainSurvey``, never supplied as constants. The run label and licence
+    status come from the latest finished simulation run's files. The cipher, clock and
     verifier are the container's, so the pack opens the log with the
     deployment's key and stamps it with the injected clock (DEC-0010).
     """
@@ -78,10 +81,16 @@ class EvidenceMain:
         clock = cast(ClockPort, container.resolve(ClockPort))
         redactor = cast(PiiRedactionPort, container.resolve(PiiRedactionPort))
         verifier = cast(ChainVerifier, container.resolve(ChainVerifier))
+        reports = cast(SimulationReportPort, container.resolve(SimulationReportPort))
         survey, exhibits = await self._read(settings, cipher, verifier)
-        body = ExcerptProjector(redactor).project(
-            exhibits,
-            RubricScores(self._destination / "rubric-scores.jsonl").lines(),
+        run = LatestSimulationRun(reports)
+        label = run.label()
+        body = run.applied(
+            ExcerptProjector(redactor).project(
+                exhibits,
+                RubricScores(self._destination / "rubric-scores.jsonl").lines(),
+            ),
+            label,
         )
         pins = RepositoryPins(self._root)
         sources = EvidenceSources(
@@ -91,7 +100,7 @@ class EvidenceMain:
             runtime=sys.version.split()[0],
             policy_version=survey.policy_version or "none-published",
             chain_status=survey.chain_status(),
-            field_label="synthetic-only",
+            field_label=label.field_label,
             sessions=survey.sessions,
             turns=survey.turns,
             actions=survey.actions,

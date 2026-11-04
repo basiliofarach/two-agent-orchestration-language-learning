@@ -61,8 +61,8 @@ class Served:
         self.container: Container = self.app.container(model)
         self.plan: SeedPlan | None = None
 
-    async def install(self) -> None:
-        self.plan = await self.app.install(self.container)
+    async def install(self, plan: SeedPlan | None = None) -> None:
+        self.plan = await self.app.install(self.container, plan)
 
     def body(
         self, prompt: str, fields: tuple[str, ...] = ("proficiency_level",)
