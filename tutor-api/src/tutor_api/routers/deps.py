@@ -24,6 +24,9 @@ from tutor_api.di.dependency import Provide
 from tutor_api.settings import ApplicationSettings
 from tutor_core.application.services.conduct_turn import ConductTurn
 from tutor_core.application.services.read_audit import ReadAudit, ReadTurn
+from tutor_core.application.services.read_simulation_reports import (
+    ReadSimulationReports,
+)
 from tutor_core.application.services.record_human_action import RecordHumanAction
 from tutor_core.application.services.replay_turn import ReplayTurn
 from tutor_core.application.services.report_cohort import ReportCohort
@@ -47,3 +50,6 @@ Audits = Annotated[ReadAudit, Depends(Provide(ReadAudit))]
 Actions = Annotated[RecordHumanAction, Depends(Provide(RecordHumanAction))]
 Streams = Annotated[StreamSession, Depends(Provide(StreamSession))]
 Cohorts = Annotated[ReportCohort, Depends(Provide(ReportCohort))]
+SimulationReports = Annotated[
+    ReadSimulationReports, Depends(Provide(ReadSimulationReports))
+]

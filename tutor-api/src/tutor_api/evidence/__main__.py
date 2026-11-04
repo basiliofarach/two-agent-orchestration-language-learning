@@ -91,7 +91,7 @@ class EvidenceMain:
             runtime=sys.version.split()[0],
             policy_version=survey.policy_version or "none-published",
             chain_status=survey.chain_status(),
-            field_label="synthetic-only",
+            field_label="simulated:unreleased",
             sessions=survey.sessions,
             turns=survey.turns,
             actions=survey.actions,

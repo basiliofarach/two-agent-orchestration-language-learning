@@ -1724,3 +1724,113 @@ class KbDocumentProvenance:
                 DROP COLUMN licence
             """,
         )
+
+
+class SessionChainHead:
+    """Store each session's latest turn digest beside the session.
+
+    The digest is a hash, so it stays cleartext (DEC-0012), the same
+    reason ``record_hash`` does. The insert trigger writes it as the
+    migration owner. A later read compares it with the last row, so a
+    deleted tail is a break.
+    """
+
+    _REASON = (
+        "Digest of the latest turn record. Encrypting it would make the "
+        "Article 12 check depend on key availability (DEC-0012)."
+    )
+    _GENESIS = "0" * 64
+
+    def statements(self) -> tuple[str, ...]:
+        """Register the exemption, add the column, backfill, then the trigger."""
+        return (
+            f"""
+            INSERT INTO protected_column_exemption (
+                schema_name, table_name, column_name, reason, decision_ref
+            ) VALUES (
+                'public', 'tutoring_session', 'turn_chain_head',
+                '{self._REASON}', 'DEC-0012'
+            )
+            ON CONFLICT (schema_name, table_name, column_name) DO NOTHING
+            """,
+            f"""
+            ALTER TABLE tutoring_session
+                ADD COLUMN turn_chain_head text NOT NULL
+                    DEFAULT '{self._GENESIS}'
+                    CONSTRAINT tutoring_session_turn_chain_head_shape
+                    CHECK (turn_chain_head ~ '^[0-9a-f]{{64}}$')
+            """,
+            """
+            UPDATE tutoring_session AS session
+            SET turn_chain_head = tail.record_hash
+            FROM (
+                SELECT DISTINCT ON (session_id) session_id, record_hash
+                FROM turn_audit
+                ORDER BY session_id, turn_index DESC
+            ) AS tail
+            WHERE session.id = tail.session_id
+            """,
+            """
+            CREATE OR REPLACE FUNCTION reject_turn_in_stopped_session()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                stopped timestamptz;
+            BEGIN
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = NEW.session_id
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = 'TS001';
+                END IF;
+                UPDATE public.tutoring_session
+                SET turn_chain_head = NEW.record_hash
+                WHERE id = NEW.session_id;
+                RETURN NEW;
+            END;
+            $$
+            """,
+        )
+
+    def downgrade_statements(self) -> tuple[str, ...]:
+        """Restore the trigger, then drop the column and its exemption."""
+        return (
+            """
+            CREATE OR REPLACE FUNCTION reject_turn_in_stopped_session()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, public
+            AS $$
+            DECLARE
+                stopped timestamptz;
+            BEGIN
+                SELECT stopped_at INTO stopped
+                FROM public.tutoring_session
+                WHERE id = NEW.session_id
+                FOR SHARE;
+                IF stopped IS NOT NULL THEN
+                    RAISE EXCEPTION 'session is stopped'
+                        USING ERRCODE = 'TS001';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """,
+            """
+            ALTER TABLE tutoring_session
+                DROP CONSTRAINT tutoring_session_turn_chain_head_shape,
+                DROP COLUMN turn_chain_head
+            """,
+            """
+            DELETE FROM protected_column_exemption
+            WHERE schema_name = 'public'
+              AND table_name = 'tutoring_session'
+              AND column_name = 'turn_chain_head'
+            """,
+        )

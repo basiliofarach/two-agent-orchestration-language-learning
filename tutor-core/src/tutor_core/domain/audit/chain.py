@@ -47,8 +47,17 @@ class ChainVerifier:
         self._hasher = hasher
         self._actions = actions
 
-    def find_break(self, records: tuple[TurnAuditRecord, ...]) -> ChainBreak | None:
-        """Return the first break, or ``None`` when the chain holds."""
+    def find_break(
+        self,
+        records: tuple[TurnAuditRecord, ...],
+        anchored_head: str | None = None,
+    ) -> ChainBreak | None:
+        """Return the first break, or ``None`` when the chain holds.
+
+        ``anchored_head`` is the digest stored beside the session, not
+        derived from these rows. A missing tail still links from the
+        genesis hash, so without the anchor it would look intact.
+        """
         previous = AuditRecordHash.GENESIS
         for record in records:
             if record.previous_record_hash != previous:
@@ -56,7 +65,14 @@ class ChainVerifier:
             if record.record_hash != self._hasher.digest(record):
                 return ChainBreak(turn_id=record.turn_id, reason="tampered")
             previous = record.record_hash
-        return None
+        if anchored_head is None:
+            return None
+        tail = AuditRecordHash.GENESIS if not records else records[-1].record_hash
+        if tail == anchored_head:
+            return None
+        if not records:
+            return None
+        return ChainBreak(turn_id=records[-1].turn_id, reason="excised")
 
     def find_action_break(
         self, actions: tuple[HumanAction, ...]

@@ -146,3 +146,32 @@ export type StreamEventJson = {
   action: TutorAction | null;
   text: string | null;
 };
+
+export type SimulationRunSummaryJson = {
+  run_id: string;
+  dataset_version: string;
+  tier: "1" | "2";
+  finished_at: string | null;
+  label: string;
+  passed_invariants: boolean;
+  licence_status: "confirmed" | "pending";
+  complete: boolean;
+};
+
+export type SimulationRateJson = {
+  name: string;
+  basis: string | null;
+  k: number;
+  n: number;
+};
+
+export type SimulationReportJson = {
+  run_id: string;
+  dataset_version: string;
+  label: string;
+  licence_status: "confirmed" | "pending";
+  pending_sources: string[];
+  rates: SimulationRateJson[];
+  invariants: { invariant_id: string; passed: boolean }[];
+  finished: boolean;
+};

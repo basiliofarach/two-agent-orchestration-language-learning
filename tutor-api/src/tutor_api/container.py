@@ -27,6 +27,7 @@ from tutor_api.adapters.checks.source_support import (
     SentenceSourceSupport,
     SentenceSplitter,
 )
+from tutor_api.adapters.evidence.simulation_reports import EvidenceDirectoryReports
 from tutor_api.adapters.llm.fixed_prompt import FixedPromptTemplate
 from tutor_api.adapters.llm.local_embedding import LocalEmbedding
 from tutor_api.adapters.llm.ollama import (
@@ -97,6 +98,12 @@ from tutor_core.application.services.read_audit import (
     PrepareTurnRead,
     ReadAudit,
     ReadTurn,
+)
+from tutor_core.application.services.read_simulation_reports import (
+    ExecuteSimulationReports,
+    FinaliseSimulationReports,
+    PrepareSimulationReports,
+    ReadSimulationReports,
 )
 from tutor_core.application.services.record_human_action import (
     ActionRules,
@@ -185,6 +192,7 @@ from tutor_core.domain.ports.policy_artifact import PolicyArtifactPort
 from tutor_core.domain.ports.prompt_template import PromptTemplatePort
 from tutor_core.domain.ports.safety_classifier import SafetyClassifierPort
 from tutor_core.domain.ports.session_directory import SessionDirectoryPort
+from tutor_core.domain.ports.simulation_report import SimulationReportPort
 from tutor_core.domain.ports.source_support import SourceSupportPort
 from tutor_core.domain.ports.tutoring_session import TutoringSessionPort
 from tutor_core.domain.ports.unit_of_work import TransactionConnection, UnitOfWorkPort
@@ -209,6 +217,23 @@ class SettingsProvider(Provider):
 
     def create(self, resolved: Mapping[type, object]) -> object:
         return ApplicationSettings()
+
+
+class SimulationReportProvider(Provider):
+    """The evidence directory. A singleton: it holds a path, not a learner."""
+
+    def provides(self) -> type:
+        return SimulationReportPort
+
+    def lifetime(self) -> Lifetime:
+        return Lifetime.SINGLETON
+
+    def requires(self) -> tuple[type, ...]:
+        return (ApplicationSettings,)
+
+    def create(self, resolved: Mapping[type, object]) -> object:
+        settings = cast(ApplicationSettings, resolved[ApplicationSettings])
+        return EvidenceDirectoryReports(settings.simulation_reports_dir)
 
 
 class CipherProvider(Provider):
@@ -634,6 +659,7 @@ class OrchestratorProvider(Provider):
             GenerationGuard,
             SensitivityHighStakesGate,
             DriftAnomalyGate,
+            ClockPort,
         )
 
     def create(self, resolved: Mapping[type, object]) -> object:
@@ -651,6 +677,7 @@ class OrchestratorProvider(Provider):
                 cast(GenerationGuard, resolved[GenerationGuard]),
                 registry.at("sensitivity_and_high_stakes"),
                 registry.at("drift_and_anomaly"),
+                clock=cast(ClockPort, resolved[ClockPort]),
             )
         )
 
@@ -963,4 +990,19 @@ class ApplicationContainer:
             ConstructorProvider(ExecuteCohort, request, (unit, CohortReportPort)),
             StatelessProvider(FinaliseCohort),
             ServiceProvider(ReportCohort, PrepareCohort, ExecuteCohort, FinaliseCohort),
+            # Simulation reports. The directory is process-wide.
+            SimulationReportProvider(),
+            StatelessProvider(PrepareSimulationReports),
+            ConstructorProvider(
+                ExecuteSimulationReports,
+                Lifetime.SINGLETON,
+                (SimulationReportPort,),
+            ),
+            StatelessProvider(FinaliseSimulationReports),
+            ServiceProvider(
+                ReadSimulationReports,
+                PrepareSimulationReports,
+                ExecuteSimulationReports,
+                FinaliseSimulationReports,
+            ),
         )

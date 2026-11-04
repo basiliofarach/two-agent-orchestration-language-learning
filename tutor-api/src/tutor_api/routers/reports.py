@@ -2,9 +2,11 @@
 
 from fastapi import APIRouter
 
-from tutor_api.routers.deps import Cohorts
+from tutor_api.routers.deps import Cohorts, SimulationReports
+from tutor_core.application.services.read_simulation_reports import SimulationQuery
 from tutor_core.application.services.report_cohort import CohortCommand
 from tutor_core.domain.models.cohort import CohortReport
+from tutor_core.domain.models.simulation import SimulationReport, SimulationRunSummary
 
 
 class ReportRouter:
@@ -19,8 +21,39 @@ class ReportRouter:
             methods=["GET"],
             response_model=CohortReport,
         )
+        router.add_api_route(
+            "/reports/simulation",
+            self.simulation_runs,
+            methods=["GET"],
+            response_model=tuple[SimulationRunSummary, ...],
+        )
+        router.add_api_route(
+            "/reports/simulation/{run_id}",
+            self.simulation_report,
+            methods=["GET"],
+            response_model=SimulationReport,
+        )
         return router
 
     async def cohort(self, service: Cohorts) -> CohortReport:
         """Return the gate-decision and refusal counts."""
         return (await service.prepare(CohortCommand()).execute()).finalise()
+
+    async def simulation_runs(
+        self, service: SimulationReports
+    ) -> tuple[SimulationRunSummary, ...]:
+        """Return every run summary, including one that has not finished."""
+        read = (await service.prepare(SimulationQuery()).execute()).finalise()
+        return read.runs
+
+    async def simulation_report(
+        self, run_id: str, service: SimulationReports
+    ) -> SimulationReport:
+        """Return one C3 report. A missing file is 404; a bad file is 409."""
+        read = (
+            await service.prepare(SimulationQuery(run_id=run_id)).execute()
+        ).finalise()
+        if read.report is None:
+            msg = "the simulation report was not read"
+            raise ValueError(msg)
+        return read.report

@@ -389,7 +389,7 @@ class ScenarioRun:
         RubricReport().write(
             {
                 **score.model_dump(mode="json"),
-                "label": "synthetic-only",
+                "label": "simulated:unreleased",
                 "observed": observed.model_dump(mode="json"),
             }
         )
@@ -577,7 +577,7 @@ class TestOperatorCommands:
         article_12 = (destination / "article-12.md").read_text()
         exhibits = (destination / "exhibits.json").read_text()
         assert "TurnAuditRecord" in article_12
-        assert "missing tail is not reported" in article_12
+        assert "A missing tail is a break" in article_12
         assert "LearnerHistoryPort" in (destination / "article-10.md").read_text()
         assert "kb://spanish/greetings" in exhibits
         assert "history_snapshot" not in exhibits

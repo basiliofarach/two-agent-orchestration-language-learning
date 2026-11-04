@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tutor_core.domain.models.timestamps import AwareDatetime
+
 GateDecision = Literal["pass", "pause", "stop"]
 
 GateStage = Literal[
@@ -28,3 +30,4 @@ class GateVerdict(BaseModel):
     decision: GateDecision
     reason: str = Field(min_length=1)
     policy_rule_id: str = Field(min_length=1)
+    evaluated_at: AwareDatetime | None = None

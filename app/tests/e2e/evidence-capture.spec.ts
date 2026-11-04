@@ -7,10 +7,15 @@ const COMPLETED = "11111111-1111-4111-8111-111111111111";
 const HALTED = "22222222-2222-4222-8222-222222222222";
 const REFUSED = "33333333-3333-4333-8333-333333333333";
 const COMPLETED_TURN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BANNER = "Simulated campaign — no real learner or tutor";
 
 const directory = path.resolve(
   import.meta.dirname,
   "../../../evidence/article-14",
+);
+const simulationDirectory = path.resolve(
+  import.meta.dirname,
+  "../../../evidence/sim-unreleased/screens",
 );
 
 const captures = [
@@ -19,6 +24,12 @@ const captures = [
   { name: "turn-halted.png", route: `/sessions/${HALTED}` },
   { name: "turn-refused.png", route: `/sessions/${REFUSED}` },
   { name: "audit-completed.png", route: `/audit/${COMPLETED_TURN}` },
+];
+
+const simulationCaptures = [
+  { name: "simulation-runs.png", route: "/simulation" },
+  { name: "simulation-run.png", route: "/simulation/sim-1" },
+  { name: "held-turn.png", route: `/sessions/${HALTED}` },
 ];
 
 test.beforeEach(() => {
@@ -34,7 +45,7 @@ test("captures Article 14 screenshots of redacted fixture turns", async ({
   await mkdir(directory, { recursive: true });
   for (const capture of captures) {
     await page.goto(capture.route);
-    await expect(page.locator("body")).toBeVisible();
+    await settle(page);
     await assertRedacted(page);
     await page.screenshot({
       path: path.join(directory, capture.name),
@@ -55,6 +66,40 @@ test("captures Article 14 screenshots of redacted fixture turns", async ({
     )}\n`,
   );
 });
+
+test("captures the simulation run and one held turn", async ({ page }) => {
+  await mkdir(simulationDirectory, { recursive: true });
+  for (const capture of simulationCaptures) {
+    await page.goto(capture.route);
+    await settle(page);
+    await expect(page.getByRole("status")).toHaveText(BANNER);
+    await assertRedacted(page);
+    await page.screenshot({
+      path: path.join(simulationDirectory, capture.name),
+      fullPage: true,
+    });
+  }
+  await writeFile(
+    path.join(simulationDirectory, "manifest.json"),
+    `${JSON.stringify(
+      {
+        dataset_version: "sim-dataset/unreleased",
+        mode: "simulation",
+        banner: BANNER,
+        screenshots: simulationCaptures.map((capture) => capture.name),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+});
+
+async function settle(page: Page) {
+  await expect(page.getByRole("heading").first()).toBeVisible();
+  if (process.env.TUTOR_MODE === "simulation") {
+    await expect(page.getByRole("status")).toHaveText(BANNER);
+  }
+}
 
 async function assertRedacted(page: Page) {
   const text = await page.locator("body").innerText();

@@ -40,7 +40,7 @@ class GateRows:
                         "decision": verdict.decision,
                         "reason": verdict.reason,
                         "policy_rule_id": verdict.policy_rule_id,
-                        "evaluated_at": at,
+                        "evaluated_at": verdict.evaluated_at or at,
                     }
                 )
             )
@@ -54,7 +54,7 @@ class GateRows:
                         f"Not reached: {halting.gate_name} returned {halting.decision}."
                     ),
                     policy_rule_id=halting.policy_rule_id,
-                    evaluated_at=at,
+                    evaluated_at=halting.evaluated_at or at,
                 )
             )
         return tuple(rows)

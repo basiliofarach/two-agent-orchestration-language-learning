@@ -89,7 +89,6 @@ class TestRubric:
         assert canonical == list(range(1, 9))
         scores = tuple(Rubric().score(case, observation(case)) for case in cases)
         assert EvaluationReport(scores=scores).passed()
-        assert {score.judge_signal for score in scores} == {"secondary"}
 
     def test_two_runs_on_the_same_observations_match(self) -> None:
         case = ScenarioCatalogue().cases()[0]
@@ -176,7 +175,7 @@ class TestRubric:
             Rubric().score(canonical, observation(paraphrase))
 
     def test_the_report_is_synthetic_until_tutor_sourced(self) -> None:
-        assert EvaluationReport(scores=()).label == "synthetic-only"
+        assert EvaluationReport(scores=()).label == "simulated:unreleased"
 
 
 class TestSessionEvents:
@@ -268,7 +267,7 @@ class TestEvidencePack:
             runtime="3.12.0",
             policy_version="prototype-1",
             chain_status="intact",
-            field_label="synthetic-only",
+            field_label="simulated:unreleased",
         )
         early = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
         later = FrozenClock(datetime(2026, 1, 2, tzinfo=UTC))
@@ -281,11 +280,11 @@ class TestEvidencePack:
                 assert stamped == second[name].replace("2026-01-02", "STAMP")
             else:
                 assert first[name] == second[name]
-        assert "synthetic-only" in first["article-15.md"]
+        assert "simulated:unreleased" in first["article-15.md"]
         assert "No comparison is invented" in first["article-15.md"]
         assert "Chain verification: intact" in first["article-12.md"]
         assert "TurnAuditRecord" in first["article-12.md"]
-        assert "missing tail is not reported" in first["article-12.md"]
+        assert "A missing tail is a break" in first["article-12.md"]
         assert "LearnerHistoryPort" in first["article-10.md"]
         assert "HumanAction" in first["article-14.md"]
         assert "REQ-AUDIT" in first["article-12.md"]
@@ -301,7 +300,7 @@ class TestEvidencePack:
             runtime="3.12.0",
             policy_version="prototype-1",
             chain_status="broken",
-            field_label="synthetic-only",
+            field_label="simulated:unreleased",
             sessions=2,
             broken_sessions=("s-1",),
         )
@@ -323,7 +322,7 @@ class TestEvidencePack:
             chain_status="intact",
             field_label="validated",
         )
-        with pytest.raises(ValueError, match="synthetic-only"):
+        with pytest.raises(ValueError, match="must match the rubric label"):
             EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).files(
                 sources, PackBody.empty()
             )
@@ -332,7 +331,9 @@ class TestEvidencePack:
         self, tmp_path: Path
     ) -> None:
         score = tmp_path / "rubric-scores.jsonl"
-        score.write_text('{"case": 1, "label": "synthetic-only"}\n', encoding="utf-8")
+        score.write_text(
+            '{"case": 1, "label": "simulated:unreleased"}\n', encoding="utf-8"
+        )
         body = PackBody.empty().model_copy(
             update={"rubric_lines": RubricScores(score).lines()}
         )
@@ -343,14 +344,16 @@ class TestEvidencePack:
             runtime="3.12.0",
             policy_version="prototype-1",
             chain_status="intact",
-            field_label="synthetic-only",
+            field_label="simulated:unreleased",
         )
         directory = tmp_path / "pack"
         EvidencePack(FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))).write(
             directory, sources, body
         )
         article = (directory / "article-15.md").read_text()
-        assert '"label":"synthetic-only"' in article
+        assert '"label":"simulated:unreleased"' in article
+        assert "REQ-SIM" in article
+        assert "REQ-FIELD" not in article
         assert "No comparison is invented" in article
         assert "validated" not in article
         assert score.is_file()

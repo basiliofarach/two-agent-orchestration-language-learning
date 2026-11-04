@@ -1,5 +1,6 @@
 """ConductTurn's handlers and the record each turn seals."""
 
+from datetime import timedelta
 from uuid import UUID
 
 import pytest
@@ -110,6 +111,16 @@ class TestGateRows:
         ]
         assert rows[2].policy_rule_id == "rule-conflict_and_ambiguity"
         assert "conflict_and_ambiguity returned pause" in rows[3].reason
+
+    def test_a_gate_keeps_its_own_time_and_unreached_rows_share_it(self) -> None:
+        recorded = Samples().when()
+        evaluated = recorded - timedelta(seconds=2)
+        verdicts = Verdicts().of("pass", "pause")
+        stamped = verdicts[-1].model_copy(update={"evaluated_at": evaluated})
+        rows = GateRows().rows((*verdicts[:-1], stamped), recorded)
+        assert rows[1].evaluated_at == evaluated
+        assert rows[2].evaluated_at == evaluated
+        assert rows[2].evaluated_at != recorded
 
     def test_no_verdict_or_too_many_is_refused(self) -> None:
         with pytest.raises(ValueError, match="between one and four"):

@@ -9,6 +9,7 @@ export type DashboardEnv = {
   TUTOR_API_MODE?: string;
   TUTOR_API_URL?: string;
   TUTOR_ID?: string;
+  TUTOR_MODE?: string;
 };
 
 /**
@@ -36,10 +37,24 @@ export class CompositionRoot {
     return tutorId;
   }
 
+  health() {
+    return this.tutorApi().health();
+  }
+
+  simulationRuns() {
+    return this.tutorApi().simulationRuns();
+  }
+
+  simulationReport(runId: string) {
+    return this.tutorApi().simulationReport(runId);
+  }
+
   private tutorApi(): TutorApi {
     const mode = this.env.TUTOR_API_MODE ?? "fixture";
     if (mode === "fixture") {
-      return new FixtureTutorApi(this.fixtureLog);
+      const tutorMode =
+        this.env.TUTOR_MODE === "simulation" ? "simulation" : "prototype";
+      return new FixtureTutorApi(this.fixtureLog, tutorMode);
     }
     if (mode === "live") {
       return new HttpTutorApi(

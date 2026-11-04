@@ -8,6 +8,8 @@ from tutor_core.application.turn.guarded_generation import GenerationGuard
 from tutor_core.application.turn.guarded_retrieval import RetrievalGuard
 from tutor_core.application.turn.state import TurnGraphState
 from tutor_core.domain.models.turn import TurnState
+from tutor_core.domain.models.verdict import GateVerdict
+from tutor_core.domain.ports.clock import ClockPort
 from tutor_core.domain.ports.oversight_gate import OversightGatePort
 
 
@@ -40,11 +42,19 @@ class TurnNodes:
         generation: GenerationGuard,
         sensitivity: OversightGatePort,
         drift: OversightGatePort,
+        clock: ClockPort | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._generation = generation
         self._sensitivity = sensitivity
         self._drift = drift
+        self._clock = clock
+
+    def _stamp(self, verdict: GateVerdict) -> GateVerdict:
+        """Record the clock at this node. A missing clock leaves the verdict."""
+        if self._clock is None or verdict.evaluated_at is not None:
+            return verdict
+        return verdict.model_copy(update={"evaluated_at": self._clock.now()})
 
     async def permission_then_retrieval(
         self, state: TurnGraphState
@@ -54,7 +64,10 @@ class TurnNodes:
         if result.context is not None:
             state.turn.retrieved = result.context.knowledge
             state.turn.history = result.context.history
-        return {"turn": state.turn, "verdicts": (*state.verdicts, result.verdict)}
+        return {
+            "turn": state.turn,
+            "verdicts": (*state.verdicts, self._stamp(result.verdict)),
+        }
 
     async def conflict_then_generation(
         self, state: TurnGraphState
@@ -67,19 +80,19 @@ class TurnNodes:
             state.turn.safety_flags = draft.safety_flags
         return {
             "turn": state.turn,
-            "verdicts": (*state.verdicts, result.verdict),
+            "verdicts": (*state.verdicts, self._stamp(result.verdict)),
             "draft": draft,
         }
 
     async def sensitivity(self, state: TurnGraphState) -> dict[str, object]:
         """Sensitivity gate, after generation."""
         verdict = await self._sensitivity.evaluate(state.turn)
-        return {"verdicts": (*state.verdicts, verdict)}
+        return {"verdicts": (*state.verdicts, self._stamp(verdict))}
 
     async def drift(self, state: TurnGraphState) -> dict[str, object]:
         """Drift gate, after generation."""
         verdict = await self._drift.evaluate(state.turn)
-        return {"verdicts": (*state.verdicts, verdict)}
+        return {"verdicts": (*state.verdicts, self._stamp(verdict))}
 
     def proceed(self, state: TurnGraphState) -> bool:
         """Continue only after a ``pass``. A pause or stop ends the graph."""

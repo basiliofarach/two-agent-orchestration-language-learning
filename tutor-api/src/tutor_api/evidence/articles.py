@@ -100,9 +100,10 @@ class Article12:
             f"Broken sessions: {broken}. "
             f"Unreadable sessions: {unreadable}.\n\n"
             "The check links each record to its predecessor, starting at the "
-            "genesis hash. A missing tail is not reported separately from a "
-            "shorter chain.\n\n"
-            "`evaluated_at` is the timestamp stored on the gate row.\n\n"
+            "genesis hash, and compares the last digest with the session's "
+            "stored chain head. A missing tail is a break.\n\n"
+            "`evaluated_at` is the clock time stored on that gate row, not "
+            "a copy made when the pack is written.\n\n"
             "History snapshots are not copied. Learner-facing text in this "
             "pack has been redacted. Safety-flag messages are omitted; "
             "categories are kept.\n\n" + turns.text()
@@ -160,9 +161,20 @@ class Article15:
             + "\n"
             + Cited("REQ-EVAL", "`ScenarioCatalogue` and `Rubric`").text()
             + "\n"
-            + Cited("REQ-FIELD", "the synthetic rubric, labelled as such").text()
+            + Cited(
+                "REQ-SIM",
+                "the simulation run summary; no language model scores an output",
+            ).text()
             + "\n\n"
-            f"Drift report label: {self._body.rubric_label}. "
+            f"Run label: {self._body.rubric_label}. "
+            f"Licence status: {self._body.licence_status}. "
+            "Pending sources: "
+            + (
+                ", ".join(self._body.pending_sources)
+                if self._body.pending_sources
+                else "none"
+            )
+            + ".\n\n"
             "Tutor-sourced inputs are not in this pack. "
             "No comparison is invented.\n\n"
             "Session drift thresholds are not calibrated here.\n\n" + self._scores()

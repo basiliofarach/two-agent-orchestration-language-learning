@@ -434,7 +434,7 @@ class TestChainSurvey:
         connection = KeyedConnection(
             {
                 "FROM policy_version": (("policy-1",),),
-                "FROM tutoring_session": ((str(SESSION_ID),),),
+                "FROM tutoring_session": ((str(SESSION_ID), "0" * 64),),
             }
         )
         result = ChainSurveyResult()
