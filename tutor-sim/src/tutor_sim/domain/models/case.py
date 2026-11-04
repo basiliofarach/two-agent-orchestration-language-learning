@@ -105,7 +105,9 @@ class EpisodeSpec(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    episode_id: str = Field(min_length=1)
+    # The id names the transcript file, so it is a file-name slug: no path
+    # separator can carry the write outside ``transcripts/``.
+    episode_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     persona_id: str = Field(min_length=1)
     tutor_role: Literal["T1", "T2", "T3", "T4"]
     max_turns: int = Field(ge=1, le=8)

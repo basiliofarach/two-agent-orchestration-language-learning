@@ -10,7 +10,7 @@ LabelBasis = Literal["construction", "requirement", "output_dependent"]
 
 
 class RateRow(BaseModel):
-    """A count over its cases, ``k/n``."""
+    """A count over its cases, ``k/n``. No interval is computed."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

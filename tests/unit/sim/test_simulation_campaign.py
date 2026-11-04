@@ -65,6 +65,7 @@ from tutor_sim.application.roles import (
     ComplacentTutor,
     DiligentTutor,
     StoppingTutor,
+    TutorRoster,
 )
 from tutor_sim.application.tier1 import (
     CampaignAbort,
@@ -749,6 +750,7 @@ class TestOracle:
                 ScoredCase(result=ok, basis="requirement"),
                 ScoredCase(result=bad, basis="construction"),
                 ScoredCase(result=bad, basis="output_dependent"),
+                ScoredCase(result=ok, basis="requirement", tier="2"),
             )
         )
         assert rates[0].name == "headline_accuracy"
@@ -1307,6 +1309,7 @@ class TestCommands:
             (source,),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1327,6 +1330,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1359,6 +1363,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 1
@@ -1378,6 +1383,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1411,6 +1417,7 @@ class TestCommands:
             (PinnedSource().record(),),
             client,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1464,6 +1471,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("verify") == 1
@@ -1509,6 +1517,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0
@@ -1535,6 +1544,7 @@ class TestCommands:
             (PinnedSource().record(),),
             None,
             AbsentTutor(),
+            TutorRoster(()),
             errors,
         )
         assert commands.dispatch("realise") == 0

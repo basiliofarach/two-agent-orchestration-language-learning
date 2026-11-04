@@ -8,7 +8,9 @@ from tests.unit.adapters.test_simulation_reports import Directory, _report, _sum
 from tutor_api.adapters.evidence.simulation_reports import EvidenceDirectoryReports
 from tutor_core.application.services.read_simulation_reports import (
     ExecuteSimulationReports,
-    FinaliseSimulationReports,
+    FinaliseSimulationList,
+    FinaliseSimulationReport,
+    ListSimulationReports,
     PrepareSimulationReports,
     ReadSimulationReports,
     SimulationQuery,
@@ -22,11 +24,10 @@ async def test_prepare_execute_finalise_reads_the_directory(tmp_path: Path) -> N
     service = ReadSimulationReports(
         PrepareSimulationReports(),
         ExecuteSimulationReports(EvidenceDirectoryReports(tmp_path)),
-        FinaliseSimulationReports(),
+        FinaliseSimulationReport(),
     )
     read = (await service.prepare(SimulationQuery(run_id="run-1")).execute()).finalise()
-    assert read.report is not None
-    assert read.report.pending_sources == ("grammar-profile",)
+    assert read.pending_sources == ("grammar-profile",)
 
 
 async def test_the_api_lists_and_reads_the_run_tutor_sim_wrote(tmp_path: Path) -> None:
@@ -40,17 +41,22 @@ async def test_the_api_lists_and_reads_the_run_tutor_sim_wrote(tmp_path: Path) -
         finished=True,
     )
     RunDirectory(tmp_path).write(written, "1", datetime(2026, 11, 4, 12, tzinfo=UTC))
-    service = ReadSimulationReports(
-        PrepareSimulationReports(),
-        ExecuteSimulationReports(EvidenceDirectoryReports(tmp_path / "runs")),
-        FinaliseSimulationReports(),
-    )
-    listed = (await service.prepare(SimulationQuery()).execute()).finalise()
-    assert [run.run_id for run in listed.runs] == [written.run_id]
-    assert listed.runs[0].complete is True
-    assert listed.runs[0].licence_status == "pending"
-    read = (
-        await service.prepare(SimulationQuery(run_id=written.run_id)).execute()
+    execute = ExecuteSimulationReports(EvidenceDirectoryReports(tmp_path / "runs"))
+    listed = (
+        await ListSimulationReports(
+            PrepareSimulationReports(), execute, FinaliseSimulationList()
+        )
+        .prepare(SimulationQuery())
+        .execute()
     ).finalise()
-    assert read.report is not None
-    assert read.report.pending_sources == ("grammar-profile",)
+    assert [run.run_id for run in listed] == [written.run_id]
+    assert listed[0].complete is True
+    assert listed[0].licence_status == "pending"
+    read = (
+        await ReadSimulationReports(
+            PrepareSimulationReports(), execute, FinaliseSimulationReport()
+        )
+        .prepare(SimulationQuery(run_id=written.run_id))
+        .execute()
+    ).finalise()
+    assert read.pending_sources == ("grammar-profile",)

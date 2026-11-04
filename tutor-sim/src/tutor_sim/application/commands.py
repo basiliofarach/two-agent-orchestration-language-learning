@@ -5,6 +5,12 @@ from typing import TextIO
 
 from pydantic import ValidationError
 
+from tutor_sim.application.episode import (
+    DuplicateEpisode,
+    EpisodePlanFile,
+    EpisodeRunner,
+    TranscriptFile,
+)
 from tutor_sim.application.freeze import (
     ByteDigest,
     FreezeJob,
@@ -17,7 +23,11 @@ from tutor_sim.application.freeze import (
     StimulusFile,
     StimulusMismatch,
 )
-from tutor_sim.application.oracle import ReportAssembly, ReportBuilder
+from tutor_sim.application.oracle import (
+    InvariantFacts,
+    ReportAssembly,
+    ReportBuilder,
+)
 from tutor_sim.application.realise import (
     ActiveTreeFile,
     ConstructionCheck,
@@ -26,12 +36,19 @@ from tutor_sim.application.realise import (
     NoiseTransformer,
     PayloadIndex,
     PlanFile,
+    PupilPrompt,
     PupilRealiser,
     ReleaseTree,
     StimulusLines,
 )
+from tutor_sim.application.roles import TutorRoster, UnknownTutorRole
 from tutor_sim.application.run_files import RunDirectory
-from tutor_sim.application.tier1 import CampaignAbort, PolicyMismatch, Tier1Runner
+from tutor_sim.application.tier1 import (
+    CampaignAbort,
+    ModeGuard,
+    PolicyMismatch,
+    Tier1Runner,
+)
 from tutor_sim.domain.models.case import StimulusCase
 from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.manifest import RoleModelPin
@@ -48,7 +65,12 @@ from tutor_sim.settings import SimulationSettings
 
 
 class CampaignCommands:
-    """realise, freeze, verify, run and report. ``build`` is still refused."""
+    """realise, freeze, verify, run, episodes and report. ``build`` is refused.
+
+    ``run`` is Tier 1 and ``report`` scores it. ``episodes`` is Tier 2: it
+    runs every frozen episode and writes its own tier ``"2"`` run, with
+    invariant rows and no scored cases (SIMULATION §8.3).
+    """
 
     def __init__(
         self,
@@ -59,6 +81,7 @@ class CampaignCommands:
         sources: tuple[SourceRecord, ...],
         tutor: TutorClientPort | None,
         role: TutorRolePort,
+        roster: TutorRoster,
         errors: TextIO,
     ) -> None:
         self._settings = settings
@@ -68,6 +91,7 @@ class CampaignCommands:
         self._sources = sources
         self._tutor = tutor
         self._role = role
+        self._roster = roster
         self._errors = errors
 
     def dispatch(self, command: str) -> int:
@@ -83,6 +107,8 @@ class CampaignCommands:
             return 0 if self._verified() is not None else 1
         if command == "run":
             return self._run()
+        if command == "episodes":
+            return self._episodes()
         if command == "report":
             return self._report()
         self._errors.write(f"tutor_sim: {command} is not a command\n")
@@ -114,6 +140,7 @@ class CampaignCommands:
         writer.write("stimuli/test.jsonl", lines.body(self._split(cases, "test")), tree)
         writer.write("stimuli/dev.jsonl", lines.body(self._split(cases, "dev")), tree)
         writer.write("discards.json", DiscardLog().body(cases), tree)
+        writer.write("episodes/plan.jsonl", EpisodePlanFile().body(plan.episodes), tree)
         ActiveTreeFile().write(self._root(), tree)
         return 0
 
@@ -131,7 +158,12 @@ class CampaignCommands:
         )
         files = tuple(
             ByteDigest().of_file(self._root() / tree / relative, relative, tree)
-            for relative in ("stimuli/test.jsonl", "stimuli/dev.jsonl", "discards.json")
+            for relative in (
+                "stimuli/test.jsonl",
+                "stimuli/dev.jsonl",
+                "discards.json",
+                "episodes/plan.jsonl",
+            )
         )
         job = FreezeJob(
             dataset_version=plan.dataset_version,
@@ -211,6 +243,66 @@ class CampaignCommands:
             self._settings.evidence_dir / "observations.jsonl",
             self._observations(rows),
         )
+        return 0
+
+    def _episodes(self) -> int:
+        tutor = self._tutor
+        if tutor is None:
+            self._errors.write("tutor_sim: episodes needs a tutor client\n")
+            return 1
+        tree = self._verified()
+        if tree is None:
+            return 1
+        try:
+            specs = EpisodePlanFile().read(self._root() / tree / "episodes/plan.jsonl")
+        except (FileNotFoundError, DuplicateEpisode) as exc:
+            self._errors.write(f"tutor_sim: {exc}\n")
+            return 1
+        if not specs:
+            self._errors.write("tutor_sim: the frozen plan has no episodes\n")
+            return 1
+        manifest = ManifestFile().load(self._root() / tree / "manifest.json")
+        run_id = self._run_id()
+        runs = RunDirectory(self._settings.evidence_dir)
+        transcripts = TranscriptFile(runs.path(run_id) / "transcripts")
+        learners = SimulationNamespace()
+        pupil = PupilPrompt()
+        facts: list[InvariantFacts] = []
+        try:
+            for spec in specs:
+                runner = EpisodeRunner(
+                    tutor,
+                    self._roster.role(spec.tutor_role),
+                    self._model,
+                    ModeGuard(),
+                    transcripts,
+                )
+                record = runner.run(
+                    spec,
+                    learners.learner_id(spec.persona_id),
+                    "tutor-sim",
+                    pupil.persona(spec.persona_id),
+                    manifest.policy_version,
+                )
+                facts.extend(record.facts)
+        except (CampaignAbort, PolicyMismatch, UnknownTutorRole) as exc:
+            self._errors.write(f"tutor_sim: {exc}\n")
+            return 1
+        used: list[str] = []
+        for item in facts:
+            for source in item.observation.sources:
+                if source not in used:
+                    used.append(source)
+        report = ReportBuilder().build(
+            run_id,
+            manifest.dataset_version,
+            f"simulated:{manifest.dataset_version}",
+            self._sources,
+            tuple(used),
+            (),
+            tuple(facts),
+        )
+        runs.write(report, "2", self._clock.now())
         return 0
 
     def _report(self) -> int:

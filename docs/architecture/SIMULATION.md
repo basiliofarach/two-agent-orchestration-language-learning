@@ -177,7 +177,7 @@ tutor-sim/
     ├── composition.py          # SimulationCompositionRoot (rule 3)
     ├── settings.py             # SimulationSettings (pydantic-settings)
     └── __main__.py             # CLI: build | realise | freeze | verify |
-                                #      run | report
+                                #      run | episodes | report
 ```
 
 Tests live under the repository's `tests/`, as they do today:
@@ -717,7 +717,12 @@ No new working directory is introduced.
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |
 | `make sim-run TIER=1\|2 ROLE=T1..T4 SPLIT=dev\|test` | `python -m tutor_sim run …` | Write `observations.jsonl` and `results.jsonl` |
+| `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json` |
 | `make sim-report RUN=<run_id>` | `python -m tutor_sim report` | Write `report.json` |
+
+Tier 2 is its own command, not `sim-run TIER=2`: it scores no case
+(§8.3), so it has no `campaign.jsonl` for `report` to read, and it writes
+its own run directory in one step.
 
 `make sim-run SPLIT=test` refuses to start when the manifest on disk does
 not hash to `test_split_sha256`.

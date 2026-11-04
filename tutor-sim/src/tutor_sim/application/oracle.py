@@ -141,20 +141,31 @@ class LeakCheck:
 
 
 class ScoredCase(BaseModel):
-    """A comparison plus the basis the rate table uses."""
+    """A comparison plus the basis the rate table uses.
+
+    ``tier`` is a guard, not a live path. Tier 2 records invariant rows
+    only (SIMULATION §8.3), so the ``episodes`` command scores no case and
+    nothing sets ``"2"`` today. Should Tier 2 scoring be added, the
+    headline still cannot absorb it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     result: CaseResult
     basis: Literal["construction", "requirement", "output_dependent"]
+    tier: Literal["1", "2"] = "1"
 
 
 class MeasureSet:
     """Headline accuracy, and the output-dependent rate on its own line."""
 
     def rates(self, cases: tuple[ScoredCase, ...]) -> tuple[RateRow, ...]:
-        """Two rows. Headline excludes the output-dependent basis."""
-        headline = tuple(case for case in cases if case.basis != "output_dependent")
+        """Two rows. Headline excludes output-dependent cases and Tier 2."""
+        headline = tuple(
+            case
+            for case in cases
+            if case.basis != "output_dependent" and case.tier == "1"
+        )
         dependent = tuple(case for case in cases if case.basis == "output_dependent")
         return (
             self._row("headline_accuracy", None, headline),

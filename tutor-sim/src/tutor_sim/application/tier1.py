@@ -15,6 +15,7 @@ from tutor_sim.domain.models.case import CaseSpec, OutcomeClass
 from tutor_sim.domain.models.client_call import HealthCall
 from tutor_sim.domain.models.observation import (
     ActionAttempt,
+    LeakHit,
     Observation,
     ObservedGate,
 )
@@ -115,6 +116,106 @@ class ReplayMatch:
         return outcome == "reproduced"
 
 
+class HaltedDecision:
+    """The decision of the gate the turn halted at, when it halted."""
+
+    def of(self, body: TurnOutcomeView) -> str | None:
+        """``None`` for a turn that did not halt or names no matching gate."""
+        if body.halted_at is None:
+            return None
+        for gate in body.gates:
+            if gate.gate_name == body.halted_at:
+                return gate.decision
+        return None
+
+
+class TutorAction:
+    """Send the role's decision. ``none`` sends nothing; a 409 is still a result."""
+
+    def __init__(self, client: TutorClientPort) -> None:
+        self._client = client
+
+    def attempt(
+        self,
+        session_id: UUID,
+        turn_id: UUID,
+        tutor_id: str,
+        decision: TutorDecision,
+    ) -> ActionAttempt | None:
+        """``None`` when the API errored, so nothing can be said about the action."""
+        if decision.decision == "none":
+            return ActionAttempt(decision="none", http_status=0, recorded_action=None)
+        result = self._client.act(
+            session_id,
+            turn_id,
+            tutor_id,
+            decision.decision,
+            decision.edited_output,
+        )
+        if result.kind == "rejected":
+            return ActionAttempt(
+                decision=decision.decision,
+                http_status=result.http_status,
+                recorded_action=None,
+            )
+        if result.kind != "ok" or result.body is None:
+            return None
+        return ActionAttempt(
+            decision=decision.decision,
+            http_status=result.http_status,
+            recorded_action=result.body.action.action,
+        )
+
+
+class TurnObservation:
+    """One turn as the oracle sees it. Tier 1 cases and Tier 2 turns share it."""
+
+    def __init__(self) -> None:
+        self._called = ModelCalled()
+        self._retrieval = RetrievalRan()
+        self._replay = ReplayMatch()
+
+    def build(
+        self,
+        case_id: str,
+        body: TurnOutcomeView,
+        page: TurnDetailView,
+        attempt: ActionAttempt,
+        replay_outcome: str,
+        intact: bool,
+        outcome: OutcomeClass,
+        leaks: tuple[LeakHit, ...],
+    ) -> Observation:
+        """No learner text is copied onto the observation."""
+        return Observation(
+            case_id=case_id,
+            turn_id=body.turn_id,
+            status=body.status,
+            halted_at=body.halted_at,
+            refused=body.refused,
+            sources=body.sources,
+            model_called=self._called.from_revision(body.model_revision),
+            retrieval_ran=self._retrieval.from_turn(
+                page.record.retrieved_context_ids, body.gates
+            ),
+            gate_rows=tuple(
+                ObservedGate(
+                    name=gate.gate_name,
+                    decision=gate.decision,
+                    policy_rule_id=gate.policy_rule_id,
+                )
+                for gate in body.gates
+            ),
+            reply_present=bool(body.reply and body.reply.strip()),
+            disclosure_present=bool(body.ai_disclosure and body.ai_disclosure.strip()),
+            action=attempt,
+            replay_matches=self._replay.matches(replay_outcome),
+            chain_intact=intact and page.record_intact,
+            leaks=leaks,
+            outcome=outcome,
+        )
+
+
 class CaseRecord(BaseModel):
     """One Tier 1 case. An errored case has no observation to score."""
 
@@ -135,12 +236,12 @@ class Tier1Runner:
         self._mode = ModeGuard()
         self._policy = PolicyVersionGuard()
         self._sessions = SessionPool(client)
-        self._called = ModelCalled()
-        self._retrieval = RetrievalRan()
-        self._replay = ReplayMatch()
         self._class = OutcomeClassifier()
+        self._halted = HaltedDecision()
         self._roster = RetainedLearner()
         self._leaks = LeakCheck()
+        self._action = TutorAction(client)
+        self._observe = TurnObservation()
 
     def run(
         self,
@@ -168,13 +269,13 @@ class Tier1Runner:
         if detail.kind != "ok" or detail.body is None:
             return CaseRecord(case_id=case.case_id, errored=True)
         outcome = self._class.classify(
-            body.halted_at, self._halted(body), body.refused, body.status
+            body.halted_at, self._halted.of(body), body.refused, body.status
         )
         view = self._view(body, detail.body)
         if outcome is None or view is None:
             return CaseRecord(case_id=case.case_id, errored=True)
         decision = self._role.decide(view)
-        attempt = self._attempt(session_id, body.turn_id, tutor_id, decision)
+        attempt = self._action.attempt(session_id, body.turn_id, tutor_id, decision)
         if attempt is None:
             return CaseRecord(case_id=case.case_id, errored=True)
         replay = self._client.replay(body.turn_id)
@@ -195,36 +296,6 @@ class Tier1Runner:
             replay.body.outcome,
             audit.body.intact,
             outcome,
-        )
-
-    def _attempt(
-        self,
-        session_id: UUID,
-        turn_id: UUID,
-        tutor_id: str,
-        decision: TutorDecision,
-    ) -> ActionAttempt | None:
-        if decision.decision == "none":
-            return ActionAttempt(decision="none", http_status=0, recorded_action=None)
-        result = self._client.act(
-            session_id,
-            turn_id,
-            tutor_id,
-            decision.decision,
-            decision.edited_output,
-        )
-        if result.kind == "rejected":
-            return ActionAttempt(
-                decision=decision.decision,
-                http_status=result.http_status,
-                recorded_action=None,
-            )
-        if result.kind != "ok" or result.body is None:
-            return None
-        return ActionAttempt(
-            decision=decision.decision,
-            http_status=result.http_status,
-            recorded_action=result.body.action.action,
         )
 
     def _view(
@@ -269,32 +340,15 @@ class Tier1Runner:
             cited=tuple(passage.content for passage in page.cited),
         )
         payload_id = case.payload_id if case.payload_id is not None else case.case_id
-        observation = Observation(
-            case_id=case.case_id,
-            turn_id=body.turn_id,
-            status=body.status,
-            halted_at=body.halted_at,
-            refused=body.refused,
-            sources=body.sources,
-            model_called=self._called.from_revision(body.model_revision),
-            retrieval_ran=self._retrieval.from_turn(
-                record.retrieved_context_ids, body.gates
-            ),
-            gate_rows=tuple(
-                ObservedGate(
-                    name=gate.gate_name,
-                    decision=gate.decision,
-                    policy_rule_id=gate.policy_rule_id,
-                )
-                for gate in body.gates
-            ),
-            reply_present=bool(body.reply and body.reply.strip()),
-            disclosure_present=bool(body.ai_disclosure and body.ai_disclosure.strip()),
-            action=attempt,
-            replay_matches=self._replay.matches(replay_outcome),
-            chain_intact=intact and page.record_intact,
-            leaks=self._leaks.find(exposed, case.expected.must_not_contain, payload_id),
-            outcome=outcome,
+        observation = self._observe.build(
+            case.case_id,
+            body,
+            page,
+            attempt,
+            replay_outcome,
+            intact,
+            outcome,
+            self._leaks.find(exposed, case.expected.must_not_contain, payload_id),
         )
         return CaseRecord(
             case_id=case.case_id,
@@ -302,11 +356,3 @@ class Tier1Runner:
             observation=observation,
             exposed=exposed,
         )
-
-    def _halted(self, body: TurnOutcomeView) -> str | None:
-        if body.halted_at is None:
-            return None
-        for gate in body.gates:
-            if gate.gate_name == body.halted_at:
-                return gate.decision
-        return None
