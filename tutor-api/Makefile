@@ -153,8 +153,12 @@ sim-episodes:
 sim-report:
 	$(SIM_ENV) $(RUN) python -m tutor_sim report
 
-# Quiet by design: one line per step, the seed's progress bar, then its
-# summary. Step output goes to a temporary log, printed only on failure.
+# Recreates tutor_sim each time, so a seed never mixes with an older one.
+# If tutor_sim holds audit records from simulation runs it stops instead;
+# SIM_DB_DISCARD_AUDIT=1 drops them too. Quiet by design: one line per step,
+# the seed's progress bar, then its summary. Step output goes to a temporary
+# log, printed only on failure.
+SIM_DB_DISCARD_AUDIT ?=
 sim-db:
 	@KB="$(SIM_KB)"; \
 	if [ -z "$$KB" ]; then \
@@ -162,8 +166,9 @@ sim-db:
 		[ -f "$$KB" ] || KB="$(SIM_DATASET_DIR)/public/kb/documents.jsonl"; \
 	fi; \
 	LOG=$$(mktemp -t sim-db); \
-	echo "[1/3] database tutor_sim"; \
-	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database 2>"$$LOG") \
+	echo "[1/3] database tutor_sim (dropped and recreated)"; \
+	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database --reset \
+		$(if $(SIM_DB_DISCARD_AUDIT),--discard-audit) 2>"$$LOG") \
 		|| { cat "$$LOG"; exit 1; }; \
 	echo "[2/3] migrations"; \
 	DATABASE_URL="$$SIM_URL" $(RUN) alembic upgrade head >"$$LOG" 2>&1 \

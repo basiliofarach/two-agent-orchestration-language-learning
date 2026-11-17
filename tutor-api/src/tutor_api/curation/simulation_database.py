@@ -1,4 +1,9 @@
-"""Create the campaign database before Alembic migrates it."""
+"""Create, or recreate, the campaign database before Alembic migrates it.
+
+``--reset`` drops ``tutor_sim`` first, so a seed never mixes with an older
+one. Audit records are evidence: a reset that would drop them stops unless
+the operator also passes ``--discard-audit``.
+"""
 
 import re
 import sys
@@ -46,10 +51,19 @@ class DatabaseUrl:
         )
 
 
+class AuditRecordsPresent(RuntimeError):
+    """The database to drop holds audit records and the operator did not agree."""
+
+
+class ResetRefused(ValueError):
+    """The reset would drop the database the owner URL names."""
+
+
 class SimulationDatabase:
     """``tutor_sim`` on the server the owner settings already name."""
 
     EXTENSION = "CREATE EXTENSION IF NOT EXISTS vector"
+    AUDIT_TABLE = "turn_audit"
 
     def __init__(self, name: str = "tutor_sim") -> None:
         self._name = DatabaseIdentifier(name)
@@ -59,6 +73,46 @@ class SimulationDatabase:
         if exists:
             return None
         return f"CREATE DATABASE {self._name.quoted()}"
+
+    def drop_statement(self) -> str:
+        """Drop even with open connections: a stale API must not keep old data."""
+        return f"DROP DATABASE IF EXISTS {self._name.quoted()} WITH (FORCE)"
+
+    def reset(self, owner_url: str, discard_audit: bool) -> str:
+        """Drop the database, then create it empty. Return its owner URL."""
+        urls = DatabaseUrl()
+        plain = urls.plain(owner_url)
+        if urlsplit(plain).path.lstrip("/") == self._name.value():
+            msg = f"refusing to reset {self._name.value()}: the owner URL names it"
+            raise ResetRefused(msg)
+        with psycopg.connect(plain, autocommit=True) as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s",
+                (self._name.value(),),
+            ).fetchone()
+        if exists is not None:
+            records = self._audit_records(urls.renamed(plain, self._name.value()))
+            if records and not discard_audit:
+                msg = (
+                    f"{self._name.value()} holds {records} audit records from "
+                    "simulation runs; pass --discard-audit to drop them"
+                )
+                raise AuditRecordsPresent(msg)
+            with psycopg.connect(plain, autocommit=True) as connection:
+                connection.execute(self.drop_statement())
+        return self.ensure(owner_url)
+
+    def _audit_records(self, url: str) -> int:
+        with psycopg.connect(url, autocommit=True) as connection:
+            table = connection.execute(
+                "SELECT to_regclass(%s)", (self.AUDIT_TABLE,)
+            ).fetchone()
+            if table is None or table[0] is None:
+                return 0
+            row = connection.execute(
+                f"SELECT count(*) FROM {self.AUDIT_TABLE}"  # noqa: S608 - constant
+            ).fetchone()
+        return 0 if row is None else int(row[0])
 
     def ensure(self, owner_url: str) -> str:
         """Create the database and the vector extension. Return its owner URL."""
@@ -85,19 +139,37 @@ class SimulationDatabaseMain:
     entry runs under test against a throwaway server.
     """
 
+    _FLAGS = frozenset({"--reset", "--discard-audit"})
+
     def __init__(
         self,
         settings: ApplicationSettings,
         output: TextIO,
         database: SimulationDatabase,
+        errors: TextIO | None = None,
     ) -> None:
         self._settings = settings
         self._output = output
         self._database = database
+        self._errors = sys.stderr if errors is None else errors
 
-    def run(self) -> int:
-        """Ensure the database, write its URL, and return a process status."""
-        url = self._database.ensure(MigrationDatabaseUrl(self._settings).value())
+    def run(self, argv: tuple[str, ...] = ()) -> int:
+        """Ensure, or reset, the database; write its URL; return a status."""
+        unknown = set(argv) - self._FLAGS
+        if unknown:
+            self._errors.write(
+                "usage: simulation_database [--reset [--discard-audit]]\n"
+            )
+            return 2
+        owner = MigrationDatabaseUrl(self._settings).value()
+        try:
+            if "--reset" in argv:
+                url = self._database.reset(owner, "--discard-audit" in argv)
+            else:
+                url = self._database.ensure(owner)
+        except (AuditRecordsPresent, ResetRefused) as exc:
+            self._errors.write(f"simulation_database: {exc}\n")
+            return 1
         self._output.write(url + "\n")
         return 0
 
@@ -106,5 +178,5 @@ if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(
         SimulationDatabaseMain(
             ApplicationSettings(), sys.stdout, SimulationDatabase()
-        ).run()
+        ).run(tuple(sys.argv[1:]))
     )
