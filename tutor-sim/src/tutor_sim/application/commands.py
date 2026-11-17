@@ -29,6 +29,7 @@ from tutor_sim.application.oracle import (
     ReportAssembly,
     ReportBuilder,
 )
+from tutor_sim.application.progress import CommandProgress
 from tutor_sim.application.realise import (
     ActiveTreeFile,
     ConstructionCheck,
@@ -89,9 +90,11 @@ class CampaignCommands:
         roster: TutorRoster,
         errors: TextIO,
         build: DatasetBuild | None = None,
+        progress: CommandProgress | None = None,
     ) -> None:
         self._settings = settings
         self._build = build
+        self._progress = progress
         self._clock = clock
         self._store = store
         self._model = model
@@ -110,7 +113,7 @@ class CampaignCommands:
         if command == "freeze":
             return self._freeze()
         if command == "verify":
-            return 0 if self._verified() is not None else 1
+            return self._verify()
         if command == "run":
             return self._run()
         if command == "episodes":
@@ -129,8 +132,30 @@ class CampaignCommands:
         except (ValueError, OSError) as exc:  # a digest, cache or content fault
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
-        self._errors.write(f"tutor_sim: {summary.line()}\n")
+        if self._progress is None:
+            self._errors.write(f"tutor_sim: {summary.line()}\n")
+        else:
+            self._progress.finish(summary.line())
         return 0
+
+    def _verify(self) -> int:
+        tree = self._verified()
+        if tree is None:
+            return 1
+        self._finish(f"manifest verified: every file in {tree}/ matches its digest")
+        return 0
+
+    def _start(self, total: int) -> None:
+        if self._progress is not None:
+            self._progress.start(total)
+
+    def _step(self, detail: str) -> None:
+        if self._progress is not None:
+            self._progress.step(detail)
+
+    def _finish(self, summary: str) -> None:
+        if self._progress is not None:
+            self._progress.finish(summary)
 
     def _realise(self) -> int:
         try:
@@ -141,6 +166,7 @@ class CampaignCommands:
         index = PayloadIndex(plan.payloads)
         realiser = PupilRealiser(self._model, ConstructionCheck(), NoiseTransformer())
         realised: list[StimulusCase] = []
+        self._start(len(plan.cases))
         try:
             for offset, case in enumerate(plan.cases):
                 realised.append(
@@ -148,6 +174,7 @@ class CampaignCommands:
                         case, index.text(case.payload_id), plan.seed + offset
                     )
                 )
+                self._step(f"{case.case_id} {case.intent}")
         except KeyError as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
@@ -160,6 +187,11 @@ class CampaignCommands:
         writer.write("discards.json", DiscardLog().body(cases), tree)
         writer.write("episodes/plan.jsonl", EpisodePlanFile().body(plan.episodes), tree)
         ActiveTreeFile().write(self._root(), tree)
+        discarded = sum(1 for case in cases if case.construction.discarded)
+        self._finish(
+            f"realised {len(cases)} cases into {tree}/stimuli "
+            f"({discarded} discarded after 3 attempts)"
+        )
         return 0
 
     def _freeze(self) -> int:
@@ -208,6 +240,7 @@ class CampaignCommands:
         except (RejectedSource, StimulusMismatch, FrozenVersion) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
+        self._finish(f"froze {len(cases)} cases: {tree}/manifest.json")
         return 0
 
     def _verified(self) -> DatasetTree | None:
@@ -237,8 +270,10 @@ class CampaignCommands:
         runner = Tier1Runner(tutor, self._role)
         learners = SimulationNamespace()
         recorded: list[CampaignLine] = []
+        cases = self._read(tree, "stimuli/test.jsonl")
+        self._start(len(cases))
         try:
-            for case in self._read(tree, "stimuli/test.jsonl"):
+            for case in cases:
                 record = runner.run(
                     case,
                     case.utterance,
@@ -252,6 +287,7 @@ class CampaignCommands:
                         observation=record.observation,
                     )
                 )
+                self._step(f"{case.case_id} {case.intent}")
         except (CampaignAbort, PolicyMismatch) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
@@ -260,6 +296,11 @@ class CampaignCommands:
         ObservationFile().write(
             self._settings.evidence_dir / "observations.jsonl",
             self._observations(rows),
+        )
+        errored = sum(1 for row in rows if row.errored)
+        self._finish(
+            f"ran {len(rows)} Tier 1 cases ({errored} errored): "
+            "evidence/campaign.jsonl, evidence/observations.jsonl"
         )
         return 0
 
@@ -286,6 +327,7 @@ class CampaignCommands:
         learners = SimulationNamespace()
         pupil = PupilPrompt()
         facts: list[InvariantFacts] = []
+        self._start(len(specs))
         try:
             for spec in specs:
                 runner = EpisodeRunner(
@@ -303,6 +345,7 @@ class CampaignCommands:
                     manifest.policy_version,
                 )
                 facts.extend(record.facts)
+                self._step(spec.episode_id)
         except (CampaignAbort, PolicyMismatch, UnknownTutorRole) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
@@ -321,6 +364,7 @@ class CampaignCommands:
             tuple(facts),
         )
         runs.write(report, "2", self._clock.now())
+        self._finish(f"ran {len(specs)} Tier 2 episodes: run {run_id}")
         return 0
 
     def _report(self) -> int:
@@ -356,6 +400,10 @@ class CampaignCommands:
             tuple(item.result for item in request.scored),
         )
         runs.write(report, "1", self._clock.now())
+        self._finish(
+            f"scored {len(request.scored)} cases: run {report.run_id} "
+            f"(licence {report.licence_status})"
+        )
         return 0
 
     def _run_id(self) -> str:

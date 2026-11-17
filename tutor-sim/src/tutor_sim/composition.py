@@ -24,6 +24,7 @@ from tutor_sim.adapters.system_clock import SystemClock
 from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.commands import CampaignCommands
 from tutor_sim.application.personas import TutorRoleCards
+from tutor_sim.application.progress import CommandProgress
 from tutor_sim.application.roles import (
     AbsentTutor,
     ComplacentTutor,
@@ -147,6 +148,7 @@ class SimulationCompositionRoot:
                 roster,
                 stream,
                 self._build(cached, store, tuple(catalogue)),
+                CommandProgress(stream),
             )
             return WiredHarness(
                 clock=clock,
@@ -170,6 +172,7 @@ class SimulationCompositionRoot:
             roster,
             stream,
             self._build(fetch, store, tuple(catalogue)),
+            CommandProgress(stream),
         )
         return WiredHarness(
             clock=clock,

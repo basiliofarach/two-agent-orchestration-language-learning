@@ -72,9 +72,15 @@ def test_build_then_realise_freeze_and_verify(tmp_path: Path) -> None:
     assert (root / "public" / "learners" / "roster.jsonl").is_file()
     assert (root / "plan.json").is_file()
 
-    for command in ("realise", "freeze", "verify"):
+    summaries = {
+        "realise": "cases into restricted/stimuli (0 discarded after 3 attempts)",
+        "freeze": "cases: restricted/manifest.json",
+        "verify": "manifest verified: every file in restricted/ matches its digest",
+    }
+    for command, summary in summaries.items():
         code, output = workspace.run(settings, command)
         assert code == 0, f"{command}: {output}"
+        assert summary in output, output
     manifest = json.loads(
         (root / "restricted" / "manifest.json").read_text(encoding="utf-8")
     )

@@ -103,13 +103,16 @@ up:
 	docker compose up
 
 migrate:
-	$(RUN) alembic upgrade head
+	@echo "[migrate] alembic upgrade head"
+	@$(RUN) alembic upgrade head
 
 seed:
-	$(RUN) python -m tutor_api.curation.prototype_seed
+	@echo "[seed] prototype policy and knowledge base"
+	@$(RUN) python -m tutor_api.curation.prototype_seed
 
 evidence:
-	SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) python -m tutor_api.evidence
+	@echo "[evidence] evidence pack"
+	@SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) python -m tutor_api.evidence
 
 serve:
 	SIMULATION_REPORTS_DIR="$(SIM_EVIDENCE_DIR)/runs" $(RUN) tutor-api
@@ -118,10 +121,13 @@ down:
 	docker compose down
 
 smoke-model:
-	PYTHONPATH="$(REPO)" $(UV) --directory "$(REPO)" run python "$(REPO)/infra/ollama/smoke.py"
+	@echo "[1/1] pinned model (config/runtime.toml [model]) on local Ollama"
+	@PYTHONPATH="$(REPO):$(REPO)/tutor-core/src:$(CURDIR)/src" \
+		$(UV) --directory "$(REPO)" run python "$(REPO)/infra/ollama/smoke.py"
 
 purge:
-	$(RUN) python -m tutor_api.retention
+	@echo "[purge] retention: expired learner data"
+	@$(RUN) python -m tutor_api.retention
 
 # The eight scripted cases on a throwaway database, scored on observed
 # behaviour. One JSON line per case; the file is rewritten each run.
@@ -132,26 +138,35 @@ eval: sync
 # Offline: reads the pinned artefacts from .cache/sim and checks each digest.
 # Build never calls the role model; the fixture flag only lets the CLI wire
 # without a [role_model] pin. realise still needs the real pin.
+# Each harness target prints one step line, a progress bar where the command
+# loops (realise, run, episodes), then the command's own summary line.
 sim-build:
-	SIM_OFFLINE=true SIM_ROLE_FIXTURE=true $(SIM_ENV) $(RUN) python -m tutor_sim build
+	@echo "[build] dataset and plan.json from the pinned sources in .cache/sim"
+	@SIM_OFFLINE=true SIM_ROLE_FIXTURE=true $(SIM_ENV) $(RUN) python -m tutor_sim build
 
 sim-realise:
-	$(SIM_ENV) $(RUN) python -m tutor_sim realise
+	@echo "[realise] pupil utterances from the role model ([role_model] pin)"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim realise
 
 sim-freeze:
-	$(SIM_ENV) $(RUN) python -m tutor_sim freeze
+	@echo "[freeze] manifest and test-split digest"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim freeze
 
 sim: sim-build sim-realise sim-freeze
-	$(SIM_ENV) $(RUN) python -m tutor_sim verify
+	@echo "[verify] rebuild check against the manifest"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim verify
 
 sim-run:
-	$(SIM_ENV) $(RUN) python -m tutor_sim run
+	@echo "[run] Tier 1 cases against the API at SIM_API_BASE_URL (make sim-serve)"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim run
 
 sim-episodes:
-	$(SIM_ENV) $(RUN) python -m tutor_sim episodes
+	@echo "[episodes] Tier 2 closed-loop episodes with tutor roles T1-T4"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim episodes
 
 sim-report:
-	$(SIM_ENV) $(RUN) python -m tutor_sim report
+	@echo "[report] score the Tier 1 run"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim report
 
 # Recreates tutor_sim each time, so a seed never mixes with an older one.
 # If tutor_sim holds audit records from simulation runs it stops instead;
