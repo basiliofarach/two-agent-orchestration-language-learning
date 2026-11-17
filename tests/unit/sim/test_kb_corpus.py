@@ -279,6 +279,21 @@ class TestKnowledgeBase:
         ItemCountLogWriter().write(log, path)
         assert path.read_text(encoding="utf-8") == "A1 1\nA2 0\nB1 0\nB2 0\n"
 
+    def test_a_sentence_document_puts_each_sentence_in_its_own_passage(self) -> None:
+        tags = SentenceTags()
+        sentences = (
+            tags.sentence("a", "Cats sit.", "A1", "wiki-auto"),
+            tags.sentence("b", "Dogs run.", "A1", "wiki-auto"),
+        )
+        documents = KbCorpusBuilder(SimulationNamespace()).build(sentences, (), ())
+        passage = next(
+            document
+            for document in documents
+            if document.topic_id == "cefr-sp-wiki-auto-A1"
+        )
+        # The seed splits on blank lines (DATASET §3.1: one sentence per passage).
+        assert passage.content.split("\n\n") == ["Cats sit.", "Dogs run."]
+
     def test_an_empty_corpus_is_only_the_fault_partition(self) -> None:
         documents = KbCorpusBuilder(SimulationNamespace()).build((), (), ())
         assert ItemCountLogWriter().record(()).counts[0].count == 0

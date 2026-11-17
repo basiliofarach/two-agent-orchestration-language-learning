@@ -1,10 +1,11 @@
-"""The operator commands. ``build`` stays until a corpus fetch exists."""
+"""The operator commands: build, realise, freeze, verify, run, episodes, report."""
 
 from pathlib import Path
 from typing import TextIO
 
 from pydantic import ValidationError
 
+from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.episode import (
     DuplicateEpisode,
     EpisodePlanFile,
@@ -65,7 +66,11 @@ from tutor_sim.settings import SimulationSettings
 
 
 class CampaignCommands:
-    """realise, freeze, verify, run, episodes and report. ``build`` is refused.
+    """build, realise, freeze, verify, run, episodes and report.
+
+    ``build`` reads the pinned sources and writes the dataset and
+    ``plan.json``; it needs a ``DatasetBuild``, which the composition root
+    supplies.
 
     ``run`` is Tier 1 and ``report`` scores it. ``episodes`` is Tier 2: it
     runs every frozen episode and writes its own tier ``"2"`` run, with
@@ -83,8 +88,10 @@ class CampaignCommands:
         role: TutorRolePort,
         roster: TutorRoster,
         errors: TextIO,
+        build: DatasetBuild | None = None,
     ) -> None:
         self._settings = settings
+        self._build = build
         self._clock = clock
         self._store = store
         self._model = model
@@ -97,8 +104,7 @@ class CampaignCommands:
     def dispatch(self, command: str) -> int:
         """Run one command. An unknown name is a usage error."""
         if command == "build":
-            self._errors.write("tutor_sim: build is not implemented yet\n")
-            return 1
+            return self._built()
         if command == "realise":
             return self._realise()
         if command == "freeze":
@@ -113,6 +119,18 @@ class CampaignCommands:
             return self._report()
         self._errors.write(f"tutor_sim: {command} is not a command\n")
         return 2
+
+    def _built(self) -> int:
+        if self._build is None:
+            self._errors.write("tutor_sim: build needs the source fetch\n")
+            return 1
+        try:
+            summary = self._build.run()
+        except (ValueError, OSError) as exc:  # a digest, cache or content fault
+            self._errors.write(f"tutor_sim: {exc}\n")
+            return 1
+        self._errors.write(f"tutor_sim: {summary.line()}\n")
+        return 0
 
     def _realise(self) -> int:
         try:

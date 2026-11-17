@@ -79,6 +79,12 @@ the knowledge base needs no level estimation of its own.
 | **CEFR-SP** (Arase, Uchida & Kajiwara 2022), sentence-level CEFR labels from two English-education professionals | Wiki-Auto subset: CC BY-SA 3.0. SCoRE subset: CC BY-NC-SA 4.0. Newsela-Auto subset: not used (needs Newsela access) | Level-labelled example sentences, A1–B2, as KB passages | Only sentences where **both annotators agree** are admitted: A1 124, A2 723, B1 1,601, B2 1,227 (counted 2026-11-03). SCoRE is strongest at A1–A2 (teaching sentences); Wiki-Auto at A2–B2 |
 | **CEFR-J Grammar Profile** (Tono lab, full data 2025-02-25) | Not stated on cefr-j.org; only the Wordlist's terms are. Enters as `licence_review: pending` | The grammar inventory: 256 items with a CEFR-J level (A1.1–B2.2) in the teachers' sheet; 501 item variants with an extraction regex | Gives item names, patterns and levels, **but no example sentences and no explanations**. Examples are drawn from CEFR-SP (below) |
 
+**While the Grammar Profile's review is pending** (2026-11-17), `build`
+ingests CEFR-SP only: eight sentence documents (two subsets × A1–B2) plus
+the fault partition. Benign intents target a `cefr-sp-<subset>-<level>`
+topic instead of a `gp-*` one, and TreeTagger is not run. The grammar
+documents below are added once the Profile's terms are confirmed.
+
 Each grammar item becomes one KB document, assembled from the two datasets
 by rule:
 

@@ -1,15 +1,20 @@
 """A fresh database migrates, seeds, and a second seed changes nothing."""
 
 import base64
+import io
 from pathlib import Path
 from uuid import UUID
 
 import psycopg
 from pydantic import SecretStr
 from tests.support.migrated_database import MigratedDatabase
-from tests.unit.test_simulation_seed_command import Catalogue
+from tests.unit.test_simulation_seed_command import Catalogue, Terminal
 
-from tutor_api.curation.simulation_seed import SimulationSeedMain, main
+from tutor_api.curation.simulation_seed import (
+    SeedProgress,
+    SimulationSeedMain,
+    main,
+)
 from tutor_api.settings import ApplicationSettings
 
 KEK = bytes(range(32))
@@ -46,8 +51,14 @@ class TestSimulationSeed:
         first = await SimulationSeedMain().run(settings, documents, learners, False)
         assert (first.documents, first.learners, first.events) == (1, 2, 1)
         assert Rows().counts(fresh_database) == (1, 2, 1)
-        again = await SimulationSeedMain().run(settings, documents, learners, False)
+        assert first.passages == 1
+        stream = Terminal()
+        again = await SimulationSeedMain().run(
+            settings, documents, learners, False, "owner", SeedProgress(stream)
+        )
         assert (again.documents, again.learners, again.events) == (0, 0, 0)
+        assert again.present == 1
+        assert "100% 1/1" in stream.getvalue()
         stressed = await SimulationSeedMain().run(settings, documents, learners, True)
         assert stressed.documents == 1
         assert Rows().counts(fresh_database) == (2, 2, 1)
@@ -65,5 +76,10 @@ class TestSimulationSeed:
         roster.write_text(
             catalogue.learner().model_dump_json() + "\n", encoding="utf-8"
         )
-        assert main([str(kb), str(roster)], _settings(fresh_database)) == 0
+        stream = io.StringIO()
+        assert main([str(kb), str(roster)], _settings(fresh_database), stream) == 0
         assert Rows().counts(fresh_database)[0] == 1
+        assert stream.getvalue() == (
+            "seeded 1 documents (1 passages, each embedded), 1 learners, "
+            "1 history events; 0 documents were already present\n"
+        )

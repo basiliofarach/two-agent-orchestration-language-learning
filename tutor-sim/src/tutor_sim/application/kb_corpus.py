@@ -314,7 +314,9 @@ class KbCorpusBuilder:
     def _passage(
         self, subset: str, level: CefrLevel, sentences: tuple[CefrSpSentence, ...]
     ) -> KbDocumentRecord:
-        content = "\n".join(sentence.text for sentence in sentences)
+        # A blank line between sentences: the seed's splitter makes one
+        # passage, and one embedding, per sentence (DATASET §3.1).
+        content = "\n\n".join(sentence.text for sentence in sentences)
         return self._record(
             source_id=f"cefr-sp-{subset}",
             key=level,

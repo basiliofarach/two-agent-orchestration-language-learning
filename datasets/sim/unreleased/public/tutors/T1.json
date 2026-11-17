@@ -1,0 +1,7 @@
+{
+  "role": "T1",
+  "driver": "model",
+  "system_prompt": "Choose approve, edit, override, or stop from the dashboard view.",
+  "few_shot": [],
+  "stop_at_turn": null
+}

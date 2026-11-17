@@ -8,7 +8,7 @@ REPO := $(abspath ..)
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
 	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
-	purge eval sim sim-realise sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
+	purge eval sim sim-build sim-realise sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
 
 # Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
 # working directory so ApplicationSettings still finds tutor-api/.env.
@@ -16,9 +16,14 @@ SIM_DATASET_DIR ?= $(REPO)/datasets/sim/unreleased
 SIM_SOURCES_PATH ?= $(SIM_DATASET_DIR)/public/sources.json
 SIM_EVIDENCE_DIR ?= $(REPO)/evidence
 SIM_RUNTIME_PIN_PATH ?= $(REPO)/config/runtime.toml
-SIM_KB ?= $(SIM_DATASET_DIR)/public/kb/documents.jsonl
+# Empty means: restricted/kb when the build wrote it there (a non-redistributable
+# input such as CEFR-SP SCoRE), else public/kb. Chosen in the shell, because
+# make's wildcard splits the repository path at its space.
+SIM_KB ?=
 SIM_ROSTER ?= $(SIM_DATASET_DIR)/public/learners/roster.jsonl
+SIM_CACHE_DIR ?= $(REPO)/.cache/sim
 SIM_ENV = SIM_DATASET_DIR="$(SIM_DATASET_DIR)" \
+	SIM_CACHE_DIR="$(SIM_CACHE_DIR)" \
 	SIM_SOURCES_PATH="$(SIM_SOURCES_PATH)" \
 	SIM_EVIDENCE_DIR="$(SIM_EVIDENCE_DIR)" \
 	SIM_RUNTIME_PIN_PATH="$(SIM_RUNTIME_PIN_PATH)"
@@ -47,7 +52,8 @@ help:
 	@echo "  make evidence      write the compliance pack to ../evidence"
 	@echo "  make purge         remove history of learners past retain_until, and log it"
 	@echo "  make eval          run the eight REQ-EVAL cases; scores to ../evidence/rubric-scores.jsonl"
-	@echo "  make sim          realise, freeze, and verify the dataset in SIM_DATASET_DIR"
+	@echo "  make sim          build, realise, freeze, and verify the dataset in SIM_DATASET_DIR"
+	@echo "  make sim-build    build the dataset and plan.json from cached sources"
 	@echo "  make sim-realise  rebuild stimuli from plan.json"
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API"
@@ -123,13 +129,19 @@ eval: sync
 	rm -f "$(REPO)/evidence/rubric-scores.jsonl"
 	RUBRIC_REPORT="$(REPO)/evidence/rubric-scores.jsonl" $(UV) --directory "$(REPO)" run pytest --no-cov -q "tests/integration/test_dashboard_and_scenarios.py::TestScriptedScenarios"
 
+# Offline: reads the pinned artefacts from .cache/sim and checks each digest.
+# Build never calls the role model; the fixture flag only lets the CLI wire
+# without a [role_model] pin. realise still needs the real pin.
+sim-build:
+	SIM_OFFLINE=true SIM_ROLE_FIXTURE=true $(SIM_ENV) $(RUN) python -m tutor_sim build
+
 sim-realise:
 	$(SIM_ENV) $(RUN) python -m tutor_sim realise
 
 sim-freeze:
 	$(SIM_ENV) $(RUN) python -m tutor_sim freeze
 
-sim: sim-realise sim-freeze
+sim: sim-build sim-realise sim-freeze
 	$(SIM_ENV) $(RUN) python -m tutor_sim verify
 
 sim-run:
@@ -141,11 +153,25 @@ sim-episodes:
 sim-report:
 	$(SIM_ENV) $(RUN) python -m tutor_sim report
 
+# Quiet by design: one line per step, the seed's progress bar, then its
+# summary. Step output goes to a temporary log, printed only on failure.
 sim-db:
-	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database) && \
-	DATABASE_URL="$$SIM_URL" $(RUN) alembic upgrade head && \
+	@KB="$(SIM_KB)"; \
+	if [ -z "$$KB" ]; then \
+		KB="$(SIM_DATASET_DIR)/restricted/kb/documents.jsonl"; \
+		[ -f "$$KB" ] || KB="$(SIM_DATASET_DIR)/public/kb/documents.jsonl"; \
+	fi; \
+	LOG=$$(mktemp -t sim-db); \
+	echo "[1/3] database tutor_sim"; \
+	SIM_URL=$$($(RUN) python -m tutor_api.curation.simulation_database 2>"$$LOG") \
+		|| { cat "$$LOG"; exit 1; }; \
+	echo "[2/3] migrations"; \
+	DATABASE_URL="$$SIM_URL" $(RUN) alembic upgrade head >"$$LOG" 2>&1 \
+		|| { cat "$$LOG"; exit 1; }; \
+	echo "[3/3] knowledge base and learners from $${KB#$(REPO)/}"; \
 	DATABASE_URL="$$SIM_URL" $(RUN) python -m tutor_api.curation.simulation_seed \
-		"$(SIM_KB)" "$(SIM_ROSTER)"
+		"$$KB" "$(SIM_ROSTER)" || exit 1; \
+	echo "done"
 
 sim-serve:
 	TUTOR_MODE=simulation POSTGRES_DB=tutor_sim \

@@ -41,6 +41,11 @@ class PlanFile:
             raise FileNotFoundError(msg)
         return RealisePlan.model_validate_json(path.read_text(encoding="utf-8"))
 
+    def write(self, path: Path, plan: RealisePlan) -> None:
+        """Write the plan the build produced. ``.gitignore`` keeps it local."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(plan.model_dump_json(), encoding="utf-8")
+
 
 class PayloadIndex:
     """Payload text by id. The case names the id; the bytes come from here."""

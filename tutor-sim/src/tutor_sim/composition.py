@@ -21,6 +21,7 @@ from tutor_sim.adapters.role_model import (
     UrllibRoleChat,
 )
 from tutor_sim.adapters.system_clock import SystemClock
+from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.commands import CampaignCommands
 from tutor_sim.application.personas import TutorRoleCards
 from tutor_sim.application.roles import (
@@ -134,6 +135,7 @@ class SimulationCompositionRoot:
         role = DiligentTutor(model, "You are a diligent tutor. Answer with one action.")
         roster = TutorRosterChoice().build(role)
         if self._settings.offline:
+            cached = CachedOnlySourceFetch(self._settings.cache_dir, digest)
             commands = CampaignCommands(
                 self._settings,
                 clock,
@@ -144,10 +146,11 @@ class SimulationCompositionRoot:
                 role,
                 roster,
                 stream,
+                self._build(cached, store, tuple(catalogue)),
             )
             return WiredHarness(
                 clock=clock,
-                fetch=CachedOnlySourceFetch(self._settings.cache_dir, digest),
+                fetch=cached,
                 store=store,
                 commands=commands,
                 client=None,
@@ -155,6 +158,7 @@ class SimulationCompositionRoot:
         hosts = CatalogueHosts().from_records(catalogue)
         client = httpx.Client()
         tutor = HttpTutorClient(client, self._settings.api_base_url)
+        fetch = HttpSourceFetch(client, self._settings.cache_dir, digest, hosts)
         commands = CampaignCommands(
             self._settings,
             clock,
@@ -165,11 +169,22 @@ class SimulationCompositionRoot:
             role,
             roster,
             stream,
+            self._build(fetch, store, tuple(catalogue)),
         )
         return WiredHarness(
             clock=clock,
-            fetch=HttpSourceFetch(client, self._settings.cache_dir, digest, hosts),
+            fetch=fetch,
             store=store,
             commands=commands,
             client=client,
+        )
+
+    def _build(
+        self,
+        fetch: SourceFetchPort,
+        store: DatasetStorePort,
+        catalogue: tuple[SourceRecord, ...],
+    ) -> DatasetBuild:
+        return DatasetBuild(
+            fetch, store, catalogue, self._settings.dataset_dir, self._settings.seed
         )

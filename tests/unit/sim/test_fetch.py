@@ -318,15 +318,29 @@ class TestSourceCatalogue:
             "treetagger",
         } <= present
         assert present.isdisjoint(excluded)
+        scopes: dict[str, str] = {}
         for record in records:
             pin = root / "pins" / f"{record.source_id}.json"
             body = json.loads(pin.read_text(encoding="utf-8"))
-            assert body["digest_scope"] == "pin-file"
-            assert "not of a fetched artefact" in body["note"]
-            assert record.sha256 == digest.of_file(pin)
+            scopes[record.source_id] = body["digest_scope"]
+            if body["digest_scope"] == "pin-file":
+                assert "not of a fetched artefact" in body["note"]
+                assert record.sha256 == digest.of_file(pin)
+            elif body["digest_scope"] == "authored-file":
+                assert record.sha256 == digest.of_file(root / body["artefact"])
+            else:
+                assert body["digest_scope"] == "artefact"
+                assert body["bytes"] > 0
             assert record.licence_review != "rejected"
             assert record.source_id not in excluded
             assert record.revision != "latest"
+        # Pending and generated sources keep a pin-file digest until fetched.
+        assert {sid for sid, scope in scopes.items() if scope == "pin-file"} == {
+            "cefr-j-grammar-profile",
+            "cefr-j-wordlist",
+            "treetagger",
+            "synthetic-pii",
+        }
 
     def test_cefr_j_stays_pending_while_its_terms_are_unanswered(self) -> None:
         root = RepositoryPaths().root() / "datasets" / "sim" / "unreleased" / "public"
