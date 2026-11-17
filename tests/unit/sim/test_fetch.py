@@ -324,9 +324,18 @@ class TestSourceCatalogue:
             assert body["digest_scope"] == "pin-file"
             assert "not of a fetched artefact" in body["note"]
             assert record.sha256 == digest.of_file(pin)
-            assert record.licence_review == "pending"
+            assert record.licence_review != "rejected"
             assert record.source_id not in excluded
             assert record.revision != "latest"
+
+    def test_cefr_j_stays_pending_while_its_terms_are_unanswered(self) -> None:
+        root = RepositoryPaths().root() / "datasets" / "sim" / "unreleased" / "public"
+        records = SourceCatalogue(root / "sources.json").load()
+        pending = {r.source_id for r in records if r.licence_review == "pending"}
+        assert pending == {"cefr-j-grammar-profile", "cefr-j-wordlist"}
+        for record in records:
+            if record.licence_review == "confirmed":
+                assert record.reviewed_by and record.reviewed_on and record.review_note
 
     def test_an_excluded_source_is_not_admitted(self, tmp_path: Path) -> None:
         path = self._write(tmp_path, source_id="efcamdat")

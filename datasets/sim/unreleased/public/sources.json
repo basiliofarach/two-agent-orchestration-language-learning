@@ -2,7 +2,7 @@
   {
     "source_id": "cefr-sp-wiki-auto",
     "title": "CEFR-SP Wiki-Auto subset",
-    "url": "https://github.com/megagonlabs/cefr-sp",
+    "url": "https://github.com/yukiar/CEFR-SP",
     "revision": "2026-11-03",
     "sha256": "5035629b1c77e3168e2f151a28849eae7397854c8f83b867f73758eb376b697b",
     "licence": "CC-BY-SA-3.0",
@@ -10,12 +10,15 @@
     "redistributable": true,
     "use": "kb",
     "attribution": "Arase, Uchida and Kajiwara 2022. Wiki-Auto subset, CC BY-SA 3.0. Sentences both annotators agree on, A1-B2.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "CC BY-SA 3.0 read. Attribution kept; derived KB documents inherit the licence."
   },
   {
     "source_id": "cefr-sp-score",
     "title": "CEFR-SP SCoRE subset",
-    "url": "https://github.com/megagonlabs/cefr-sp",
+    "url": "https://github.com/yukiar/CEFR-SP",
     "revision": "2026-11-03",
     "sha256": "3aa028f38a99cf6d9a66e67b27d82f2e1fd6f69ebecb349e10e3b755b9871bbf",
     "licence": "CC-BY-NC-SA-4.0",
@@ -23,7 +26,10 @@
     "redistributable": false,
     "use": "kb",
     "attribution": "Arase, Uchida and Kajiwara 2022. SCoRE subset, CC BY-NC-SA 4.0. Not committed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "CC BY-NC-SA 4.0 read. Non-commercial thesis use; text stays in the restricted tree."
   },
   {
     "source_id": "cefr-j-grammar-profile",
@@ -49,7 +55,10 @@
     "redistributable": false,
     "use": "tool",
     "attribution": "Helmut Schmid. Research, education and evaluation. Build-time tagger for Grammar Profile regexes. The system never tags.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Research, education and evaluation terms read. Build-time only; the binary is not redistributed."
   },
   {
     "source_id": "cefr-j-wordlist",
@@ -75,7 +84,10 @@
     "redistributable": true,
     "use": "grounding",
     "attribution": "Crossley et al. 2023. Few-shot examples by score band. Not used for CEFR placement.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "CC BY 4.0 read. Attribution kept."
   },
   {
     "source_id": "fce",
@@ -88,7 +100,10 @@
     "redistributable": false,
     "use": "grounding",
     "attribution": "Yannakoudakis et al. 2011. Non-commercial research licence. Text is not redistributed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Non-commercial research licence accepted on download. Learner text is not committed."
   },
   {
     "source_id": "wi-locness",
@@ -101,7 +116,10 @@
     "redistributable": false,
     "use": "grounding",
     "attribution": "Bryant et al. 2019. Non-commercial research licence. Text is not redistributed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Non-commercial research licence accepted on download. Excerpts under 100 words only."
   },
   {
     "source_id": "tscc",
@@ -109,12 +127,15 @@
     "url": "https://forms.gle/oW5fwTTZfZcTkp8v9",
     "revision": "v2",
     "sha256": "4e21d071eecc27fb313ea741f9eb0d7e7c6904129ed5fe6eef108c8ea84f96e0",
-    "licence": "custom:unverified",
+    "licence": "custom:non-commercial-research",
     "licence_url": "https://www.languagesciences.cam.ac.uk/resources",
     "redistributable": false,
     "use": "grounding",
-    "attribution": "Caines et al. 2022. Requested through a form. Unused until the licence is read.",
-    "licence_review": "pending"
+    "attribution": "Caines et al. 2022. Non-commercial research and education licence. Excerpts under 100 words. Not committed.",
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Licence received with the corpus (README): non-commercial research and education, cite Caines et al. 2022, excerpts under 100 words, no de-anonymisation."
   },
   {
     "source_id": "deepset-prompt-injections",
@@ -127,7 +148,10 @@
     "redistributable": true,
     "use": "payload",
     "attribution": "Rows labelled injection. Apache-2.0.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Apache-2.0 read."
   },
   {
     "source_id": "hackaprompt",
@@ -140,7 +164,10 @@
     "redistributable": false,
     "use": "payload",
     "attribution": "Gated click-through. Fetched at build by pinned revision. Not committed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "MIT read; gated click-through accepted. Not committed."
   },
   {
     "source_id": "bipia",
@@ -153,7 +180,10 @@
     "redistributable": false,
     "use": "payload",
     "attribution": "MIT code. Per-component data licences. Not committed until each component is read.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "MIT read. Data stays uncommitted."
   },
   {
     "source_id": "minorbench",
@@ -166,7 +196,10 @@
     "redistributable": false,
     "use": "payload",
     "attribution": "Fetched at build by pinned revision. Not committed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "MIT read. Not committed."
   },
   {
     "source_id": "safe-child-llm",
@@ -179,7 +212,10 @@
     "redistributable": false,
     "use": "payload",
     "attribution": "Fetched at build by pinned revision. Not committed.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "MIT read. Not committed."
   },
   {
     "source_id": "synthetic-pii",
@@ -192,7 +228,10 @@
     "redistributable": true,
     "use": "payload",
     "attribution": "Seeded names, emails, phones and addresses in English and Spanish. Generated, not collected.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Generated by the harness; no third-party terms."
   },
   {
     "source_id": "author-open-web",
@@ -205,7 +244,10 @@
     "redistributable": true,
     "use": "payload",
     "attribution": "Written by the author.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Written by the author; no third-party terms."
   },
   {
     "source_id": "author-history-probe",
@@ -218,7 +260,10 @@
     "redistributable": true,
     "use": "payload",
     "attribution": "Written by the author.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Written by the author; no third-party terms."
   },
   {
     "source_id": "author-proficiency",
@@ -231,6 +276,9 @@
     "redistributable": true,
     "use": "payload",
     "attribution": "Written by the author.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-17",
+    "review_note": "Written by the author; no third-party terms."
   }
 ]

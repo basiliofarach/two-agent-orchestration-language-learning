@@ -160,7 +160,7 @@ stress runs:
 | ELLIPSE corpus (Crossley et al. 2023) | CC BY 4.0, direct download | Few-shot examples of authentic writing by US grade 8–12 English learners, picked by score band | CEFR placement (no CEFR labels); L1 (no L1 field) |
 | FCE v2.1 (Yannakoudakis et al. 2011) | Non-commercial research licence, accepted on download | Aggregate error-type profiles by L1 and age band. Spanish is the largest L1; 214 answers fall in the 0–16 age band | Copying learner text into the repository |
 | W&I+LOCNESS v2.1 (Bryant et al. 2019) | Non-commercial research licence; excerpts under 100 words | Error-type profiles per CEFR band (A/B/C) | L1 or age (neither field exists) |
-| TSCC v2 (Caines et al. 2022) | **Unverified**: requested through a form | Optional: register of real one-to-one ESL tutoring chat (learners aged 12–40, Spanish among the L1s) | Anything, until the licence is read |
+| TSCC v2 (Caines et al. 2022) | Non-commercial research and education licence, received with the corpus; excerpts under 100 words; no de-anonymisation | Optional: register of real one-to-one ESL tutoring chat (learners aged 12–40, Spanish among the L1s) | Copying lesson text into the repository |
 
 **Not used:**
 
