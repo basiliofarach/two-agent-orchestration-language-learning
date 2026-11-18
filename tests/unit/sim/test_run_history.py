@@ -209,3 +209,114 @@ class TestRunIds:
         assert runs.claim("run-20261118T090000") == "run-20261118T090000"
         assert runs.path("run-20261118T090000").is_dir()
         assert runs.claim("run-20261118T090000") == "run-20261118T090000-2"
+
+
+class CountingTutor(ScriptedTutor):
+    """Counts the turns it is sent."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.submitted = 0
+
+    def submit(self, session_id, learner_id, prompt, fields):  # type: ignore[no-untyped-def]
+        self.submitted += 1
+        return super().submit(session_id, learner_id, prompt, fields)
+
+
+_ABORTED = "run-20261118T090000"
+
+
+class TestResume:
+    def _aborted(self, tmp_path: Path) -> Campaign:
+        campaign = Campaign(tmp_path)
+        assert campaign.commands(RosterFailsAfter(1), _FIRST).dispatch("run") == 1
+        return campaign
+
+    def _resume(self, campaign: Campaign, client: ScriptedTutor, run_id: str) -> int:
+        named = campaign.settings.model_copy(update={"run_id": run_id})
+        return campaign.commands(client, _SECOND, named).dispatch("run")
+
+    def test_a_resumed_run_sends_only_the_cases_it_has_not_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        campaign = self._aborted(tmp_path)
+        client = CountingTutor()
+        assert self._resume(campaign, client, _ABORTED) == 0
+        assert client.submitted == 1
+        directory = campaign.runs() / _ABORTED
+        lines = CampaignFile().read(directory / "campaign.jsonl")
+        assert [line.case_id for line in lines] == ["c1", "c2"]
+        observations = (directory / "observations.jsonl").read_text(encoding="utf-8")
+        assert observations.count("\n") == 2
+        assert campaign.latest() == _ABORTED
+        assert sorted(path.name for path in campaign.runs().iterdir()) == [_ABORTED]
+        assert (
+            "resuming run-20261118T090000: 1 of 2 cases" in campaign.errors.getvalue()
+        )
+
+    def test_a_resumed_run_can_be_resumed_again_after_another_abort(
+        self, tmp_path: Path
+    ) -> None:
+        campaign = self._aborted(tmp_path)
+        assert self._resume(campaign, RosterFailsAfter(0), _ABORTED) == 1
+        assert self._resume(campaign, ScriptedTutor(), _ABORTED) == 0
+        lines = CampaignFile().read(campaign.runs() / _ABORTED / "campaign.jsonl")
+        assert [line.case_id for line in lines] == ["c1", "c2"]
+
+    def test_a_finished_run_is_not_resumed(self, tmp_path: Path) -> None:
+        campaign = Campaign(tmp_path)
+        assert campaign.commands(ScriptedTutor(), _FIRST).dispatch("run") == 0
+        client = CountingTutor()
+        assert self._resume(campaign, client, _ABORTED) == 1
+        assert client.submitted == 0
+        assert f"run {_ABORTED} already finished" in campaign.errors.getvalue()
+
+    def test_a_run_with_no_campaign_is_not_resumed(self, tmp_path: Path) -> None:
+        campaign = Campaign(tmp_path)
+        assert self._resume(campaign, CountingTutor(), _ABORTED) == 1
+        assert f"run {_ABORTED} has no campaign to resume" in campaign.errors.getvalue()
+        assert not (campaign.runs() / _ABORTED).exists()
+
+    def test_a_run_from_another_split_is_not_resumed(self, tmp_path: Path) -> None:
+        campaign = self._aborted(tmp_path)
+        trail = campaign.runs() / _ABORTED / "campaign.jsonl"
+        trail.write_text(
+            trail.read_text(encoding="utf-8").replace('"c1"', '"c-zz"'),
+            encoding="utf-8",
+        )
+        client = CountingTutor()
+        assert self._resume(campaign, client, _ABORTED) == 1
+        assert client.submitted == 0
+        assert "c-zz is not in the frozen test split" in campaign.errors.getvalue()
+
+    def test_a_line_cut_off_when_the_process_died_is_dropped_and_rerun(
+        self, tmp_path: Path
+    ) -> None:
+        campaign = self._aborted(tmp_path)
+        trail = campaign.runs() / _ABORTED / "campaign.jsonl"
+        with trail.open("a", encoding="utf-8") as handle:
+            handle.write('{"case_id": "c2", "err')
+        client = CountingTutor()
+        assert self._resume(campaign, client, _ABORTED) == 0
+        assert client.submitted == 1
+        lines = CampaignFile().read(trail)
+        assert [line.case_id for line in lines] == ["c1", "c2"]
+        assert "dropped an unfinished last line" in campaign.errors.getvalue()
+
+    def test_a_damaged_line_before_the_last_is_refused(self, tmp_path: Path) -> None:
+        campaign = Campaign(tmp_path)
+        assert campaign.commands(RosterFailsAfter(1), _FIRST).dispatch("run") == 1
+        trail = campaign.runs() / _ABORTED / "campaign.jsonl"
+        trail.write_text("not json\n" + trail.read_text(encoding="utf-8"), "utf-8")
+        assert self._resume(campaign, CountingTutor(), _ABORTED) == 1
+        assert (
+            f"run {_ABORTED} has a damaged campaign line" in campaign.errors.getvalue()
+        )
+
+    def test_a_blank_line_in_the_campaign_is_ignored(self, tmp_path: Path) -> None:
+        campaign = self._aborted(tmp_path)
+        trail = campaign.runs() / _ABORTED / "campaign.jsonl"
+        trail.write_text("\n" + trail.read_text(encoding="utf-8"), "utf-8")
+        client = CountingTutor()
+        assert self._resume(campaign, client, _ABORTED) == 0
+        assert client.submitted == 1

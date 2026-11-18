@@ -42,3 +42,14 @@ class TestCommandProgress:
         progress = CommandProgress(stream)
         progress.finish("froze 0 cases")
         assert stream.getvalue() == "froze 0 cases\n"
+
+    def test_a_resumed_command_starts_the_bar_at_the_items_already_done(
+        self,
+    ) -> None:
+        stream = Terminal()
+        progress = CommandProgress(stream, width=10)
+        progress.start(4, done=2)
+        progress.step("c-000002 I2")
+        text = stream.getvalue()
+        assert "[#####-----]  50% 2/4" in text
+        assert "[#######---]  75% 3/4 c-000002 I2" in text

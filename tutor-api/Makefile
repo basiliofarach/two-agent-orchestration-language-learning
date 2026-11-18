@@ -58,6 +58,7 @@ help:
 	@echo "  make sim-realise  rebuild stimuli from plan.json"
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API; a new evidence/runs/<run_id>/ each time"
+	@echo "                    SIM_RUN_ID=<run_id> continues an unfinished run"
 	@echo "  make sim-episodes Tier 2 episodes; writes evidence/runs/<run_id>/ with transcripts"
 	@echo "  make sim-report   score the latest finished run (SIM_RUN_ID=<run_id> for another)"
 	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import TextIO
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.episode import (
@@ -147,9 +147,9 @@ class CampaignCommands:
         self._finish(f"manifest verified: every file in {tree}/ matches its digest")
         return 0
 
-    def _start(self, total: int) -> None:
+    def _start(self, total: int, done: int = 0) -> None:
         if self._progress is not None:
-            self._progress.start(total)
+            self._progress.start(total, done)
 
     def _step(self, detail: str) -> None:
         if self._progress is not None:
@@ -278,16 +278,21 @@ class CampaignCommands:
             return 1
         runner = Tier1Runner(tutor, self._role)
         learners = SimulationNamespace()
-        recorded: list[CampaignLine] = []
         cases = self._read(tree, "stimuli/test.jsonl")
         runs = RunDirectory(self._settings.evidence_dir)
-        run_id = runs.claim(self._run_id())
-        trail = runs.path(run_id) / "campaign.jsonl"
         campaign = CampaignFile()
-        campaign.write(trail, ())
-        self._start(len(cases))
+        opened = self._open_run(runs, campaign, cases)
+        if opened is None:
+            return 1
+        run_id, done = opened
+        trail = runs.path(run_id) / "campaign.jsonl"
+        recorded: list[CampaignLine] = list(done)
+        finished = {line.case_id for line in done}
+        self._start(len(cases), len(done))
         try:
             for case in cases:
+                if case.case_id in finished:
+                    continue
                 record = runner.run(
                     case,
                     case.utterance,
@@ -327,6 +332,48 @@ class CampaignCommands:
             f"run {run_id} (evidence/runs/{run_id}/)"
         )
         return 0
+
+    def _open_run(
+        self,
+        runs: RunDirectory,
+        campaign: "CampaignFile",
+        cases: tuple[StimulusCase, ...],
+    ) -> tuple[str, tuple[CampaignLine, ...]] | None:
+        """A new run directory, or the named run's recorded cases to skip."""
+        run_id = self._settings.run_id
+        if run_id is None:
+            claimed = runs.claim(self._run_id())
+            campaign.write(runs.path(claimed) / "campaign.jsonl", ())
+            return (claimed, ())
+        trail = runs.path(run_id) / "campaign.jsonl"
+        if (runs.path(run_id) / "observations.jsonl").is_file():
+            self._errors.write(f"tutor_sim: run {run_id} already finished\n")
+            return None
+        if not trail.is_file():
+            self._errors.write(f"tutor_sim: run {run_id} has no campaign to resume\n")
+            return None
+        try:
+            recovered = campaign.recover(trail)
+        except DamagedCampaign:
+            self._errors.write(f"tutor_sim: run {run_id} has a damaged campaign line\n")
+            return None
+        planned = {case.case_id for case in cases}
+        for line in recovered.lines:
+            if line.case_id not in planned:
+                self._errors.write(
+                    f"tutor_sim: {line.case_id} is not in the frozen test split\n"
+                )
+                return None
+        if recovered.dropped:
+            self._errors.write(
+                f"tutor_sim: run {run_id}: dropped an unfinished last line; "
+                "that case runs again\n"
+            )
+        self._errors.write(
+            f"tutor_sim: resuming {run_id}: {len(recovered.lines)} of "
+            f"{len(cases)} cases already recorded\n"
+        )
+        return (run_id, recovered.lines)
 
     def _episodes(self) -> int:
         tutor = self._tutor
@@ -512,12 +559,47 @@ class JsonlFile:
         return tuple(line for line in text.splitlines() if line)
 
 
+class DamagedCampaign(Exception):
+    """A campaign line other than an unfinished last one does not parse."""
+
+
+class RecoveredCampaign(BaseModel):
+    """The lines a resumed run keeps, and whether a cut-off line was dropped."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lines: tuple[CampaignLine, ...]
+    dropped: bool
+
+
 class CampaignFile(JsonlFile):
     """Every case, including those that errored and have no observation."""
 
     def write(self, path: Path, rows: tuple[CampaignLine, ...]) -> None:
         """Replace the file with one line per case."""
         self._write(path, tuple(row.model_dump_json() for row in rows))
+
+    def recover(self, path: Path) -> RecoveredCampaign:
+        """Read a run's lines to resume it.
+
+        A process killed mid-write leaves a last line with no newline. That
+        line is dropped and the file rewritten, so its case runs again. Any
+        other line that does not parse is damage, not an interruption.
+        """
+        text = path.read_text(encoding="utf-8")
+        raw = text.split("\n")
+        tail = raw.pop()
+        lines: list[CampaignLine] = []
+        for item in raw:
+            if not item:
+                continue
+            try:
+                lines.append(CampaignLine.model_validate_json(item))
+            except ValidationError as exc:
+                raise DamagedCampaign(path.name) from exc
+        if tail:
+            self.write(path, tuple(lines))
+        return RecoveredCampaign(lines=tuple(lines), dropped=bool(tail))
 
     def append(self, path: Path, row: CampaignLine) -> None:
         """Add one finished case, so an aborted run keeps what it ran."""

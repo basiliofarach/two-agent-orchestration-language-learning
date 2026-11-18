@@ -20,10 +20,10 @@ class CommandProgress:
         self._total = 0
         self._done = 0
 
-    def start(self, total: int) -> None:
-        """Begin a bar of ``total`` items."""
+    def start(self, total: int, done: int = 0) -> None:
+        """Begin a bar of ``total`` items, ``done`` of them already finished."""
         self._total = total
-        self._done = 0
+        self._done = done
         self._draw("")
 
     def step(self, detail: str) -> None:

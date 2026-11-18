@@ -723,7 +723,7 @@ No new working directory is introduced.
 | `make sim` | build, then `verify` | DEC-0015's "done when": rebuild from pinned sources and verify the manifest |
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |
-| `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json` |
+| `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished run: recorded cases are skipped, a cut-off last line is dropped and rerun, and a finished run is refused |
 | `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json` |
 | `make sim-report [SIM_RUN_ID=<run_id>]` | `python -m tutor_sim report` | Score the latest finished Tier 1 run, or the named one, into its own directory: `results.jsonl`, `report.json`, `summary.json`. An unfinished run is refused |
 
