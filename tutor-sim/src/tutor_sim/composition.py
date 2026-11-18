@@ -29,6 +29,7 @@ from tutor_sim.application.roles import (
     AbsentTutor,
     ComplacentTutor,
     DiligentTutor,
+    DiligentTutorCard,
     StoppingTutor,
     TutorRoster,
 )
@@ -133,7 +134,7 @@ class SimulationCompositionRoot:
         store = FileDatasetStore(self._settings.dataset_dir)
         clock = SystemClock()
         model = RoleModelChoice().choose(self._settings)
-        role = DiligentTutor(model, "You are a diligent tutor. Answer with one action.")
+        role = DiligentTutor(model, DiligentTutorCard().system())
         roster = TutorRosterChoice().build(role)
         if self._settings.offline:
             cached = CachedOnlySourceFetch(self._settings.cache_dir, digest)

@@ -112,8 +112,12 @@ class PrototypeCopy:
         return "Use simple words a child can read. Be kind and brief."
 
     def decoding(self) -> DecodingParams:
-        """Recorded on every completion that calls the model."""
-        return DecodingParams(temperature=0.0, top_p=1.0, max_tokens=256)
+        """Recorded on every completion that calls the model.
+
+        Thinking is off: at temperature 0 Qwen3's thinking phase used the
+        whole budget and the answer came back empty (DEC-0007).
+        """
+        return DecodingParams(temperature=0.0, top_p=1.0, max_tokens=512, think=False)
 
 
 class PrototypePolicyCard:

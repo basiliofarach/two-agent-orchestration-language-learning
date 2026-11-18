@@ -335,6 +335,7 @@ class Tier1Runner:
         if body.status == "held_for_review":
             return DashboardView(
                 status="held_for_review",
+                halted_at=body.halted_at,
                 output_before_checks=draft,
                 policy_version=body.policy_version,
             )

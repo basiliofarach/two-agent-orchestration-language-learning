@@ -104,6 +104,7 @@ class ExcerptProjector:
             temperature=params.temperature,
             top_p=params.top_p,
             max_tokens=params.max_tokens,
+            think=params.think,
         )
 
     def _categories(self, flags: tuple[SafetyFlag, ...] | None) -> tuple[str, ...]:

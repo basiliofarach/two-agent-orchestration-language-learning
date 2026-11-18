@@ -17,6 +17,9 @@ class DecodingParams(BaseModel):
     temperature: float = Field(ge=0.0)
     top_p: float = Field(ge=0.0, le=1.0)
     max_tokens: int = Field(ge=1)
+    # Qwen3's thinking phase. ``None``: sealed before the mode was recorded,
+    # when Ollama's default (thinking on) applied. DEC-0007.
+    think: bool | None = None
 
 
 class SafetyFlag(BaseModel):

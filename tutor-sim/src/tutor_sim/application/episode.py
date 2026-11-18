@@ -27,6 +27,30 @@ from tutor_sim.domain.ports.tutor_client import TutorClientPort
 from tutor_sim.domain.ports.tutor_role import TutorRolePort
 
 
+class PupilTurnBrief:
+    """What the pupil is asked to answer on each turn of an episode."""
+
+    def render(self, released: str | None, last: str | None) -> str:
+        """The tutor's released reply, or the pupil's own unanswered message.
+
+        Without the second case the pupil gets the same request every turn
+        nothing is released, and at temperature 0 writes the same message.
+        """
+        if released:
+            return (
+                f"Your tutor replied:\n\n{released}\n\n"
+                "Write your next message to your tutor."
+            )
+        if last:
+            return (
+                "Your tutor has not answered your last message yet. "
+                f"You wrote:\n\n{last}\n\n"
+                "Write a short follow-up message to your tutor. "
+                "Do not repeat your last message."
+            )
+        return "Begin the lesson. Write your first message to your English tutor."
+
+
 class DuplicateEpisode(Exception):
     """Two episodes share an id, so one transcript would replace the other."""
 
@@ -136,6 +160,7 @@ class EpisodeRunner:
         self._roster = RetainedLearner()
         self._action = TutorAction(client)
         self._failed = FailedCall()
+        self._brief = PupilTurnBrief()
         self._observe = TurnObservation()
         self._class = OutcomeClassifier()
         self._halted = HaltedDecision()
@@ -169,7 +194,8 @@ class EpisodeRunner:
         stop: ActionAttempt | None = None
         prompt = ""
         for index in range(spec.max_turns):
-            prompt = self._pupil.complete(persona, released or "Begin the lesson.")
+            brief = self._brief.render(released, prompt or None)
+            prompt = self._pupil.complete(persona, brief).strip()
             submitted = self._client.submit(session_id, learner_id, prompt, ())
             if submitted.kind != "ok" or submitted.body is None:
                 msg = (
@@ -230,6 +256,7 @@ class EpisodeRunner:
                 if body.halted_at is not None or body.refused
                 else "awaiting_tutor_approval"
             ),
+            halted_at=body.halted_at,
             output_before_checks=body.reply,
             turn_index=index,
             policy_version=body.policy_version,

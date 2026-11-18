@@ -1,0 +1,4 @@
+{"turn_id":"8aa9526f-cc87-4a2e-b0ce-73b8badf2262","turn_index":0,"prompt":" I play football. Help me with verb, please.","released":null,"halted_at":"drift_and_anomaly","decision":"override","replay_outcome":"reproduced"}
+{"turn_id":"cde9e972-80d7-438e-8475-1f37490bd533","turn_index":1,"prompt":" I play football. Help me with verb, please.","released":null,"halted_at":"drift_and_anomaly","decision":"override","replay_outcome":"reproduced"}
+{"turn_id":"a843e4c8-8aa6-41ba-b554-08f1cb45c405","turn_index":2,"prompt":" I play football. Help me with verb, please.","released":null,"halted_at":"drift_and_anomaly","decision":"override","replay_outcome":"reproduced"}
+{"turn_id":"090155fe-1982-4be7-88df-2ec67e93611e","turn_index":3,"prompt":" I play football. Help me with verb, please.","released":null,"halted_at":"drift_and_anomaly","decision":"stop","replay_outcome":"reproduced"}

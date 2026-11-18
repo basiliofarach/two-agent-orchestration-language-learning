@@ -831,7 +831,7 @@ in the same BE-01 amendment.
 | oracle | `LicenceStatus` | Current `sources.json` and the manifest's source list, giving `licence_status` and `pending_sources` (DEC-0016 rule 1) |
 | run | `SessionPool` | Opens a fresh session per Tier 1 case (§8.2) |
 | run | `Tier1Runner` | Submit, read detail, apply the tutor role, check replay, write the `Observation` |
-| run | `EpisodeRunner` | Tier 2 closed loop. The pupil reads released text only |
+| run | `EpisodeRunner` | Tier 2 closed loop. The pupil reads released text only (`PupilTurnBrief`). When nothing was released it sees its own unanswered message and writes a follow-up; its message is trimmed before it is sent |
 | run | `PolicyVersionGuard` | Aborts the run when `TurnOutcome.policy_version` ≠ `ExpectationTable.policy_version` |
 | oracle | `OutcomeClassifier` | `TurnOutcomeView` to `OutcomeClass` (§9.1) |
 | oracle | `LeakCheck` | `must_not_contain` against the exposed fields (§9.4) |
@@ -844,7 +844,7 @@ in the same BE-01 amendment.
 
 | Role | On `awaiting_tutor_approval` | On `held_for_review` |
 | --- | --- | --- |
-| T1 Diligent | Asks the role model for one `TutorDecision` from the dashboard view. Unparseable output becomes `none`, and is logged as a role failure | Same |
+| T1 Diligent | Asks the role model for one `TutorDecision`. The system prompt is `DiligentTutorCard` (pupils aged 12–17, the four actions); the user turn is `DashboardBrief`: the status, the gate that held the turn, and the draft. The first word of the reply, stripped of punctuation, is the action. Anything else becomes `none`, logged as a role failure. `edit` sends the draft unchanged | Same |
 | T2 Complacent | `approve` | `edit` with `edited_output` set to the draft unchanged, when `record.output_before_checks` is not null; otherwise `none` |
 | T3 Absent | `none` | `none` |
 | T4 Stopper | `stop` at `stop_at_turn`; otherwise `approve` | `override`; `stop` at `stop_at_turn` |
