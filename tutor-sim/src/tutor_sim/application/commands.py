@@ -46,7 +46,7 @@ from tutor_sim.application.realise import (
     UnknownPersona,
 )
 from tutor_sim.application.roles import TutorRoster, UnknownTutorRole
-from tutor_sim.application.run_files import RunDirectory
+from tutor_sim.application.run_files import LatestTier1Run, RunDirectory
 from tutor_sim.application.tier1 import (
     CampaignAbort,
     ModeGuard,
@@ -280,6 +280,11 @@ class CampaignCommands:
         learners = SimulationNamespace()
         recorded: list[CampaignLine] = []
         cases = self._read(tree, "stimuli/test.jsonl")
+        runs = RunDirectory(self._settings.evidence_dir)
+        run_id = runs.claim(self._run_id())
+        trail = runs.path(run_id) / "campaign.jsonl"
+        campaign = CampaignFile()
+        campaign.write(trail, ())
         self._start(len(cases))
         try:
             for case in cases:
@@ -289,14 +294,14 @@ class CampaignCommands:
                     learners.learner_id(case.persona_id),
                     "tutor-sim",
                 )
-                recorded.append(
-                    CampaignLine(
-                        case_id=record.case_id,
-                        errored=record.errored,
-                        observation=record.observation,
-                        failure=record.failure,
-                    )
+                line = CampaignLine(
+                    case_id=record.case_id,
+                    errored=record.errored,
+                    observation=record.observation,
+                    failure=record.failure,
                 )
+                recorded.append(line)
+                campaign.append(trail, line)
                 if record.failure is not None:
                     self._errors.write(
                         f"tutor_sim: {record.case_id} errored at "
@@ -306,17 +311,20 @@ class CampaignCommands:
                 self._step(f"{case.case_id} {case.intent}")
         except (CampaignAbort, PolicyMismatch) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
+            self._errors.write(
+                f"tutor_sim: {len(recorded)} finished cases kept in "
+                f"runs/{run_id}/campaign.jsonl; the run is not marked latest\n"
+            )
             return 1
         rows = tuple(recorded)
-        CampaignFile().write(self._settings.evidence_dir / "campaign.jsonl", rows)
         ObservationFile().write(
-            self._settings.evidence_dir / "observations.jsonl",
-            self._observations(rows),
+            runs.path(run_id) / "observations.jsonl", self._observations(rows)
         )
+        LatestTier1Run(self._settings.evidence_dir).point(run_id)
         errored = sum(1 for row in rows if row.errored)
         self._finish(
             f"ran {len(rows)} Tier 1 cases ({errored} errored): "
-            "evidence/campaign.jsonl, evidence/observations.jsonl"
+            f"run {run_id} (evidence/runs/{run_id}/)"
         )
         return 0
 
@@ -392,14 +400,24 @@ class CampaignCommands:
         tree = self._verified()
         if tree is None:
             return 1
-        try:
-            lines = CampaignFile().read(self._settings.evidence_dir / "campaign.jsonl")
-        except FileNotFoundError:
+        run_id = (
+            self._settings.run_id
+            or LatestTier1Run(self._settings.evidence_dir).run_id()
+        )
+        if run_id is None:
             self._errors.write("tutor_sim: no campaign results\n")
+            return 1
+        runs = RunDirectory(self._settings.evidence_dir)
+        try:
+            if not (runs.path(run_id) / "observations.jsonl").is_file():
+                raise FileNotFoundError(run_id)
+            lines = CampaignFile().read(runs.path(run_id) / "campaign.jsonl")
+        except FileNotFoundError:
+            self._errors.write(f"tutor_sim: run {run_id} did not finish\n")
             return 1
         manifest = ManifestFile().load(self._root() / tree / "manifest.json")
         request = ReportAssembly().request(
-            self._run_id(),
+            run_id,
             manifest.dataset_version,
             f"simulated:{manifest.dataset_version}",
             self._read(tree, "stimuli/test.jsonl"),
@@ -414,8 +432,6 @@ class CampaignCommands:
             request.scored,
             request.facts,
         )
-        runs = RunDirectory(self._settings.evidence_dir)
-        runs.path(report.run_id).mkdir(parents=True, exist_ok=True)
         ResultFile().write(
             runs.path(report.run_id) / "results.jsonl",
             tuple(item.result for item in request.scored),
@@ -502,6 +518,11 @@ class CampaignFile(JsonlFile):
     def write(self, path: Path, rows: tuple[CampaignLine, ...]) -> None:
         """Replace the file with one line per case."""
         self._write(path, tuple(row.model_dump_json() for row in rows))
+
+    def append(self, path: Path, row: CampaignLine) -> None:
+        """Add one finished case, so an aborted run keeps what it ran."""
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(row.model_dump_json() + "\n")
 
     def read(self, path: Path) -> tuple[CampaignLine, ...]:
         """The lines a report scores. A missing file is a command error."""

@@ -26,7 +26,8 @@ SIM_ENV = SIM_DATASET_DIR="$(SIM_DATASET_DIR)" \
 	SIM_CACHE_DIR="$(SIM_CACHE_DIR)" \
 	SIM_SOURCES_PATH="$(SIM_SOURCES_PATH)" \
 	SIM_EVIDENCE_DIR="$(SIM_EVIDENCE_DIR)" \
-	SIM_RUNTIME_PIN_PATH="$(SIM_RUNTIME_PIN_PATH)"
+	SIM_RUNTIME_PIN_PATH="$(SIM_RUNTIME_PIN_PATH)" \
+	$(if $(SIM_RUN_ID),SIM_RUN_ID="$(SIM_RUN_ID)")
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
 # >=3.12.7 skips hidden .pth files, so the editable installs are not enough.
@@ -56,9 +57,9 @@ help:
 	@echo "  make sim-build    build the dataset and plan.json from cached sources"
 	@echo "  make sim-realise  rebuild stimuli from plan.json"
 	@echo "  make sim-freeze   write the manifest"
-	@echo "  make sim-run      Tier 1 against the API"
+	@echo "  make sim-run      Tier 1 against the API; a new evidence/runs/<run_id>/ each time"
 	@echo "  make sim-episodes Tier 2 episodes; writes evidence/runs/<run_id>/ with transcripts"
-	@echo "  make sim-report   write evidence/runs/<run_id>/{report,summary}.json"
+	@echo "  make sim-report   score the latest finished run (SIM_RUN_ID=<run_id> for another)"
 	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
 	@echo "  make sim-serve    the API in simulation mode, on tutor_sim"
 

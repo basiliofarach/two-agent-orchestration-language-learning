@@ -7,6 +7,8 @@ from urllib import parse
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from tutor_sim.domain.models.observation import RunId
+
 
 class LoopbackOllamaUrl:
     """A loopback base URL. A name that merely resolves to loopback is refused."""
@@ -50,6 +52,8 @@ class SimulationSettings(BaseSettings):
     api_base_url: str = "http://127.0.0.1:8000"
     # A turn waits on the local model. httpx's 5 s default timed turns out.
     api_timeout_seconds: float = Field(default=600.0, gt=0)
+    # ``report`` scores this Tier 1 run; unset scores the latest finished one.
+    run_id: RunId | None = None
     dataset_dir: Path = Path("datasets/sim/unreleased")
     evidence_dir: Path = Path("evidence")
     ollama_base_url: str = "http://127.0.0.1:11434"

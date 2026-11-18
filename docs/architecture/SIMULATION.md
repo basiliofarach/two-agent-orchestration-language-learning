@@ -533,11 +533,17 @@ One row per intent and variant. This is the single place a label comes from
 | File | Record | Content |
 | --- | --- | --- |
 | `run.json` | `RunHeader` | `run_id`, `dataset_version`, `manifest_sha256`, `tier`, tutor roles, API base URL, observed `policy_version`, observed system `model_revision`, role-model SHA, `started_at`, `finished_at` |
-| `observations.jsonl` | `Observation` | One per case or episode turn (§9.1). It stores no learner text: only booleans, counts, ids, gate rows and `LeakHit` (`field`, `payload_id`) |
+| `campaign.jsonl` | `CampaignLine` | Tier 1 only. One line per case, appended as each case finishes, so an aborted run keeps the cases it ran. An errored case carries `CaseFailure` (`step`, `http_status`, `kind`); no response text, because a 422 can echo the utterance |
+| `observations.jsonl` | `Observation` | One per case or episode turn (§9.1). It stores no learner text: only booleans, counts, ids, gate rows and `LeakHit` (`field`, `payload_id`). Written only when the run finishes, so its absence marks an aborted run |
 | `results.jsonl` | `CaseResult` | Comparison per case (§9.3) |
 | `summary.json` | `RunSummary` | Contract C4: the row `GET /reports/simulation` lists. Written after `report.json`, so a listed run always has its report |
 | `report.json` | `SimulationReport` | Contract C3, served to the dashboard. Carries `licence_status: Literal["confirmed", "pending"]` and `pending_sources: tuple[str, ...]`, computed from the `sources.json` in force **when the report is written** (§5.5) |
 | `transcripts/<episode_id>.jsonl` | `TranscriptTurn` | Tier 2 only: utterance, released text, action |
+
+A run id is `run-YYYYMMDDTHHMMSS`, with `-2`, `-3` … when a directory
+for that second already exists. No run reuses a directory, so every
+earlier run stays on disk. `evidence/tier1-latest.json` (`Tier1Pointer`)
+names the latest Tier 1 run that finished; an aborted run never moves it.
 
 The run header is written first and finished last. A run without
 `finished_at` is reported as incomplete by the API and never summarised.
@@ -717,9 +723,9 @@ No new working directory is introduced.
 | `make sim` | build, then `verify` | DEC-0015's "done when": rebuild from pinned sources and verify the manifest |
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |
-| `make sim-run TIER=1\|2 ROLE=T1..T4 SPLIT=dev\|test` | `python -m tutor_sim run …` | Write `observations.jsonl` and `results.jsonl` |
+| `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json` |
 | `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json` |
-| `make sim-report RUN=<run_id>` | `python -m tutor_sim report` | Write `report.json` |
+| `make sim-report [SIM_RUN_ID=<run_id>]` | `python -m tutor_sim report` | Score the latest finished Tier 1 run, or the named one, into its own directory: `results.jsonl`, `report.json`, `summary.json`. An unfinished run is refused |
 
 Tier 2 is its own command, not `sim-run TIER=2`: it scores no case
 (§8.3), so it has no `campaign.jsonl` for `report` to read, and it writes

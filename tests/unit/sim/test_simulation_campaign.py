@@ -70,6 +70,7 @@ from tutor_sim.application.roles import (
     StoppingTutor,
     TutorRoster,
 )
+from tutor_sim.application.run_files import LatestTier1Run, RunDirectory
 from tutor_sim.application.tier1 import (
     CampaignAbort,
     ModelCalled,
@@ -1263,10 +1264,13 @@ class TestCommands:
             observation=_observation(sources=("ellipse",)),
         )
         evidence = tmp_path / "evidence"
-        evidence.mkdir(exist_ok=True)
-        (evidence / "campaign.jsonl").write_text(
+        finished = RunDirectory(evidence).path("run-20261101T000000")
+        finished.mkdir(parents=True)
+        (finished / "campaign.jsonl").write_text(
             line.model_dump_json() + "\n", encoding="utf-8"
         )
+        (finished / "observations.jsonl").write_text("", encoding="utf-8")
+        LatestTier1Run(evidence).point("run-20261101T000000")
         assert cli.main(["report"]) == 0
         run = LatestRun(tmp_path / "evidence")
         report = run.load("report.json")
@@ -1459,24 +1463,24 @@ class TestCommands:
         assert "no manifest" in errors.getvalue()
         assert commands.dispatch("freeze") == 0
         assert commands.dispatch("run") == 0
-        text = (settings.evidence_dir / "observations.jsonl").read_text(
-            encoding="utf-8"
+        latest = RunDirectory(settings.evidence_dir).path(
+            str(LatestTier1Run(settings.evidence_dir).run_id())
         )
+        text = (latest / "observations.jsonl").read_text(encoding="utf-8")
         assert "c1" in text
-        campaign = (settings.evidence_dir / "campaign.jsonl").read_text(
-            encoding="utf-8"
-        )
+        campaign = (latest / "campaign.jsonl").read_text(encoding="utf-8")
         assert CampaignLine.model_validate_json(campaign).errored is False
         client.health_kind = "errored"
         assert commands.dispatch("run") == 1
         client.health_kind = "ok"
         client.submit_kind = "errored"
         assert commands.dispatch("run") == 0
-        written = (settings.evidence_dir / "observations.jsonl").read_text(
-            encoding="utf-8"
+        latest = RunDirectory(settings.evidence_dir).path(
+            str(LatestTier1Run(settings.evidence_dir).run_id())
         )
+        written = (latest / "observations.jsonl").read_text(encoding="utf-8")
         assert written == ""
-        failed = (settings.evidence_dir / "campaign.jsonl").read_text(encoding="utf-8")
+        failed = (latest / "campaign.jsonl").read_text(encoding="utf-8")
         parsed = CampaignLine.model_validate_json(failed)
         assert parsed.errored is True
         assert parsed.case_id == "c1"

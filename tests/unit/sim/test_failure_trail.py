@@ -180,7 +180,12 @@ class TestRunCommandTrail:
         assert commands.dispatch("run") == 0
         assert "c1 errored at submit: HTTP 503 errored" in errors.getvalue()
         line = CampaignLine.model_validate_json(
-            (settings.evidence_dir / "campaign.jsonl").read_text(encoding="utf-8")
+            (
+                settings.evidence_dir
+                / "runs"
+                / "run-20260101T000000"
+                / "campaign.jsonl"
+            ).read_text(encoding="utf-8")
         )
         assert line.failure == CaseFailure(
             step="submit", http_status=503, kind="errored"
