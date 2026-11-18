@@ -496,7 +496,8 @@ response.
 `StimulusCase` is a `CaseSpec` plus:
 
 - `utterance: str`
-- `construction`: `payload_present`, `attempts`, `discarded`
+- `construction`: `payload_present`, `attempts`, `discarded`,
+  `payload_placement` (`copied`, `appended` or `none`)
 - `generator`: role-model weights SHA, `seed`, `temperature`,
   `template_version`, `card_version`
 
@@ -818,7 +819,7 @@ in the same BE-01 amendment.
 | build | `RosterBuilder` | `PersonaLearnerRecord` with `uuid5` ids and history events |
 | build | `ExpectationTableLoader`, `CasePlanner` | Intents × personas × payloads. Balanced strata. Applies the expectation row; assigns `req_eval_case`. A test-split case draws only test-split payloads; a payload intent (I5, I6, I8, I10, I11, I12) with no test-split payload in its category fails the build |
 | realise | `PupilRealiser` | Persona card plus intent plus payload into an utterance, through `RoleModelPort` |
-| realise | `ConstructionCheck` | Exact substring check for the payload. Up to 3 attempts, then discard |
+| realise | `PupilPrompt`, `ConstructionCheck` | The model writes the lead-in; the payload bytes are appended unchanged. Exact substring check. One attempt: at temperature 0 a retry repeats the same reply |
 | realise | `NoiseTransformer` | Deterministic, seeded perturbations: typos away from payload spans, L1 code-switch tokens, casing, filler words. Payload bytes untouched |
 | freeze | `LicenceTermsGate`, `Freezer`, `ManifestWriter`, `ManifestVerifier` | DEC-0016 rules 2 and 5. Terms only: the tree rule and admission. Review status is copied, not checked |
 | oracle | `LicenceStatus` | Current `sources.json` and the manifest's source list, giving `licence_status` and `pending_sources` (DEC-0016 rule 1) |
@@ -871,9 +872,10 @@ sequenceDiagram
     B->>S: write kb, payloads (split), personas, tutors, roster, plan
     Op->>R: make sim-realise
     loop each CaseSpec in plan
-        R->>M: persona card + intent + payload
-        M-->>R: utterance
-        R->>R: ConstructionCheck (≤3 attempts)
+        R->>M: persona card + intent task (+ payload as context)
+        M-->>R: lead-in
+        R->>R: append payload bytes unchanged
+        R->>R: ConstructionCheck (one attempt)
         R->>R: NoiseTransformer for noisy twins
     end
     R->>S: stimuli/dev.jsonl, stimuli/test.jsonl

@@ -34,15 +34,18 @@
   {
     "source_id": "cefr-j-grammar-profile",
     "title": "CEFR-J Grammar Profile",
-    "url": "https://www.cefr-j.org/download.html",
+    "url": "https://www.cefr-j.org/PDF/sympo2025/CEFRJGP_FULL_20250225.zip",
     "revision": "2025-02-25",
-    "sha256": "8d6d39ce120109676920ba2cf30dc99125c704acb610ade8bd2e47e0b5945647",
-    "licence": "custom:unverified",
+    "sha256": "da6efc51e4fdfa41625e3ef685bdf8e843af368f7490c72c27e4d87e79776e66",
+    "licence": "custom:permission-by-email",
     "licence_url": "https://www.cefr-j.org/download.html",
     "redistributable": false,
     "use": "kb",
     "attribution": "Tono Laboratory and the CEFR-J Grammar Profile team. Teachers' sheet and regex list. No example sentences in the release.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-18",
+    "review_note": "Written permission from Tono Laboratory received by email on 2026-11-18. Kept in the restricted tree; not redistributed; cited."
   },
   {
     "source_id": "treetagger",
@@ -65,13 +68,16 @@
     "title": "CEFR-J Wordlist Version 1.6",
     "url": "https://www.cefr-j.org/data/CEFRJ_wordlist_ver1.6.zip",
     "revision": "1.6",
-    "sha256": "960992b36210f3392839e29a194edfcddc21af5eb7f1a39337813dd271374d6c",
+    "sha256": "c837d2c00ab8954ed8db48e79afd8ef37099570295fec36950dbf9322303a37a",
     "licence": "custom:free-with-acknowledgement",
     "licence_url": "https://www.cefr-j.org/download.html",
     "redistributable": true,
     "use": "grounding",
     "attribution": "Tono Laboratory, Tokyo University of Foreign Studies. Free with acknowledgement.",
-    "licence_review": "pending"
+    "licence_review": "confirmed",
+    "reviewed_by": "author",
+    "reviewed_on": "2026-11-18",
+    "review_note": "Written permission from Tono Laboratory received by email on 2026-11-18, covering all CEFR-J resources. Free with acknowledgement; cited."
   },
   {
     "source_id": "ellipse",

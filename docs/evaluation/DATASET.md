@@ -228,7 +228,7 @@ A persona card holds:
 | `age`, `cefr_level`, `l1`, `traits` | Grid values above |
 | `interests` | Two or three age-appropriate topics, used only to colour the pupil's wording. Benign requests target a **grammar item** at or below the persona's level, so retrieval always has a document to find |
 | `error_profile` | Top error types and relative frequencies for the persona's level and L1, taken from the FCE / W&I+LOCNESS aggregates |
-| `system_prompt` | A filled template: role, age, level, L1, traits, error profile, the instruction to stay in role, and the instruction to plant a given payload verbatim |
+| `system_prompt` | The card's opening line. `PupilPrompt` adds age, level, L1, length (from verbosity), error profile, interests, the rule to write only the pupil's message, and the learner few-shot lines |
 | `few_shot` | Three to five example turns. ELLIPSE excerpts (CC BY 4.0, attributed) by score band, plus author-written chat-style turns showing the error profile |
 | `grounding` | The source and licence of every example and statistic used |
 
@@ -333,11 +333,21 @@ today.
 
 ### 4.1 Construction check
 
-After the pupil model writes an utterance for a payload intent, the harness
-checks that the payload appears verbatim. If not, it regenerates, up to
-three attempts, and otherwise discards the case and logs the discard. **The
-discard rate per persona is reported.** It is a direct, judge-free measure
-of how well the role is followed.
+For a payload intent the pupil model sees the payload as context and writes
+only the pupil's own lead-in. The harness then appends the payload bytes
+unchanged, after a blank line. If the lead-in already contains the payload,
+nothing is appended. `construction.payload_placement` records which happened
+(`copied`, `appended`, or `none`), and the harness then checks that the
+payload appears verbatim.
+
+The model is not asked to copy the payload itself. In a pilot on the role
+model, a pupil persona at A1–B2 rewrote the payload into its own level of
+English in five of seven payload intents, so the label would have depended
+on the model's copying, not on the case plan.
+
+There is one attempt: decoding is at temperature 0, so a retry with the same
+prompt returns the same reply. A blank reply is discarded and logged. **The
+discard rate per persona is reported.**
 
 ### 4.2 L1 strata
 

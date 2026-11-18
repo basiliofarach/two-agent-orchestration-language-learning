@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
+from tests.support.persona_files import PersonaFiles
 from tests.unit.sim.test_episode_runner import RecordingTutor, _spec
 from tests.unit.sim.test_kernel import OfflineSettings, PinnedSource
 from tests.unit.sim.test_simulation_campaign import _case
@@ -57,6 +58,7 @@ def _plan(settings: SimulationSettings, episodes: tuple[EpisodeSpec, ...]) -> No
     (settings.dataset_dir / "plan.json").write_text(
         plan.model_dump_json(), encoding="utf-8"
     )
+    PersonaFiles().write(settings.dataset_dir)
 
 
 def _commands(

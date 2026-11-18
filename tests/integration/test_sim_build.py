@@ -73,7 +73,7 @@ def test_build_then_realise_freeze_and_verify(tmp_path: Path) -> None:
     assert (root / "plan.json").is_file()
 
     summaries = {
-        "realise": "cases into restricted/stimuli (0 discarded after 3 attempts)",
+        "realise": "cases into restricted/stimuli (0 discarded: payload not copied)",
         "freeze": "cases: restricted/manifest.json",
         "verify": "manifest verified: every file in restricted/ matches its digest",
     }

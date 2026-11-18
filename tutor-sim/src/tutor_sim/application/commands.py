@@ -37,11 +37,13 @@ from tutor_sim.application.realise import (
     DiscardLog,
     NoiseTransformer,
     PayloadIndex,
+    PersonaCardFile,
     PlanFile,
     PupilPrompt,
     PupilRealiser,
     ReleaseTree,
     StimulusLines,
+    UnknownPersona,
 )
 from tutor_sim.application.roles import TutorRoster, UnknownTutorRole
 from tutor_sim.application.run_files import RunDirectory
@@ -157,6 +159,11 @@ class CampaignCommands:
         if self._progress is not None:
             self._progress.finish(summary)
 
+    def _pupil(self) -> PupilPrompt:
+        """The persona cards build wrote. They are always public."""
+        cards = PersonaCardFile().load(self._root() / "public" / "personas")
+        return PupilPrompt(cards)
+
     def _realise(self) -> int:
         try:
             plan = PlanFile().load(self._root() / "plan.json")
@@ -164,7 +171,9 @@ class CampaignCommands:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         index = PayloadIndex(plan.payloads)
-        realiser = PupilRealiser(self._model, ConstructionCheck(), NoiseTransformer())
+        realiser = PupilRealiser(
+            self._model, ConstructionCheck(), NoiseTransformer(), self._pupil()
+        )
         realised: list[StimulusCase] = []
         self._start(len(plan.cases))
         try:
@@ -190,7 +199,7 @@ class CampaignCommands:
         discarded = sum(1 for case in cases if case.construction.discarded)
         self._finish(
             f"realised {len(cases)} cases into {tree}/stimuli "
-            f"({discarded} discarded after 3 attempts)"
+            f"({discarded} discarded: payload not copied)"
         )
         return 0
 
@@ -325,7 +334,7 @@ class CampaignCommands:
         runs = RunDirectory(self._settings.evidence_dir)
         transcripts = TranscriptFile(runs.path(run_id) / "transcripts")
         learners = SimulationNamespace()
-        pupil = PupilPrompt()
+        pupil = self._pupil()
         facts: list[InvariantFacts] = []
         self._start(len(specs))
         try:
@@ -346,7 +355,12 @@ class CampaignCommands:
                 )
                 facts.extend(record.facts)
                 self._step(spec.episode_id)
-        except (CampaignAbort, PolicyMismatch, UnknownTutorRole) as exc:
+        except (
+            CampaignAbort,
+            PolicyMismatch,
+            UnknownTutorRole,
+            UnknownPersona,
+        ) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         used: list[str] = []
