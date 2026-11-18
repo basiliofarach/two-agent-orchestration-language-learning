@@ -279,3 +279,43 @@ def test_the_cli_wires_all_four_tutor_roles_and_accepts_episodes(
     cli = SimulationCli(SimulationCompositionRoot(settings), errors)
     assert cli.main(["episodes"]) == 1
     assert "episodes needs a tutor client" in errors.getvalue()
+
+
+def test_tier_1_and_tier_2_in_the_same_second_never_share_a_directory(
+    tmp_path: Path,
+) -> None:
+    settings = OfflineSettings().build(tmp_path, True)
+    _plan(settings, (_episode("e-absent", "T3", "open", None),))
+    errors = io.StringIO()
+    commands = _commands(settings, _client(), errors)
+    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("freeze") == 0
+    assert commands.dispatch("run") == 0, errors.getvalue()
+    assert commands.dispatch("episodes") == 0, errors.getvalue()
+    assert commands.dispatch("episodes") == 0, errors.getvalue()
+    runs = settings.evidence_dir / "runs"
+    tier1 = runs / "run-20261104T120000"
+    assert sorted(path.name for path in runs.iterdir()) == [
+        "run-20261104T120000",
+        "run-20261104T120000-2",
+        "run-20261104T120000-3",
+    ]
+    assert (tier1 / "campaign.jsonl").is_file()
+    assert not (tier1 / "summary.json").exists()
+    assert not (tier1 / "transcripts").exists()
+    for name in ("run-20261104T120000-2", "run-20261104T120000-3"):
+        summary = RunSummary.model_validate_json(
+            (runs / name / "summary.json").read_text(encoding="utf-8")
+        )
+        assert summary.tier == "2"
+        assert summary.run_id == name
+        assert (runs / name / "transcripts" / "e-absent.jsonl").is_file()
+    latest = json.loads(
+        (settings.evidence_dir / "tier1-latest.json").read_text(encoding="utf-8")
+    )
+    assert latest["run_id"] == "run-20261104T120000"
+    assert commands.dispatch("report") == 0, errors.getvalue()
+    scored = RunSummary.model_validate_json(
+        (tier1 / "summary.json").read_text(encoding="utf-8")
+    )
+    assert scored.tier == "1"

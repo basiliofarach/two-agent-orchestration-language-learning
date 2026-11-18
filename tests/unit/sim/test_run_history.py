@@ -320,3 +320,36 @@ class TestResume:
         client = CountingTutor()
         assert self._resume(campaign, client, _ABORTED) == 0
         assert client.submitted == 1
+
+
+class TestPrintedPaths:
+    def test_the_finished_run_names_the_directory_it_wrote(
+        self, tmp_path: Path
+    ) -> None:
+        from tutor_sim.application.progress import CommandProgress
+
+        campaign = Campaign(tmp_path)
+        shown = io.StringIO()
+        commands = CampaignCommands(
+            campaign.settings,
+            FrozenClock(_FIRST),
+            FileDatasetStore(campaign.settings.dataset_dir),
+            EchoRoleModel(),
+            (PinnedSource().record(),),
+            ScriptedTutor(),
+            AbsentTutor(),
+            TutorRoster(()),
+            campaign.errors,
+            None,
+            CommandProgress(shown),
+        )
+        assert commands.dispatch("run") == 0
+        assert str(campaign.runs() / _ABORTED) in shown.getvalue()
+
+    def test_an_aborted_run_names_the_campaign_file_it_kept(
+        self, tmp_path: Path
+    ) -> None:
+        campaign = Campaign(tmp_path)
+        assert campaign.commands(RosterFailsAfter(1), _FIRST).dispatch("run") == 1
+        kept = campaign.runs() / _ABORTED / "campaign.jsonl"
+        assert f"1 finished cases kept in {kept}" in campaign.errors.getvalue()

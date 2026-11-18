@@ -318,7 +318,7 @@ class CampaignCommands:
             self._errors.write(f"tutor_sim: {exc}\n")
             self._errors.write(
                 f"tutor_sim: {len(recorded)} finished cases kept in "
-                f"runs/{run_id}/campaign.jsonl; the run is not marked latest\n"
+                f"{trail}; the run is not marked latest\n"
             )
             return 1
         rows = tuple(recorded)
@@ -329,7 +329,7 @@ class CampaignCommands:
         errored = sum(1 for row in rows if row.errored)
         self._finish(
             f"ran {len(rows)} Tier 1 cases ({errored} errored): "
-            f"run {run_id} (evidence/runs/{run_id}/)"
+            f"run {run_id} ({runs.path(run_id)})"
         )
         return 0
 
@@ -392,8 +392,8 @@ class CampaignCommands:
             self._errors.write("tutor_sim: the frozen plan has no episodes\n")
             return 1
         manifest = ManifestFile().load(self._root() / tree / "manifest.json")
-        run_id = self._run_id()
         runs = RunDirectory(self._settings.evidence_dir)
+        run_id = runs.claim(self._run_id())
         transcripts = TranscriptFile(runs.path(run_id) / "transcripts")
         learners = SimulationNamespace()
         pupil = self._pupil()
