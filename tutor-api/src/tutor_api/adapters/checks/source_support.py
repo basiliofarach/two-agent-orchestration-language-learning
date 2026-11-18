@@ -43,13 +43,21 @@ class SentenceSourceSupport(SourceSupportPort):
     mark. Containment is not support: "It is false that hola means hello"
     contains a vetted sentence and reverses it, and "Hola means goodbye"
     is contained in "It is a myth that hola means goodbye". Matching whole
-    sentences fails closed: a paraphrase is unsupported and the drift gate
-    holds it for the tutor (REQ-ACCURACY).
+    sentences fails closed: a paraphrase is unsupported and flagged for
+    the tutor (REQ-ACCURACY).
 
     A sentence of fewer than two words is not treated as a claim: it is
-    listed as unsupported. The draft is not edited. Unsupported spans stay
-    on the report. ``source_ids`` on a supported span are the source URIs
-    that state the sentence.
+    listed as unsupported.
+
+    An unsupported sentence that contains a vetted sentence of two or more
+    words, as whole words, is also *altered*: it changes or negates what a
+    source states, and the drift gate holds it. Its ``source_ids`` name
+    those sources. A sentence the sources do not mention is unsupported but
+    not altered (DEC-0005).
+
+    The draft is not edited. Unsupported spans stay on the report.
+    ``source_ids`` on a supported span are the source URIs that state the
+    sentence.
     """
 
     def __init__(self, sentences: SentenceSplitter) -> None:
@@ -63,6 +71,7 @@ class SentenceSourceSupport(SourceSupportPort):
         """Return supported and unsupported spans. Neither list drops the other."""
         supported: list[ClaimSpan] = []
         unsupported: list[ClaimSpan] = []
+        altered: list[ClaimSpan] = []
         for text, start, end in self._sentences.split(draft):
             matched = self._matching(text, snippets)
             span = ClaimSpan(
@@ -73,15 +82,35 @@ class SentenceSourceSupport(SourceSupportPort):
             )
             if matched:
                 supported.append(span)
-            else:
-                unsupported.append(span)
+                continue
+            unsupported.append(span)
+            changed = self._altering(text, snippets)
+            if changed:
+                altered.append(span.model_copy(update={"source_ids": changed}))
         total = len(supported) + len(unsupported)
         ratio = 1.0 if total == 0 else len(supported) / total
         return SourceSupportReport(
             supported=tuple(supported),
             unsupported=tuple(unsupported),
             support_ratio=ratio,
+            altered=tuple(altered),
         )
+
+    def _altering(
+        self, sentence: str, snippets: tuple[Snippet, ...]
+    ) -> tuple[str, ...]:
+        """Sources with a vetted sentence that ``sentence`` contains."""
+        padded = f" {self._normal(sentence)} "
+        found: list[str] = []
+        for snippet in snippets:
+            uri = snippet.source.source_uri
+            if uri in found:
+                continue
+            for vetted in self._stated(snippet.content):
+                if len(vetted.split()) >= 2 and f" {vetted} " in padded:
+                    found.append(uri)
+                    break
+        return tuple(found)
 
     def _matching(
         self, sentence: str, snippets: tuple[Snippet, ...]

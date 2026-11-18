@@ -32,6 +32,29 @@ The session norm is summarised onto the turn before the graph runs, so the
 gate still reads only the turn. A not-evaluated row still cites the halting
 verdict's rule. Gate order and graph topology are unchanged.
 
+*Amended:* 2026-11-19 — Source support is no longer a drift trigger in the
+prototype: `min_support_ratio` is 0.0 and `max_support_drop` is 1.0, so
+neither can fire. Support counts a sentence only when a retrieved passage
+states it word for word. The knowledge base holds graded example sentences
+(CEFR-SP), not explanations, so no tutoring reply can be supported. In the
+Tier 1 run `run-20261118T222109`, every generated reply scored 0.0 and was
+held, and the 282 cases that expect release could not pass. That run is
+kept as evidence of the over-holding. REQ-ACCURACY asks for unsupported
+spans to be **flagged for human review**, and they still are: the support
+report is computed on every draft, recorded on the turn, and its
+unsupported spans are shown with the draft, which waits for the tutor's
+approval in any case. Strictness stays where the sources speak: a sentence
+that contains a vetted sentence without being it ("It is false that hola
+means hello") changes or negates vetted content. The support report now
+lists such sentences as `altered`, naming the sources they alter, and the
+drift envelope's `max_altered_claims` (0 in the prototype) holds the turn
+on any of them. A sentence the sources never mention is unsupported, not
+altered: it is flagged, not held. Drift also keeps retrieval confidence,
+length, grammar findings, the session length norm and repeated flagged
+prompts. Reports without altered spans hash as before. The envelope values
+are not part of the versioned policy card, so the policy version is
+unchanged. Recording the envelope on the card is a known gap.
+
 ## Context
 
 REQ-GATES specifies four oversight gates. Their positions in the pipeline are

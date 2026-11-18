@@ -65,7 +65,9 @@ class SourceSupportReport(BaseModel):
     """Supported and unsupported claim spans (REQ-ACCURACY).
 
     Unsupported spans stay on the report so a tutor can review them. They
-    are not dropped.
+    are not dropped. ``altered`` are the unsupported spans that contain a
+    vetted sentence without being it: vetted content changed or negated.
+    The drift gate holds those (DEC-0005).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -73,6 +75,17 @@ class SourceSupportReport(BaseModel):
     supported: tuple[ClaimSpan, ...]
     unsupported: tuple[ClaimSpan, ...]
     support_ratio: float = Field(ge=0.0, le=1.0)
+    altered: tuple[ClaimSpan, ...] = ()
+
+    @model_validator(mode="after")
+    def altered_spans_are_unsupported(self) -> Self:
+        for span in self.altered:
+            if span.model_copy(update={"source_ids": ()}) not in tuple(
+                item.model_copy(update={"source_ids": ()}) for item in self.unsupported
+            ):
+                msg = "altered spans must be unsupported spans"
+                raise ValueError(msg)
+        return self
 
 
 class RedactedText(BaseModel):

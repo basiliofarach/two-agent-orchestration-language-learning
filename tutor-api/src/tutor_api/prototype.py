@@ -69,7 +69,9 @@ class PrototypeCopy:
         """
         return SessionEnvelope(
             min_prior_turns=2,
-            max_support_drop=0.3,
+            # Support is flagged for the tutor, not a drift trigger (DEC-0005).
+            # A ratio cannot fall more than 1.0 below a session mean.
+            max_support_drop=1.0,
             max_length_factor=3.0,
             max_flagged_prompts=2,
         )
@@ -78,9 +80,12 @@ class PrototypeCopy:
         """The envelope any turn must stay inside."""
         return DriftEnvelope(
             min_retrieval_confidence=0.3,
-            min_support_ratio=0.5,
+            # Support is flagged for the tutor, not a drift trigger (DEC-0005).
+            min_support_ratio=0.0,
             max_output_characters=1200,
             max_grammar_findings=3,
+            # A sentence that changes or negates a vetted one is held.
+            max_altered_claims=0,
         )
 
     def flagged_categories(self) -> tuple[str, ...]:
