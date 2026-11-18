@@ -158,7 +158,7 @@ class SimulationCompositionRoot:
                 client=None,
             )
         hosts = CatalogueHosts().from_records(catalogue)
-        client = httpx.Client()
+        client = httpx.Client(timeout=self._settings.api_timeout_seconds)
         tutor = HttpTutorClient(client, self._settings.api_base_url)
         fetch = HttpSourceFetch(client, self._settings.cache_dir, digest, hosts)
         commands = CampaignCommands(

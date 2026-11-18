@@ -12,9 +12,11 @@ from tutor_sim.domain.models.api_views import (
     TurnOutcomeView,
 )
 from tutor_sim.domain.models.case import CaseSpec, OutcomeClass
-from tutor_sim.domain.models.client_call import HealthCall
+from tutor_sim.domain.models.client_call import ActionCall, ApiCall, HealthCall
 from tutor_sim.domain.models.observation import (
     ActionAttempt,
+    CaseFailure,
+    CaseStep,
     LeakHit,
     Observation,
     ObservedGate,
@@ -32,13 +34,28 @@ class PolicyMismatch(Exception):
     """The API's policy version is not the one the dataset was built for."""
 
 
+class FailedCall:
+    """A failed call as one line: status, kind, and the response text."""
+
+    def describe(self, call: ApiCall) -> str:
+        """``HTTP 503 errored: ReadTimeout``; the text is left off when empty."""
+        text = f"HTTP {call.http_status} {call.kind}"
+        if call.detail:
+            return f"{text}: {call.detail}"
+        return text
+
+    def at(self, step: CaseStep, call: ApiCall) -> CaseFailure:
+        """The case's trail. The response text is not kept: it can echo input."""
+        return CaseFailure(step=step, http_status=call.http_status, kind=call.kind)
+
+
 class ModeGuard:
     """Tier 1 runs only against a tutor API in simulation mode."""
 
     def check(self, health: HealthCall) -> None:
         """Abort when health failed or the process is still the prototype."""
         if health.kind != "ok" or health.body is None:
-            msg = "the tutor API is not healthy"
+            msg = f"the tutor API is not healthy: {FailedCall().describe(health)}"
             raise CampaignAbort(msg)
         if health.body.mode != "simulation":
             msg = "the tutor API is not in simulation mode"
@@ -77,7 +94,7 @@ class SessionPool:
         """The session id, or an abort when the API refused the open."""
         result = self._client.open_session(learner_id, tutor_id)
         if result.kind != "ok" or result.body is None:
-            msg = "the session did not open"
+            msg = f"the session did not open: {FailedCall().describe(result)}"
             raise CampaignAbort(msg)
         return result.body.session_id
 
@@ -141,8 +158,8 @@ class TutorAction:
         turn_id: UUID,
         tutor_id: str,
         decision: TutorDecision,
-    ) -> ActionAttempt | None:
-        """``None`` when the API errored, so nothing can be said about the action."""
+    ) -> ActionAttempt | ActionCall:
+        """The failed call when the API errored: nothing is known about the action."""
         if decision.decision == "none":
             return ActionAttempt(decision="none", http_status=0, recorded_action=None)
         result = self._client.act(
@@ -159,7 +176,7 @@ class TutorAction:
                 recorded_action=None,
             )
         if result.kind != "ok" or result.body is None:
-            return None
+            return result
         return ActionAttempt(
             decision=decision.decision,
             http_status=result.http_status,
@@ -225,6 +242,7 @@ class CaseRecord(BaseModel):
     errored: bool
     observation: Observation | None = None
     exposed: ExposedText | None = None
+    failure: CaseFailure | None = None
 
 
 class Tier1Runner:
@@ -242,6 +260,7 @@ class Tier1Runner:
         self._leaks = LeakCheck()
         self._action = TutorAction(client)
         self._observe = TurnObservation()
+        self._failed = FailedCall()
 
     def run(
         self,
@@ -254,7 +273,9 @@ class Tier1Runner:
         self._mode.check(self._client.health())
         listed = self._client.learners()
         if listed.kind != "ok":
-            msg = "the learner roster could not be read"
+            msg = (
+                f"the learner roster could not be read: {self._failed.describe(listed)}"
+            )
             raise CampaignAbort(msg)
         self._roster.require(learner_id, listed.body)
         session_id = self._sessions.open(learner_id, tutor_id)
@@ -262,31 +283,31 @@ class Tier1Runner:
             session_id, learner_id, utterance, case.requested_history_fields
         )
         if submitted.kind != "ok" or submitted.body is None:
-            return CaseRecord(case_id=case.case_id, errored=True)
+            return self._errored(case, self._failed.at("submit", submitted))
         body = submitted.body
         self._policy.check(body.policy_version, case.policy_version)
         detail = self._client.detail(body.turn_id)
         if detail.kind != "ok" or detail.body is None:
-            return CaseRecord(case_id=case.case_id, errored=True)
+            return self._errored(case, self._failed.at("detail", detail))
         outcome = self._class.classify(
             body.halted_at, self._halted.of(body), body.refused, body.status
         )
         view = self._view(body, detail.body)
         if outcome is None or view is None:
-            return CaseRecord(case_id=case.case_id, errored=True)
+            unknown = CaseFailure(
+                step="status", http_status=submitted.http_status, kind=None
+            )
+            return self._errored(case, unknown)
         decision = self._role.decide(view)
         attempt = self._action.attempt(session_id, body.turn_id, tutor_id, decision)
-        if attempt is None:
-            return CaseRecord(case_id=case.case_id, errored=True)
+        if isinstance(attempt, ActionCall):
+            return self._errored(case, self._failed.at("action", attempt))
         replay = self._client.replay(body.turn_id)
+        if replay.kind != "ok" or replay.body is None:
+            return self._errored(case, self._failed.at("replay", replay))
         audit = self._client.audit(session_id)
-        if (
-            replay.kind != "ok"
-            or replay.body is None
-            or audit.kind != "ok"
-            or audit.body is None
-        ):
-            return CaseRecord(case_id=case.case_id, errored=True)
+        if audit.kind != "ok" or audit.body is None:
+            return self._errored(case, self._failed.at("audit", audit))
         return self._record(
             case,
             body,
@@ -297,6 +318,9 @@ class Tier1Runner:
             audit.body.intact,
             outcome,
         )
+
+    def _errored(self, case: CaseSpec, failure: CaseFailure) -> CaseRecord:
+        return CaseRecord(case_id=case.case_id, errored=True, failure=failure)
 
     def _view(
         self, body: TurnOutcomeView, detail: TurnDetailView

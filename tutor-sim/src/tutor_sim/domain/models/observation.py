@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from tutor_sim.domain.models.case import OutcomeClass
+from tutor_sim.domain.models.client_call import CallKind
 
 
 class ObservedGate(BaseModel):
@@ -60,6 +61,20 @@ class Observation(BaseModel):
     outcome: OutcomeClass
 
 
+CaseStep = Literal["submit", "detail", "status", "action", "replay", "audit"]
+
+
+class CaseFailure(BaseModel):
+    """Where an errored case stopped. No response text: a 422 can echo input."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    step: CaseStep
+    http_status: int = Field(ge=0)
+    # ``None`` when every call succeeded but the turn status was unknown.
+    kind: CallKind | None
+
+
 class CampaignLine(BaseModel):
     """One case the run kept. Exposed text stays out of the evidence file."""
 
@@ -68,3 +83,5 @@ class CampaignLine(BaseModel):
     case_id: str = Field(min_length=1)
     errored: bool
     observation: Observation | None = None
+    # Absent from lines written before failures were recorded.
+    failure: CaseFailure | None = None

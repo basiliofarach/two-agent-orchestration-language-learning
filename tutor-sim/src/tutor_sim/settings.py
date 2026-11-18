@@ -4,7 +4,7 @@ import ipaddress
 from pathlib import Path
 from urllib import parse
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +48,8 @@ class SimulationSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SIM_", extra="ignore")
 
     api_base_url: str = "http://127.0.0.1:8000"
+    # A turn waits on the local model. httpx's 5 s default timed turns out.
+    api_timeout_seconds: float = Field(default=600.0, gt=0)
     dataset_dir: Path = Path("datasets/sim/unreleased")
     evidence_dir: Path = Path("evidence")
     ollama_base_url: str = "http://127.0.0.1:11434"

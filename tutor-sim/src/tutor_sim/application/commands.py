@@ -294,8 +294,15 @@ class CampaignCommands:
                         case_id=record.case_id,
                         errored=record.errored,
                         observation=record.observation,
+                        failure=record.failure,
                     )
                 )
+                if record.failure is not None:
+                    self._errors.write(
+                        f"tutor_sim: {record.case_id} errored at "
+                        f"{record.failure.step}: HTTP {record.failure.http_status} "
+                        f"{record.failure.kind or 'unknown status'}\n"
+                    )
                 self._step(f"{case.case_id} {case.intent}")
         except (CampaignAbort, PolicyMismatch) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
