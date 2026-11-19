@@ -50,6 +50,15 @@ class Expected(BaseModel):
     basis: LabelBasis
 
 
+class TopicName(BaseModel):
+    """A topic's name, for the pupil to ask about. Grammar Profile items only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    topic_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
 class CaseSpec(BaseModel):
     """One planned case, before a pupil utterance exists."""
 

@@ -21,11 +21,11 @@ from tutor_sim.application.build import (
     CefrSpArchive,
     DatasetBuild,
     InjectionPayloads,
+    KbTopics,
     MinorBenchPayloads,
     ParquetColumns,
     PayloadSample,
     PayloadText,
-    SentenceTopics,
     SourceIndex,
     TarTexts,
 )
@@ -300,7 +300,7 @@ class TestBuild:
     def test_a_level_with_no_sentence_document_fails(self) -> None:
         documents = KbCorpusBuilder(SimulationNamespace()).build((), (), ())
         with pytest.raises(BuildFailure, match="no A1 document"):
-            SentenceTopics().by_level(documents)
+            KbTopics().by_level(documents)
 
     def test_the_summary_line_names_every_count(self) -> None:
         line = BuildSummary(

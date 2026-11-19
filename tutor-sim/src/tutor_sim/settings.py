@@ -64,6 +64,9 @@ class SimulationSettings(BaseSettings):
     # Echo copies the prompt. It is a test double, not a campaign model.
     role_fixture: bool = False
     sources_path: Path = Path("datasets/sim/unreleased/public/sources.json")
+    # TreeTagger's folder (``bin/tree-tagger``, ``english.par``). Only
+    # ``build`` uses it, to find Grammar Profile examples (DATASET §3.1).
+    treetagger_dir: Path | None = None
 
     @field_validator("ollama_base_url")
     @classmethod

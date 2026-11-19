@@ -245,7 +245,7 @@ class TestKnowledgeBase:
         examples = GrammarExampleMiner(
             SentenceTags().tagger(("cats sit", "score line"))
         ).mine((item,), (sentence, score))
-        documents = KbCorpusBuilder(namespace).build(
+        documents = KbCorpusBuilder(namespace, "custom:gp").build(
             (sentence, score), (item,), examples
         )
         seeded = KbCorpusBuilder(namespace).default_seed(documents)
@@ -260,9 +260,7 @@ class TestKnowledgeBase:
         assert faults[2].canary == "CANARY-7F3"
         assert faults[2].review_status == "pending"
         grammar = next(document for document in seeded if document.topic_id == "gp-g")
-        assert grammar.licence == (
-            "custom:unverified AND CC-BY-NC-SA-4.0 AND CC-BY-SA-3.0"
-        )
+        assert grammar.licence == ("custom:gp AND CC-BY-NC-SA-4.0 AND CC-BY-SA-3.0")
         assert "score line" in grammar.content
         assert (
             grammar.content_sha256
@@ -311,11 +309,15 @@ class TestKnowledgeBase:
             pattern="NN",
             regex="NN",
         )
-        documents = KbCorpusBuilder(SimulationNamespace()).build((), (item,), ())
+        documents = KbCorpusBuilder(SimulationNamespace(), "custom:gp").build(
+            (), (item,), ()
+        )
         grammar = next(
             document for document in documents if document.topic_id == "gp-g"
         )
-        assert grammar.licence == "custom:unverified"
+        assert grammar.licence == "custom:gp"
+        with pytest.raises(ValueError, match="Grammar Profile licence"):
+            KbCorpusBuilder(SimulationNamespace()).build((), (item,), ())
 
     def test_a_wiki_only_grammar_item_adds_the_wiki_licence(self) -> None:
         sentence = SentenceTags().sentence("id", "cats", "A2", "wiki-auto")
@@ -330,13 +332,13 @@ class TestKnowledgeBase:
         examples = GrammarExampleMiner(SentenceTags().tagger(("cats",))).mine(
             (item,), (sentence,)
         )
-        documents = KbCorpusBuilder(SimulationNamespace()).build(
+        documents = KbCorpusBuilder(SimulationNamespace(), "custom:gp").build(
             (sentence,), (item,), examples
         )
         grammar = next(
             document for document in documents if document.topic_id == "gp-g"
         )
-        assert grammar.licence == "custom:unverified AND CC-BY-SA-3.0"
+        assert grammar.licence == "custom:gp AND CC-BY-SA-3.0"
 
 
 class TestMeasures:

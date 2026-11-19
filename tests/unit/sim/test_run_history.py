@@ -56,7 +56,7 @@ class Campaign:
         PersonaFiles().write(dataset)
         self.errors = io.StringIO()
         setup = self.commands(ScriptedTutor(), _FIRST)
-        assert setup.dispatch("realise") == 0
+        assert setup.dispatch("pupil-messages") == 0
         assert setup.dispatch("freeze") == 0
 
     def commands(

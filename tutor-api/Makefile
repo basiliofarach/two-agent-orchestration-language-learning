@@ -8,7 +8,7 @@ REPO := $(abspath ..)
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
 	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
-	purge eval sim sim-build sim-realise sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
+	purge eval sim sim-build sim-pupil-messages sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
 
 # Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
 # working directory so ApplicationSettings still finds tutor-api/.env.
@@ -27,6 +27,7 @@ SIM_ENV = SIM_DATASET_DIR="$(SIM_DATASET_DIR)" \
 	SIM_SOURCES_PATH="$(SIM_SOURCES_PATH)" \
 	SIM_EVIDENCE_DIR="$(SIM_EVIDENCE_DIR)" \
 	SIM_RUNTIME_PIN_PATH="$(SIM_RUNTIME_PIN_PATH)" \
+	SIM_TREETAGGER_DIR="$(SIM_DATASET_DIR)/restricted/treetagger" \
 	$(if $(SIM_RUN_ID),SIM_RUN_ID="$(SIM_RUN_ID)")
 
 # Source roots are explicit: macOS marks .venv files hidden and Python
@@ -53,9 +54,9 @@ help:
 	@echo "  make evidence      write the compliance pack to ../evidence"
 	@echo "  make purge         remove history of learners past retain_until, and log it"
 	@echo "  make eval          run the eight REQ-EVAL cases; scores to ../evidence/rubric-scores.jsonl"
-	@echo "  make sim          build, realise, freeze, and verify the dataset in SIM_DATASET_DIR"
+	@echo "  make sim          build, write pupil messages, freeze, and verify the dataset in SIM_DATASET_DIR"
 	@echo "  make sim-build    build the dataset and plan.json from cached sources"
-	@echo "  make sim-realise  rebuild stimuli from plan.json"
+	@echo "  make sim-pupil-messages  the role model writes each pupil message in plan.json"
 	@echo "  make sim-freeze   write the manifest"
 	@echo "  make sim-run      Tier 1 against the API; a new evidence/runs/<run_id>/ each time"
 	@echo "                    SIM_RUN_ID=<run_id> continues an unfinished run"
@@ -139,22 +140,22 @@ eval: sync
 
 # Offline: reads the pinned artefacts from .cache/sim and checks each digest.
 # Build never calls the role model; the fixture flag only lets the CLI wire
-# without a [role_model] pin. realise still needs the real pin.
+# without a [role_model] pin. pupil-messages still needs the real pin.
 # Each harness target prints one step line, a progress bar where the command
-# loops (realise, run, episodes), then the command's own summary line.
+# loops (pupil-messages, run, episodes), then the command's own summary line.
 sim-build:
 	@echo "[build] dataset and plan.json from the pinned sources in .cache/sim"
 	@SIM_OFFLINE=true SIM_ROLE_FIXTURE=true $(SIM_ENV) $(RUN) python -m tutor_sim build
 
-sim-realise:
-	@echo "[realise] pupil utterances from the role model ([role_model] pin)"
-	@$(SIM_ENV) $(RUN) python -m tutor_sim realise
+sim-pupil-messages:
+	@echo "[pupil-messages] pupil messages from the role model ([role_model] pin)"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim pupil-messages
 
 sim-freeze:
 	@echo "[freeze] manifest and test-split digest"
 	@$(SIM_ENV) $(RUN) python -m tutor_sim freeze
 
-sim: sim-build sim-realise sim-freeze
+sim: sim-build sim-pupil-messages sim-freeze
 	@echo "[verify] rebuild check against the manifest"
 	@$(SIM_ENV) $(RUN) python -m tutor_sim verify
 

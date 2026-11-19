@@ -17,7 +17,16 @@ import pyarrow.parquet as pq
 from pydantic import BaseModel, ConfigDict, Field
 
 from tutor_sim.application.cases import CasePlanner, PrototypeExpectations
-from tutor_sim.application.kb_corpus import CefrSpLoader, KbCorpusBuilder
+from tutor_sim.application.grammar_profile import (
+    GrammarProfileWorkbook,
+    WorkbookUnreadable,
+)
+from tutor_sim.application.kb_corpus import (
+    CefrSpLoader,
+    GrammarExampleMiner,
+    GrammarProfileLoader,
+    KbCorpusBuilder,
+)
 from tutor_sim.application.payloads import (
     PayloadBankBuilder,
     SplitAssigner,
@@ -30,6 +39,7 @@ from tutor_sim.application.personas import (
     TutorRoleCards,
 )
 from tutor_sim.application.realise import PlanFile, RealisePlan, ReleaseTree
+from tutor_sim.domain.models.case import TopicName
 from tutor_sim.domain.models.grammar import CefrSpRow, CefrSpSubset
 from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.kb import CefrLevel, KbDocumentRecord
@@ -37,9 +47,11 @@ from tutor_sim.domain.models.payload import Payload, PayloadCategory, PayloadDra
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.models.storage import DatasetTree, DatasetWrite
 from tutor_sim.domain.ports.dataset_store import DatasetStorePort
+from tutor_sim.domain.ports.pos_tagger import PosTaggerPort
 from tutor_sim.domain.ports.source_fetch import SourceFetchPort
 
 _LEVELS: tuple[CefrLevel, ...] = ("A1", "A2", "B1", "B2")
+_PROFILE_SOURCE = "cefr-j-grammar-profile"
 _SUBSET_DIRECTORY: dict[CefrSpSubset, str] = {
     "wiki-auto": "Wiki-Auto",
     "score": "SCoRE",
@@ -271,22 +283,32 @@ class AuthoredPayloads:
         )
 
 
-class SentenceTopics:
-    """Benign topics by level, while the KB has no grammar items."""
+class KbTopics:
+    """Benign topics by level: Grammar Profile items where a level has them.
+
+    A level with no grammar item falls back to its CEFR-SP sentence
+    documents, so a build without the Profile still plans every level.
+    """
 
     def by_level(
         self, documents: tuple[KbDocumentRecord, ...]
     ) -> dict[CefrLevel, tuple[str, ...]]:
-        """The sentence-document topics at each level. A level with none fails."""
+        """The topics at each level. A level with no document at all fails."""
         topics: dict[CefrLevel, tuple[str, ...]] = {}
         for level in _LEVELS:
-            found = sorted(
+            at_level = [
+                document
+                for document in documents
+                if document.partition == "default" and document.cefr_level == level
+            ]
+            grammar = sorted(
                 {
                     document.topic_id
-                    for document in documents
-                    if document.partition == "default" and document.cefr_level == level
+                    for document in at_level
+                    if document.source_uri.startswith(f"kb://{_PROFILE_SOURCE}/")
                 }
             )
+            found = grammar or sorted({document.topic_id for document in at_level})
             if not found:
                 msg = f"the knowledge base has no {level} document"
                 raise BuildFailure(msg)
@@ -338,8 +360,12 @@ class DatasetBuild:
         sources: tuple[SourceRecord, ...],
         dataset_dir: Path,
         seed: int,
+        tagger: PosTaggerPort | None = None,
     ) -> None:
         self._fetch = fetch
+        # TreeTagger; needed only when sources.json lists the Grammar Profile.
+        self._tagger = tagger
+        self._catalogue = frozenset(source.source_id for source in sources)
         self._store = store
         self._sources = SourceIndex(sources)
         self._dataset_dir = dataset_dir
@@ -349,7 +375,7 @@ class DatasetBuild:
 
     def run(self) -> BuildSummary:
         """Build every file. A failure leaves no plan behind."""
-        documents, kb_tree = self._knowledge_base()
+        documents, kb_tree, topics = self._knowledge_base()
         cards = PersonaCardBuilder(ErrorProfileLoader()).cards()
         payloads = PayloadBankBuilder(SplitAssigner()).build(
             self._payload_drafts(), self._seed
@@ -359,7 +385,7 @@ class DatasetBuild:
         )
         expectations = PrototypeExpectations()
         cases, episodes = CasePlanner(expectations).plan(
-            cards, SentenceTopics().by_level(documents), payloads, canary
+            cards, KbTopics().by_level(documents), payloads, canary
         )
         self._write("kb/documents.jsonl", self._lines.body(documents), kb_tree)
         for card in cards:
@@ -392,6 +418,7 @@ class DatasetBuild:
                 cases=cases,
                 payloads=payloads,
                 episodes=episodes,
+                topics=topics,
             ),
         )
         return BuildSummary(
@@ -403,7 +430,9 @@ class DatasetBuild:
             personas=len(cards),
         )
 
-    def _knowledge_base(self) -> tuple[tuple[KbDocumentRecord, ...], DatasetTree]:
+    def _knowledge_base(
+        self,
+    ) -> tuple[tuple[KbDocumentRecord, ...], DatasetTree, tuple[TopicName, ...]]:
         archive = CefrSpArchive(TarTexts())
         rows: list[CefrSpRow] = []
         flags: list[bool] = []
@@ -416,8 +445,30 @@ class DatasetBuild:
             rows.extend(archive.rows(self._fetch.fetch(source), subset))
             flags.append(source.redistributable)
         sentences = CefrSpLoader().load(tuple(rows))
-        documents = KbCorpusBuilder(self._namespace).build(sentences, (), ())
-        return documents, ReleaseTree().choose(tuple(flags))
+        if _PROFILE_SOURCE not in self._catalogue:
+            documents = KbCorpusBuilder(self._namespace).build(sentences, (), ())
+            return documents, ReleaseTree().choose(tuple(flags)), ()
+        if self._tagger is None:
+            msg = (
+                "the Grammar Profile needs TreeTagger to find its examples: "
+                "set SIM_TREETAGGER_DIR and the [pos_tagger] pin"
+            )
+            raise BuildFailure(msg)
+        profile = self._sources.get(_PROFILE_SOURCE)
+        try:
+            rows_gp = GrammarProfileWorkbook().rows(self._fetch.fetch(profile))
+        except WorkbookUnreadable as exc:
+            raise BuildFailure(str(exc)) from exc
+        items = GrammarProfileLoader().load(rows_gp)
+        examples = GrammarExampleMiner(self._tagger).mine(items, sentences)
+        flags.append(profile.redistributable)
+        documents = KbCorpusBuilder(self._namespace, profile.licence).build(
+            sentences, items, examples
+        )
+        names = tuple(
+            TopicName(topic_id=f"gp-{item.item_id}", name=item.name) for item in items
+        )
+        return documents, ReleaseTree().choose(tuple(flags)), names
 
     def _payload_drafts(self) -> tuple[PayloadDraft, ...]:
         text = PayloadText()

@@ -112,7 +112,7 @@ def test_the_episodes_command_writes_a_tier_2_run_with_transcripts(
     _plan(settings, episodes)
     errors = io.StringIO()
     commands = _commands(settings, _client(), errors)
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     manifest = json.loads(
         (settings.dataset_dir / "public" / "manifest.json").read_text(encoding="utf-8")
@@ -159,7 +159,7 @@ def test_an_api_that_accepts_a_turn_after_the_stop_fails_the_tier_2_run(
     client = _client()
     client.refuse_after_stop = False
     commands = _commands(settings, client, io.StringIO())
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 0
     run = sorted((settings.evidence_dir / "runs").iterdir())[-1]
@@ -179,7 +179,7 @@ def test_a_source_every_turn_cites_is_counted_once_and_keeps_licence_pending(
     client = _client()
     client.sources = ("ellipse",)
     commands = _commands(settings, client, io.StringIO())
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 0
     run = sorted((settings.evidence_dir / "runs").iterdir())[-1]
@@ -197,7 +197,7 @@ def test_a_tree_frozen_before_episodes_existed_has_no_episode_plan(
     _plan(settings, (_episode("e-open", "T2", "open", None),))
     errors = io.StringIO()
     commands = _commands(settings, _client(), errors)
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     tree = settings.dataset_dir / "public"
     manifest = json.loads((tree / "manifest.json").read_text(encoding="utf-8"))
@@ -221,7 +221,7 @@ def test_an_api_under_another_policy_fails_the_command_and_writes_no_run(
     client.policy = "prototype-9"
     errors = io.StringIO()
     commands = _commands(settings, client, errors)
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 1
     assert "policy version prototype-9 != prototype-2" in errors.getvalue()
@@ -237,7 +237,7 @@ def test_a_plan_with_a_repeated_episode_id_fails_before_any_turn(
     client = _client()
     errors = io.StringIO()
     commands = _commands(settings, client, errors)
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 1
     assert "appears twice" in errors.getvalue()
@@ -256,12 +256,12 @@ def test_episodes_refuses_without_a_client_a_plan_or_a_known_role(
     commands = _commands(settings, _client(), errors)
     assert commands.dispatch("episodes") == 1
     assert "no realised stimuli" in errors.getvalue()
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 1
     assert "has no episodes" in errors.getvalue()
     _plan(settings, (_episode("e-t1", "T1", "open", None),))
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     (settings.dataset_dir / "public" / "manifest.json").unlink()
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("episodes") == 1
@@ -288,7 +288,7 @@ def test_tier_1_and_tier_2_in_the_same_second_never_share_a_directory(
     _plan(settings, (_episode("e-absent", "T3", "open", None),))
     errors = io.StringIO()
     commands = _commands(settings, _client(), errors)
-    assert commands.dispatch("realise") == 0
+    assert commands.dispatch("pupil-messages") == 0
     assert commands.dispatch("freeze") == 0
     assert commands.dispatch("run") == 0, errors.getvalue()
     assert commands.dispatch("episodes") == 0, errors.getvalue()

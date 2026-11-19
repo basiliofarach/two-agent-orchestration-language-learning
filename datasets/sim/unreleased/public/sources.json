@@ -51,7 +51,7 @@
     "source_id": "treetagger",
     "title": "TreeTagger",
     "url": "https://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/",
-    "revision": "3.2.5",
+    "revision": "3.2.3",
     "sha256": "60ae7bfbe80a68a66ffc1d3208aa17254152229fe324df563e5c69640b23f67f",
     "licence": "custom:research-education-evaluation",
     "licence_url": "https://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/",
@@ -61,7 +61,7 @@
     "licence_review": "confirmed",
     "reviewed_by": "author",
     "reviewed_on": "2026-11-17",
-    "review_note": "Research, education and evaluation terms read. Build-time only; the binary is not redistributed."
+    "review_note": "Research, education and evaluation terms read (COPYRIGHT file, 2026-11-19). Build-time only; the binary is not redistributed. Apple Silicon build 3.2.3 (tree-tagger-MacOSX-M1-3.2.3.tar.gz) and english.par; digests pinned in config/runtime.toml [pos_tagger]."
   },
   {
     "source_id": "cefr-j-wordlist",

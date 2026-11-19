@@ -1240,7 +1240,7 @@ class TestCommands:
         self._plan(dataset)
         for card in (dataset / "public" / "personas").iterdir():
             card.unlink()
-        assert SimulationCli(root, errors).main(["realise"]) == 1
+        assert SimulationCli(root, errors).main(["pupil-messages"]) == 1
         assert "no persona card for p-a2-es-12_14-01" in errors.getvalue()
         assert not (dataset / "public" / "stimuli").exists()
 
@@ -1250,7 +1250,7 @@ class TestCommands:
         cli = SimulationCli(root, errors)
         dataset = tmp_path / "dataset"
         self._plan(dataset)
-        assert cli.main(["realise"]) == 0
+        assert cli.main(["pupil-messages"]) == 0
         assert (dataset / "public" / "discards.json").is_file()
         assert cli.main(["freeze"]) == 0
         manifest = (dataset / "public" / "manifest.json").read_bytes()
@@ -1317,7 +1317,7 @@ class TestCommands:
         ).wire()
         try:
             assert wired.commands.dispatch("nope") == 2
-            assert wired.commands.dispatch("realise") == 1
+            assert wired.commands.dispatch("pupil-messages") == 1
             assert wired.commands.dispatch("freeze") == 1
             assert wired.commands.dispatch("verify") == 1
         finally:
@@ -1350,7 +1350,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 1
         assert "rejected" in errors.getvalue()
 
@@ -1371,7 +1371,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert (
             settings.dataset_dir / "restricted" / "stimuli" / "test.jsonl"
         ).is_file()
@@ -1404,7 +1404,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 1
+        assert commands.dispatch("pupil-messages") == 1
         assert "does not contain" in errors.getvalue()
 
     def test_verify_reports_a_split_that_moved_and_a_manifest_with_no_test_file(
@@ -1424,7 +1424,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         manifest_path = settings.dataset_dir / "public" / "manifest.json"
         manifest = ManifestFile().load(manifest_path)
@@ -1458,7 +1458,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("run") == 1
         assert "no manifest" in errors.getvalue()
         assert commands.dispatch("freeze") == 0
@@ -1516,7 +1516,7 @@ class TestCommands:
         assert "no realised stimuli" in errors.getvalue()
         assert commands.dispatch("report") == 1
         self._plan(settings.dataset_dir)
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         (settings.dataset_dir / "active-tree.json").unlink()
         assert commands.dispatch("verify") == 0
@@ -1558,9 +1558,9 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         self._plan(settings.dataset_dir, _payload(redistributable=False))
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         assert (settings.dataset_dir / "restricted" / "manifest.json").is_file()
         assert not (settings.dataset_dir / "public" / "manifest.json").is_file()
@@ -1585,7 +1585,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         manifest = settings.dataset_dir / "public" / "manifest.json"
         frozen = manifest.read_bytes()
@@ -1609,7 +1609,7 @@ class TestCommands:
         )
         errors = io.StringIO()
         status = SimulationCli(SimulationCompositionRoot(settings), errors).main(
-            ["realise"]
+            ["pupil-messages"]
         )
         assert status == 1
         assert "role-model pin" in errors.getvalue()
@@ -1621,7 +1621,9 @@ class TestCommands:
         self._plan(settings.dataset_dir)
         errors = io.StringIO()
         assert (
-            SimulationCli(SimulationCompositionRoot(settings), errors).main(["realise"])
+            SimulationCli(SimulationCompositionRoot(settings), errors).main(
+                ["pupil-messages"]
+            )
             == 0
         )
         role = "cd" * 32

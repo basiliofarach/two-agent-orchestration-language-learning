@@ -1,4 +1,7 @@
-"""The operator commands: build, realise, freeze, verify, run, episodes, report."""
+"""The operator commands.
+
+build, pupil-messages, freeze, verify, run, episodes and report.
+"""
 
 from pathlib import Path
 from typing import TextIO
@@ -53,7 +56,7 @@ from tutor_sim.application.tier1 import (
     PolicyMismatch,
     Tier1Runner,
 )
-from tutor_sim.domain.models.case import StimulusCase
+from tutor_sim.domain.models.case import StimulusCase, TopicName
 from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.manifest import RoleModelPin
 from tutor_sim.domain.models.observation import CampaignLine, Observation
@@ -69,7 +72,7 @@ from tutor_sim.settings import SimulationSettings
 
 
 class CampaignCommands:
-    """build, realise, freeze, verify, run, episodes and report.
+    """build, pupil-messages, freeze, verify, run, episodes and report.
 
     ``build`` reads the pinned sources and writes the dataset and
     ``plan.json``; it needs a ``DatasetBuild``, which the composition root
@@ -110,7 +113,7 @@ class CampaignCommands:
         """Run one command. An unknown name is a usage error."""
         if command == "build":
             return self._built()
-        if command == "realise":
+        if command == "pupil-messages":
             return self._realise()
         if command == "freeze":
             return self._freeze()
@@ -159,10 +162,10 @@ class CampaignCommands:
         if self._progress is not None:
             self._progress.finish(summary)
 
-    def _pupil(self) -> PupilPrompt:
+    def _pupil(self, topics: tuple[TopicName, ...] = ()) -> PupilPrompt:
         """The persona cards build wrote. They are always public."""
         cards = PersonaCardFile().load(self._root() / "public" / "personas")
-        return PupilPrompt(cards)
+        return PupilPrompt(cards, topics)
 
     def _realise(self) -> int:
         try:
@@ -172,7 +175,10 @@ class CampaignCommands:
             return 1
         index = PayloadIndex(plan.payloads)
         realiser = PupilRealiser(
-            self._model, ConstructionCheck(), NoiseTransformer(), self._pupil()
+            self._model,
+            ConstructionCheck(),
+            NoiseTransformer(),
+            self._pupil(plan.topics),
         )
         realised: list[StimulusCase] = []
         self._start(len(plan.cases))
@@ -198,7 +204,7 @@ class CampaignCommands:
         ActiveTreeFile().write(self._root(), tree)
         discarded = sum(1 for case in cases if case.construction.discarded)
         self._finish(
-            f"realised {len(cases)} cases into {tree}/stimuli "
+            f"wrote {len(cases)} pupil messages into {tree}/stimuli "
             f"({discarded} discarded: payload not copied)"
         )
         return 0

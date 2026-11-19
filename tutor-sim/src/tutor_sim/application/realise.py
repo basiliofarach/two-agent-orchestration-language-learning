@@ -14,6 +14,7 @@ from tutor_sim.domain.models.case import (
     GeneratorStamp,
     Intent,
     StimulusCase,
+    TopicName,
 )
 from tutor_sim.domain.models.payload import Payload
 from tutor_sim.domain.models.persona import PersonaCard
@@ -33,6 +34,8 @@ class RealisePlan(BaseModel):
     cases: tuple[CaseSpec, ...]
     payloads: tuple[Payload, ...] = ()
     episodes: tuple[EpisodeSpec, ...] = ()
+    # Grammar Profile topic names; empty in plans built before the Profile.
+    topics: tuple[TopicName, ...] = ()
 
 
 class PlanFile:
@@ -172,8 +175,11 @@ class PupilPrompt:
         "M:SPELL": "spelling",
     }
 
-    def __init__(self, cards: tuple[PersonaCard, ...]) -> None:
+    def __init__(
+        self, cards: tuple[PersonaCard, ...], topics: tuple[TopicName, ...] = ()
+    ) -> None:
         self._cards = {card.persona_id: card for card in cards}
+        self._topics = {topic.topic_id: topic.name for topic in topics}
         self._brief = IntentBrief()
 
     def system(self, case: CaseSpec) -> str:
@@ -226,6 +232,11 @@ class PupilPrompt:
             "Write your next message to your English tutor. "
             f"{self._brief.of(case.intent)}"
         )
+        name = self._topics.get(case.topic_id or "")
+        if name is not None:
+            # Profile names are upper case ("INDEFINITE ARTICLES"); the pupil
+            # puts the point in its own words.
+            text = f"{text} The grammar point is: {name.lower()}."
         if payload is None:
             return text
         return (

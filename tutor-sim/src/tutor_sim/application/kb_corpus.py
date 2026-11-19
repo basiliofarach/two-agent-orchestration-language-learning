@@ -42,8 +42,6 @@ _COVERAGE = 0.95
 _EXAMPLES = 5
 _WIKI = "CC-BY-SA-3.0"
 _SCORE = "CC-BY-NC-SA-4.0"
-# sources.json, cefr-j-grammar-profile. Item names and patterns are its text.
-_PROFILE = "custom:unverified"
 _CANARY = "CANARY-7F3"
 
 
@@ -117,10 +115,15 @@ class GrammarProfileLoader:
     """Map each teachers'-sheet sub-level onto a CEFR band."""
 
     def load(self, rows: tuple[GrammarProfileRow, ...]) -> tuple[GrammarItem, ...]:
-        """One item per row. An unknown sub-level is refused."""
+        """One item per row. An unknown sub-level is refused.
+
+        A range such as ``A1.1-A1.2`` is the span over which an item is
+        taught. Its band is the band of the first level: where it starts.
+        """
         items: list[GrammarItem] = []
         for row in rows:
-            band = _BAND.get(row.cefr_j_level.strip())
+            first = row.cefr_j_level.strip().split("-", 1)[0].strip()
+            band = _BAND.get(first)
             if band is None:
                 msg = f"unknown CEFR-J level {row.cefr_j_level.strip()}"
                 raise ValueError(msg)
@@ -250,8 +253,12 @@ class FaultPartition:
 class KbCorpusBuilder:
     """Grammar documents, sentence documents, and the fault partition."""
 
-    def __init__(self, namespace: SimulationNamespace) -> None:
+    def __init__(
+        self, namespace: SimulationNamespace, profile_licence: str | None = None
+    ) -> None:
         self._namespace = namespace
+        # The Grammar Profile's licence, from its sources.json record.
+        self._profile = profile_licence
         self._digest = DocumentDigest()
         self._faults = FaultPartition(namespace)
 
@@ -288,7 +295,10 @@ class KbCorpusBuilder:
     def _grammar(
         self, item: GrammarItem, examples: tuple[GrammarExample, ...]
     ) -> KbDocumentRecord:
-        lines = [item.name, f"Pattern: {item.pattern}"]
+        lines = [item.name]
+        if item.pattern.isascii():
+            # Some shorthands use Japanese placeholders; they are not English text.
+            lines.append(f"Pattern: {item.pattern}")
         lines.extend(example.sentence.text for example in examples)
         return self._record(
             source_id="cefr-j-grammar-profile",
@@ -308,8 +318,11 @@ class KbCorpusBuilder:
         always first, even when no example was mined. The result is an SPDX
         ``AND`` expression: each term applies to its part of the document.
         """
+        if self._profile is None:
+            msg = "grammar items need the Grammar Profile licence"
+            raise ValueError(msg)
         examples_licences = sorted({example.sentence.licence for example in examples})
-        return " AND ".join((_PROFILE, *examples_licences))
+        return " AND ".join((self._profile, *examples_licences))
 
     def _passage(
         self, subset: str, level: CefrLevel, sentences: tuple[CefrSpSentence, ...]

@@ -176,7 +176,7 @@ tutor-sim/
     │                           # AbsentTutor, StopperTutor
     ├── composition.py          # SimulationCompositionRoot (rule 3)
     ├── settings.py             # SimulationSettings (pydantic-settings)
-    └── __main__.py             # CLI: build | realise | freeze | verify |
+    └── __main__.py             # CLI: build | pupil-messages | freeze | verify |
                                 #      run | episodes | report
 ```
 
@@ -718,7 +718,7 @@ No new working directory is introduced.
 | Target | Runs | Effect |
 | --- | --- | --- |
 | `make sim-build` | `python -m tutor_sim build` | Fetch sources; build KB, payloads, cards, roster and plan |
-| `make sim-realise` | `python -m tutor_sim realise` | Generate utterances with the role model; construction checks; noisy twins |
+| `make sim-pupil-messages` | `python -m tutor_sim pupil-messages` | The role model writes each planned pupil message; the payload is appended; construction checks; noisy twins. Formerly `sim-realise` |
 | `make sim-freeze` | `python -m tutor_sim freeze` | Apply the licence-terms rules; write the manifest, including review status; record `test_split_sha256`. Not blocked by a `pending` review |
 | `make sim` | build, then `verify` | DEC-0015's "done when": rebuild from pinned sources and verify the manifest |
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
@@ -862,7 +862,7 @@ show those refusals happen. **A tutor decision is recorded as an
 
 ## 8. Runtime view
 
-### 8.1 Build, realise, freeze
+### 8.1 Build, pupil messages, freeze
 
 ```mermaid
 sequenceDiagram
@@ -876,7 +876,7 @@ sequenceDiagram
     Op->>B: make sim-build (seed, policy_version)
     B->>F: fetch each SourceRecord (pinned, sha256)
     B->>S: write kb, payloads (split), personas, tutors, roster, plan
-    Op->>R: make sim-realise
+    Op->>R: make sim-pupil-messages
     loop each CaseSpec in plan
         R->>M: persona card + intent task (+ payload as context)
         M-->>R: lead-in
@@ -1285,7 +1285,7 @@ BE-07, BE-08
 
 - `PupilRealiser`, `ConstructionCheck`, `NoiseTransformer`.
 - `LicenceTermsGate`, `Freezer`, `ManifestWriter` and `ManifestVerifier`; the
-  `make sim`, `sim-realise` and `sim-freeze` targets.
+  `make sim`, `sim-pupil-messages` and `sim-freeze` targets.
 - *Done when:*
   - `make sim` rebuilds and verifies;
   - payload bytes survive the noise transforms (property test);

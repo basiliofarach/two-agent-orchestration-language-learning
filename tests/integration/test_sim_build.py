@@ -59,7 +59,7 @@ class BuildWorkspace:
         return code, errors.getvalue()
 
 
-def test_build_then_realise_freeze_and_verify(tmp_path: Path) -> None:
+def test_build_then_pupil_messages_freeze_and_verify(tmp_path: Path) -> None:
     workspace = BuildWorkspace()
     settings = workspace.fixture(tmp_path)
 
@@ -73,7 +73,9 @@ def test_build_then_realise_freeze_and_verify(tmp_path: Path) -> None:
     assert (root / "plan.json").is_file()
 
     summaries = {
-        "realise": "cases into restricted/stimuli (0 discarded: payload not copied)",
+        "pupil-messages": (
+            "pupil messages into restricted/stimuli (0 discarded: payload not copied)"
+        ),
         "freeze": "cases: restricted/manifest.json",
         "verify": "manifest verified: every file in restricted/ matches its digest",
     }
@@ -125,6 +127,7 @@ _REPOSITORY = RepositoryPaths().root()
 _CACHE = _REPOSITORY / ".cache" / "sim"
 
 
+@pytest.mark.requires_treetagger
 @pytest.mark.skipif(
     not _CACHE.is_dir() or not any(_CACHE.iterdir()),
     reason="the pinned artefacts are not cached on this machine",
@@ -133,7 +136,11 @@ def test_the_committed_catalogue_builds_from_the_local_cache(tmp_path: Path) -> 
     public = _REPOSITORY / "datasets" / "sim" / "unreleased" / "public"
     workspace = BuildWorkspace()
     settings = workspace.settings(tmp_path, (), _CACHE).model_copy(
-        update={"sources_path": public / "sources.json"}
+        update={
+            "sources_path": public / "sources.json",
+            "runtime_pin_path": _REPOSITORY / "config" / "runtime.toml",
+            "treetagger_dir": public.parent / "restricted" / "treetagger",
+        }
     )
     shutil.copytree(public / "authored", settings.dataset_dir / "public" / "authored")
 

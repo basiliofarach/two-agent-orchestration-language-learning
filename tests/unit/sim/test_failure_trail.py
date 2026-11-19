@@ -175,7 +175,7 @@ class TestRunCommandTrail:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         assert commands.dispatch("run") == 0
         assert "c1 errored at submit: HTTP 503 errored" in errors.getvalue()
@@ -190,3 +190,12 @@ class TestRunCommandTrail:
         assert line.failure == CaseFailure(
             step="submit", http_status=503, kind="errored"
         )
+
+
+class TestCommandNames:
+    def test_the_old_realise_name_is_not_a_command(self, tmp_path: Path) -> None:
+        from tutor_sim.cli import SimulationCli
+
+        errors = io.StringIO()
+        root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, True))
+        assert SimulationCli(root, errors).main(["realise"]) == 2

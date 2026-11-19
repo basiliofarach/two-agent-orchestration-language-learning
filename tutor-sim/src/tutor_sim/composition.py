@@ -11,9 +11,15 @@ from tutor_sim.adapters.digest import ArtefactDigest
 from tutor_sim.adapters.file_dataset_store import FileDatasetStore
 from tutor_sim.adapters.http_source_fetch import CachedOnlySourceFetch, HttpSourceFetch
 from tutor_sim.adapters.http_tutor_client import HttpTutorClient
+from tutor_sim.adapters.pos_tagger import (
+    PinnedBytes,
+    TreeTaggerProcess,
+    TreeTaggerTokens,
+)
 from tutor_sim.adapters.role_model import (
     EchoRoleModel,
     OllamaRoleModel,
+    PosTaggerPin,
     RoleChatLimits,
     RoleModelfile,
     RoleModelPin,
@@ -100,6 +106,23 @@ class TutorRosterChoice:
         )
         return TutorRoster(
             (diligent, ComplacentTutor(), AbsentTutor(), StoppingTutor(stop_at))
+        )
+
+
+class TaggerChoice:
+    """TreeTagger when a folder is set; its files must match the pin."""
+
+    def choose(self, settings: SimulationSettings) -> TreeTaggerProcess | None:
+        """``None`` without a folder. A file off its pin fails the wiring."""
+        folder = settings.treetagger_dir
+        if folder is None:
+            return None
+        pin = PosTaggerPin(settings.runtime_pin_path)
+        return TreeTaggerProcess(
+            PinnedBytes(folder / "bin" / "tree-tagger", pin.binary_sha256()),
+            PinnedBytes(folder / "english.par", pin.parameter_sha256()),
+            pin.version(),
+            TreeTaggerTokens(),
         )
 
 
@@ -190,5 +213,10 @@ class SimulationCompositionRoot:
         catalogue: tuple[SourceRecord, ...],
     ) -> DatasetBuild:
         return DatasetBuild(
-            fetch, store, catalogue, self._settings.dataset_dir, self._settings.seed
+            fetch,
+            store,
+            catalogue,
+            self._settings.dataset_dir,
+            self._settings.seed,
+            TaggerChoice().choose(self._settings),
         )

@@ -86,7 +86,7 @@ class TestDatasetBuild:
         examples = GrammarExampleMiner(
             FixtureTagger({"cats sit": tagged}, "fixture-1")
         ).mine(item, sentences)
-        documents = KbCorpusBuilder(SimulationNamespace()).build(
+        documents = KbCorpusBuilder(SimulationNamespace(), "custom:gp").build(
             sentences, item, examples
         )
         seeded = KbCorpusBuilder(SimulationNamespace()).default_seed(documents)
