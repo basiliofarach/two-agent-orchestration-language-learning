@@ -539,6 +539,7 @@ One row per intent and variant. This is the single place a label comes from
 | `summary.json` | `RunSummary` | Contract C4: the row `GET /reports/simulation` lists. Written after `report.json`, so a listed run always has its report |
 | `report.json` | `SimulationReport` | Contract C3, served to the dashboard. Carries `licence_status: Literal["confirmed", "pending"]` and `pending_sources: tuple[str, ...]`, computed from the `sources.json` in force **when the report is written** (§5.5) |
 | `transcripts/<episode_id>.jsonl` | `TranscriptTurn` | Tier 2 only: utterance, released text, action |
+| `episodes.jsonl` | `EpisodeLine` | Tier 2 only. One line per episode, appended as each finishes: its `InvariantFacts` and, when the API refused a pupil message, `RejectedPrompt` (`turn_index`, `characters`, `http_status`, `kind`; no message text). The report reads these facts, so an aborted run can be resumed |
 
 A run id is `run-YYYYMMDDTHHMMSS`, with `-2`, `-3` … when a directory
 for that second already exists. No run reuses a directory, so every
@@ -724,7 +725,7 @@ No new working directory is introduced.
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |
 | `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished run: recorded cases are skipped, a cut-off last line is dropped and rerun, and a finished run is refused |
-| `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json` |
+| `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, append `episodes.jsonl` per episode; then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished Tier 2 run the same way `sim-run` does; a run with `report.json` is refused |
 | `make sim-report [SIM_RUN_ID=<run_id>]` | `python -m tutor_sim report` | Score the latest finished Tier 1 run, or the named one, into its own directory: `results.jsonl`, `report.json`, `summary.json`. An unfinished run is refused |
 
 Tier 2 is its own command, not `sim-run TIER=2`: it scores no case
@@ -943,7 +944,13 @@ the `CaseSpec`, not from any model.
 4. **S2** has T4 stop at turn *k*. Expected:
    - every later `POST /turns` returns 422;
    - turns 0 to *k* still read and replay.
-5. Tier 2 records `InvariantRow`s only (§9.6).
+5. A pupil message the API refuses with 422 (for example over the
+   2000-character prompt bound) ends the episode at that turn. It is
+   recorded as `RejectedPrompt` in `episodes.jsonl` and named on stderr;
+   the turn has no observation and no tutor action. Aborting instead would
+   block the campaign for good: at temperature 0 the pupil writes the same
+   message on every rerun. Every other failed call aborts the campaign.
+6. Tier 2 records `InvariantRow`s only (§9.6).
 
 ### 8.4 Results to the dashboard
 

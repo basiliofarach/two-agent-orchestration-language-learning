@@ -3,7 +3,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from tutor_sim.application.oracle import InvariantFacts, OutcomeClassifier
 from tutor_sim.application.tier1 import (
@@ -19,7 +19,11 @@ from tutor_sim.application.tier1 import (
 from tutor_sim.domain.models.api_views import TurnOutcomeView
 from tutor_sim.domain.models.case import EpisodeSpec
 from tutor_sim.domain.models.client_call import ActionCall
-from tutor_sim.domain.models.episode import EpisodeTranscript, EpisodeTurn
+from tutor_sim.domain.models.episode import (
+    EpisodeTranscript,
+    EpisodeTurn,
+    RejectedPrompt,
+)
 from tutor_sim.domain.models.observation import ActionAttempt, Observation
 from tutor_sim.domain.models.tutor_role import DashboardView, TutorDecision
 from tutor_sim.domain.ports.role_model import RoleModelPort
@@ -107,12 +111,31 @@ class TranscriptFile:
 
 
 class EpisodeRecord(BaseModel):
-    """The transcript, and one set of invariant facts per submitted turn."""
+    """The transcript, and one set of invariant facts per submitted turn.
+
+    ``rejected`` is the pupil message the API refused, if one ended the
+    episode.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     transcript: EpisodeTranscript
     facts: tuple[InvariantFacts, ...]
+    rejected: RejectedPrompt | None = None
+
+
+class EpisodeLine(BaseModel):
+    """One finished episode in ``runs/<run_id>/episodes.jsonl``.
+
+    The report reads the facts; a transcript does not carry them. A
+    resumed Tier 2 run keeps these lines and skips their episodes.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    episode_id: str = Field(min_length=1)
+    facts: tuple[InvariantFacts, ...]
+    rejected: RejectedPrompt | None = None
 
 
 class StopCheck(BaseModel):
@@ -142,6 +165,12 @@ class EpisodeRunner:
 
     Only an approve or edit the API accepted counts as released. Every
     turn's ``policy_version`` must be the frozen manifest's, as in Tier 1.
+
+    A pupil message the API refuses with 422 (``session_rejected``: the
+    prompt bound, or a session the API will not take a turn for) ends the
+    episode and is recorded as ``rejected``. At temperature 0 the pupil
+    writes that message again on every rerun, so aborting would block the
+    campaign for good. Every other failed call still aborts.
     """
 
     def __init__(
@@ -192,11 +221,20 @@ class EpisodeRunner:
         turns: list[EpisodeTurn] = []
         observations: list[Observation] = []
         stop: ActionAttempt | None = None
+        rejected: RejectedPrompt | None = None
         prompt = ""
         for index in range(spec.max_turns):
             brief = self._brief.render(released, prompt or None)
             prompt = self._pupil.complete(persona, brief).strip()
             submitted = self._client.submit(session_id, learner_id, prompt, ())
+            if submitted.kind == "session_rejected":
+                rejected = RejectedPrompt(
+                    turn_index=index,
+                    characters=len(prompt),
+                    http_status=submitted.http_status,
+                    kind=submitted.kind,
+                )
+                break
             if submitted.kind != "ok" or submitted.body is None:
                 msg = (
                     "a turn in the episode was not accepted: "
@@ -247,6 +285,7 @@ class EpisodeRunner:
         return EpisodeRecord(
             transcript=transcript,
             facts=self._facts(tuple(observations), check),
+            rejected=rejected,
         )
 
     def _view(self, body: TurnOutcomeView, index: int) -> DashboardView:

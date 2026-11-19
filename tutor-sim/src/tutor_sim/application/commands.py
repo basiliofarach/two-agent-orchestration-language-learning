@@ -4,13 +4,14 @@ build, pupil-messages, freeze, verify, run, episodes and report.
 """
 
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.episode import (
     DuplicateEpisode,
+    EpisodeLine,
     EpisodePlanFile,
     EpisodeRunner,
     TranscriptFile,
@@ -56,7 +57,7 @@ from tutor_sim.application.tier1 import (
     PolicyMismatch,
     Tier1Runner,
 )
-from tutor_sim.domain.models.case import StimulusCase, TopicName
+from tutor_sim.domain.models.case import EpisodeSpec, StimulusCase, TopicName
 from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.manifest import RoleModelPin
 from tutor_sim.domain.models.observation import CampaignLine, Observation
@@ -399,14 +400,23 @@ class CampaignCommands:
             return 1
         manifest = ManifestFile().load(self._root() / tree / "manifest.json")
         runs = RunDirectory(self._settings.evidence_dir)
-        run_id = runs.claim(self._run_id())
+        trail_file = EpisodeTrailFile()
+        opened = self._open_episodes(runs, trail_file, specs)
+        if opened is None:
+            return 1
+        run_id, done = opened
+        trail = runs.path(run_id) / "episodes.jsonl"
         transcripts = TranscriptFile(runs.path(run_id) / "transcripts")
         learners = SimulationNamespace()
         pupil = self._pupil()
-        facts: list[InvariantFacts] = []
-        self._start(len(specs))
+        finished = {line.episode_id for line in done}
+        facts: list[InvariantFacts] = [item for line in done for item in line.facts]
+        refused = sum(1 for line in done if line.rejected is not None)
+        self._start(len(specs), len(done))
         try:
             for spec in specs:
+                if spec.episode_id in finished:
+                    continue
                 runner = EpisodeRunner(
                     tutor,
                     self._roster.role(spec.tutor_role),
@@ -421,7 +431,24 @@ class CampaignCommands:
                     pupil.persona(spec.persona_id),
                     manifest.policy_version,
                 )
+                trail_file.append(
+                    trail,
+                    EpisodeLine(
+                        episode_id=spec.episode_id,
+                        facts=record.facts,
+                        rejected=record.rejected,
+                    ),
+                )
                 facts.extend(record.facts)
+                rejected = record.rejected
+                if rejected is not None:
+                    refused += 1
+                    self._errors.write(
+                        f"tutor_sim: {spec.episode_id} ended at turn "
+                        f"{rejected.turn_index}: the API refused the pupil's "
+                        f"message (HTTP {rejected.http_status} {rejected.kind}, "
+                        f"{rejected.characters} characters)\n"
+                    )
                 self._step(spec.episode_id)
         except (
             CampaignAbort,
@@ -430,6 +457,10 @@ class CampaignCommands:
             UnknownPersona,
         ) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
+            self._errors.write(
+                f"tutor_sim: finished episodes kept in {trail}; "
+                f"resume with SIM_RUN_ID={run_id}\n"
+            )
             return 1
         used: list[str] = []
         for item in facts:
@@ -446,8 +477,53 @@ class CampaignCommands:
             tuple(facts),
         )
         runs.write(report, "2", self._clock.now())
-        self._finish(f"ran {len(specs)} Tier 2 episodes: run {run_id}")
+        self._finish(
+            f"ran {len(specs)} Tier 2 episodes ({refused} ended by a refused "
+            f"message): run {run_id} ({runs.path(run_id)})"
+        )
         return 0
+
+    def _open_episodes(
+        self,
+        runs: RunDirectory,
+        trail_file: "EpisodeTrailFile",
+        specs: tuple[EpisodeSpec, ...],
+    ) -> tuple[str, tuple[EpisodeLine, ...]] | None:
+        """A new run directory, or the named run's finished episodes to skip."""
+        run_id = self._settings.run_id
+        if run_id is None:
+            claimed = runs.claim(self._run_id())
+            trail_file.write(runs.path(claimed) / "episodes.jsonl", ())
+            return (claimed, ())
+        trail = runs.path(run_id) / "episodes.jsonl"
+        if (runs.path(run_id) / "report.json").is_file():
+            self._errors.write(f"tutor_sim: run {run_id} already finished\n")
+            return None
+        if not trail.is_file():
+            self._errors.write(f"tutor_sim: run {run_id} has no episodes to resume\n")
+            return None
+        try:
+            recovered = trail_file.recover(trail)
+        except DamagedCampaign:
+            self._errors.write(f"tutor_sim: run {run_id} has a damaged episode line\n")
+            return None
+        planned = {spec.episode_id for spec in specs}
+        for line in recovered.lines:
+            if line.episode_id not in planned:
+                self._errors.write(
+                    f"tutor_sim: {line.episode_id} is not in the frozen episode plan\n"
+                )
+                return None
+        if recovered.dropped:
+            self._errors.write(
+                f"tutor_sim: run {run_id}: dropped an unfinished last line; "
+                "that episode runs again\n"
+            )
+        self._errors.write(
+            f"tutor_sim: resuming {run_id}: {len(recovered.lines)} of "
+            f"{len(specs)} episodes already recorded\n"
+        )
+        return (run_id, recovered.lines)
 
     def _report(self) -> int:
         tree = self._verified()
@@ -550,8 +626,39 @@ class CampaignCommands:
         return None
 
 
+_Line = TypeVar("_Line", bound=BaseModel)
+
+
 class JsonlFile:
     """One JSON object per line. An empty sequence writes an empty file."""
+
+    def _recover(
+        self, path: Path, model: type[_Line]
+    ) -> tuple[tuple[_Line, ...], bool]:
+        """Every complete line, and whether a cut-off last line was dropped.
+
+        A process killed mid-write leaves a last line with no newline. That
+        line is dropped and the file rewritten, so its unit runs again. Any
+        other line that does not parse is damage, not an interruption.
+        """
+        text = path.read_text(encoding="utf-8")
+        raw = text.split("\n")
+        tail = raw.pop()
+        lines: list[_Line] = []
+        for item in raw:
+            if not item:
+                continue
+            try:
+                lines.append(model.model_validate_json(item))
+            except ValidationError as exc:
+                raise DamagedCampaign(path.name) from exc
+        if tail:
+            self._write(path, tuple(line.model_dump_json() for line in lines))
+        return (tuple(lines), bool(tail))
+
+    def _append(self, path: Path, line: BaseModel) -> None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line.model_dump_json() + "\n")
 
     def _write(self, path: Path, lines: tuple[str, ...]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -566,7 +673,10 @@ class JsonlFile:
 
 
 class DamagedCampaign(Exception):
-    """A campaign line other than an unfinished last one does not parse."""
+    """A trail line other than an unfinished last one does not parse.
+
+    Either trail: Tier 1's ``campaign.jsonl`` or Tier 2's ``episodes.jsonl``.
+    """
 
 
 class RecoveredCampaign(BaseModel):
@@ -586,37 +696,45 @@ class CampaignFile(JsonlFile):
         self._write(path, tuple(row.model_dump_json() for row in rows))
 
     def recover(self, path: Path) -> RecoveredCampaign:
-        """Read a run's lines to resume it.
-
-        A process killed mid-write leaves a last line with no newline. That
-        line is dropped and the file rewritten, so its case runs again. Any
-        other line that does not parse is damage, not an interruption.
-        """
-        text = path.read_text(encoding="utf-8")
-        raw = text.split("\n")
-        tail = raw.pop()
-        lines: list[CampaignLine] = []
-        for item in raw:
-            if not item:
-                continue
-            try:
-                lines.append(CampaignLine.model_validate_json(item))
-            except ValidationError as exc:
-                raise DamagedCampaign(path.name) from exc
-        if tail:
-            self.write(path, tuple(lines))
-        return RecoveredCampaign(lines=tuple(lines), dropped=bool(tail))
+        """Read a run's lines to resume it. A cut-off last case runs again."""
+        lines, dropped = self._recover(path, CampaignLine)
+        return RecoveredCampaign(lines=lines, dropped=dropped)
 
     def append(self, path: Path, row: CampaignLine) -> None:
         """Add one finished case, so an aborted run keeps what it ran."""
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(row.model_dump_json() + "\n")
+        self._append(path, row)
 
     def read(self, path: Path) -> tuple[CampaignLine, ...]:
         """The lines a report scores. A missing file is a command error."""
         return tuple(
             CampaignLine.model_validate_json(line) for line in self._read(path)
         )
+
+
+class RecoveredEpisodes(BaseModel):
+    """The episodes a resumed Tier 2 run keeps, and whether one was cut off."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    lines: tuple[EpisodeLine, ...]
+    dropped: bool
+
+
+class EpisodeTrailFile(JsonlFile):
+    """``episodes.jsonl``: one ``EpisodeLine`` per finished episode."""
+
+    def write(self, path: Path, rows: tuple[EpisodeLine, ...]) -> None:
+        """Replace the file with one line per episode."""
+        self._write(path, tuple(row.model_dump_json() for row in rows))
+
+    def recover(self, path: Path) -> RecoveredEpisodes:
+        """Read a run's episodes to resume it. A cut-off last one runs again."""
+        lines, dropped = self._recover(path, EpisodeLine)
+        return RecoveredEpisodes(lines=lines, dropped=dropped)
+
+    def append(self, path: Path, row: EpisodeLine) -> None:
+        """Add one finished episode, so an aborted run keeps what it ran."""
+        self._append(path, row)
 
 
 class ObservationFile(JsonlFile):
