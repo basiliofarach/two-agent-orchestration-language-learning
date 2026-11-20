@@ -77,7 +77,29 @@ the knowledge base needs no level estimation of its own.
 | Source | Licence | Use | Notes |
 | --- | --- | --- | --- |
 | **CEFR-SP** (Arase, Uchida & Kajiwara 2022), sentence-level CEFR labels from two English-education professionals | Wiki-Auto subset: CC BY-SA 3.0. SCoRE subset: CC BY-NC-SA 4.0. Newsela-Auto subset: not used (needs Newsela access) | Level-labelled example sentences, A1–B2, as KB passages | Only sentences where **both annotators agree** are admitted: A1 124, A2 723, B1 1,601, B2 1,227 (counted 2026-11-03). SCoRE is strongest at A1–A2 (teaching sentences); Wiki-Auto at A2–B2 |
-| **CEFR-J Grammar Profile** (Tono lab, full data 2025-02-25) | Not stated on cefr-j.org; only the Wordlist's terms are. Enters as `licence_review: pending` | The grammar inventory: 256 items with a CEFR-J level (A1.1–B2.2) in the teachers' sheet; 501 item variants with an extraction regex | Gives item names, patterns and levels, **but no example sentences and no explanations**. Examples are drawn from CEFR-SP (below) |
+| **CEFR-J Grammar Profile** (Tono lab, full data 2025-02-25) | Not stated on cefr-j.org. Written permission from Tono Laboratory by email, 2026-11-18: `licence_review: confirmed`, not redistributable (restricted tree) | The grammar inventory: 256 items with a CEFR-J level (A1.1–B2.2) in the teachers' sheet; 501 item variants with an extraction regex | Gives item names, patterns and levels, **but no example sentences and no explanations**. Examples are drawn from CEFR-SP (below) |
+
+**The Grammar Profile's terms were confirmed on 2026-11-18** (written
+permission from Tono Laboratory, recorded in `sources.json`). Until then,
+`build` ingested CEFR-SP only: eight sentence documents plus the fault
+partition, with benign intents on `cefr-sp-<subset>-<level>` topics. The
+runs made in that state (`run-20261118T*`) are kept. A build whose
+catalogue lists the Profile now needs TreeTagger (`SIM_TREETAGGER_DIR`,
+pinned in `config/runtime.toml` `[pos_tagger]`) and fails without it.
+Benign intents then target `gp-*` topics at each level that has grammar
+items, and fall back to sentence topics where a level has none. The plan
+carries each item's name (`RealisePlan.topics`), and the pupil prompt adds
+"The grammar point is:" followed by the name, so the pupil asks about
+that item in its own words. A sentence topic has no name and adds
+nothing.
+
+The teachers' sheet gives some levels as a range (`A1.1-A1.2`,
+`A2.2-B1.1`). An item's band is the band of the first level in its range:
+where it starts being taught. The Profile's regexes are written for Perl;
+`PerlRegex` rewrites `\K`, `(?<name>…)` and `\g{name}` into Python
+syntax with the same yes/no answer. A pattern shorthand with Japanese
+placeholders is left out of the document text; the item name and level
+are always kept.
 
 Each grammar item becomes one KB document, assembled from the two datasets
 by rule:
@@ -102,9 +124,10 @@ one sentence per passage.
 on TreeTagger output (`word_TAG_lemma`), not on plain text. TreeTagger is
 "freely available for research, education and evaluation", and commercial
 use needs a licence from the developer. It is a build-time tool on the
-harness side, never part of the system under test, and enters as
-`licence_review: pending`. It is also used for one measure: whether a
-generated exercise contains its target structure (SIMULATION §9.5).
+harness side, never part of the system under test. Its terms were read
+(`licence_review: confirmed`, 2026-11-17); the binary is not
+redistributed. It is also used for one measure: whether a generated
+exercise contains its target structure (SIMULATION §9.5).
 
 Each KB document records `source_uri`, `version`, `review_status` (REQ-KB),
 **plus** `licence`, `cefr_level` and `level_method`. The last three are
@@ -160,7 +183,7 @@ stress runs:
 | ELLIPSE corpus (Crossley et al. 2023) | CC BY 4.0, direct download | Few-shot examples of authentic writing by US grade 8–12 English learners, picked by score band | CEFR placement (no CEFR labels); L1 (no L1 field) |
 | FCE v2.1 (Yannakoudakis et al. 2011) | Non-commercial research licence, accepted on download | Aggregate error-type profiles by L1 and age band. Spanish is the largest L1; 214 answers fall in the 0–16 age band | Copying learner text into the repository |
 | W&I+LOCNESS v2.1 (Bryant et al. 2019) | Non-commercial research licence; excerpts under 100 words | Error-type profiles per CEFR band (A/B/C) | L1 or age (neither field exists) |
-| TSCC v2 (Caines et al. 2022) | **Unverified**: requested through a form | Optional: register of real one-to-one ESL tutoring chat (learners aged 12–40, Spanish among the L1s) | Anything, until the licence is read |
+| TSCC v2 (Caines et al. 2022) | Non-commercial research and education licence, received with the corpus; excerpts under 100 words; no de-anonymisation | Optional: register of real one-to-one ESL tutoring chat (learners aged 12–40, Spanish among the L1s) | Copying lesson text into the repository |
 
 **Not used:**
 
@@ -222,7 +245,7 @@ A persona card holds:
 | `age`, `cefr_level`, `l1`, `traits` | Grid values above |
 | `interests` | Two or three age-appropriate topics, used only to colour the pupil's wording. Benign requests target a **grammar item** at or below the persona's level, so retrieval always has a document to find |
 | `error_profile` | Top error types and relative frequencies for the persona's level and L1, taken from the FCE / W&I+LOCNESS aggregates |
-| `system_prompt` | A filled template: role, age, level, L1, traits, error profile, the instruction to stay in role, and the instruction to plant a given payload verbatim |
+| `system_prompt` | The card's opening line. `PupilPrompt` adds age, level, L1, length (from verbosity), error profile, interests, the rule to write only the pupil's message, and the learner few-shot lines |
 | `few_shot` | Three to five example turns. ELLIPSE excerpts (CC BY 4.0, attributed) by score band, plus author-written chat-style turns showing the error profile |
 | `grounding` | The source and licence of every example and statistic used |
 
@@ -327,11 +350,21 @@ today.
 
 ### 4.1 Construction check
 
-After the pupil model writes an utterance for a payload intent, the harness
-checks that the payload appears verbatim. If not, it regenerates, up to
-three attempts, and otherwise discards the case and logs the discard. **The
-discard rate per persona is reported.** It is a direct, judge-free measure
-of how well the role is followed.
+For a payload intent the pupil model sees the payload as context and writes
+only the pupil's own lead-in. The harness then appends the payload bytes
+unchanged, after a blank line. If the lead-in already contains the payload,
+nothing is appended. `construction.payload_placement` records which happened
+(`copied`, `appended`, or `none`), and the harness then checks that the
+payload appears verbatim.
+
+The model is not asked to copy the payload itself. In a pilot on the role
+model, a pupil persona at A1–B2 rewrote the payload into its own level of
+English in five of seven payload intents, so the label would have depended
+on the model's copying, not on the case plan.
+
+There is one attempt: decoding is at temperature 0, so a retry with the same
+prompt returns the same reply. A blank reply is discarded and logged. **The
+discard rate per persona is reported.**
 
 ### 4.2 L1 strata
 

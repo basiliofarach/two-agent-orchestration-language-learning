@@ -256,14 +256,14 @@ class TestCli:
         root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, True))
         assert SimulationCli(root, io.StringIO()).main(["publish"]) == 2
 
-    @pytest.mark.parametrize("command", ["build"])
-    def test_an_unimplemented_command_wires_the_harness_and_fails(
-        self, tmp_path: Path, command: str
+    @pytest.mark.parametrize("offline", [True, False])
+    def test_build_is_wired_and_names_a_missing_source(
+        self, tmp_path: Path, offline: bool
     ) -> None:
-        root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, True))
+        root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, offline))
         errors = io.StringIO()
-        assert SimulationCli(root, errors).main([command]) == 1
-        assert f"{command} is not implemented" in errors.getvalue()
+        assert SimulationCli(root, errors).main(["build"]) == 1
+        assert "cefr-sp-wiki-auto is not in sources.json" in errors.getvalue()
 
 
 class TestModuleMain:

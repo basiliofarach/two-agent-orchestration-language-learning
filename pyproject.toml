@@ -56,11 +56,12 @@ addopts = [
     "--cov-report=term-missing",
     # Starts the real sandbox compose project; `make sandbox-lifecycle` runs it.
     "-m",
-    "not sandbox_lifecycle",
+    "not sandbox_lifecycle and not requires_treetagger",
 ]
 asyncio_mode = "auto"
 markers = [
     "requires_ollama: reaches the local Ollama runtime (skipped if unavailable)",
+    "requires_treetagger: runs the local TreeTagger binary; run with -m requires_treetagger",
     "sandbox_lifecycle: starts the throwaway compose project; only make sandbox-lifecycle runs it",
 ]
 filterwarnings = [

@@ -593,13 +593,13 @@ class TestEpisodeRunner:
     @pytest.mark.parametrize(
         ("failing", "message"),
         [
-            ("learners", "roster could not be read"),
-            ("open", "did not open"),
-            ("submit", "was not accepted"),
-            ("act", "was not recorded"),
-            ("detail", "could not be read"),
-            ("replay", "could not be replayed"),
-            ("audit", "audit could not be read"),
+            ("learners", "roster could not be read: HTTP 503 errored"),
+            ("open", "did not open: HTTP 503 errored"),
+            ("submit", "was not accepted: HTTP 503 errored"),
+            ("act", "was not recorded: HTTP 503 errored"),
+            ("detail", "could not be read: HTTP 503 errored"),
+            ("replay", "could not be replayed: HTTP 503 errored"),
+            ("audit", "audit could not be read: HTTP 503 errored"),
         ],
     )
     def test_a_failed_call_while_the_episode_runs_aborts_it(

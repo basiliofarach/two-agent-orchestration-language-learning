@@ -12,3 +12,20 @@ weights_sha = "a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"
 # Upstream Hugging Face commit for Qwen/Qwen3-8B.
 huggingface_commit = "b968826d9c46dd6066d109eabc6255188de91218"
 ollama_version = "0.34.2"
+
+[role_model]
+# Ollama weights blob for the role-agent model (virtual pupils, T1 tutor).
+# Different family from [model] (DEC-0015). Hex SHA only — never a tag.
+# Mistral 7B, Q4_K_M; Ollama reports its architecture as "llama".
+weights_sha = "f5074b1221da0f5a2910d33b642efa5b9eb58cfdddca1c79e16d7ad28aa2b31f"
+family = "mistral"
+licence = "Apache-2.0"
+
+[pos_tagger]
+# TreeTagger, build time only: it tags CEFR-SP sentences so the Grammar
+# Profile's regexes can pick example sentences (DATASET §3.1). Never part
+# of the system under test. Apple Silicon build and the English parameter
+# file, from https://www.cis.uni-muenchen.de/~schmid/tools/TreeTagger/.
+version = "3.2.3"
+binary_sha256 = "913ee8ddea42734a8ccc6aaa6006344c66f0b2580cb848ca85f626b4a72a350e"
+parameter_file_sha256 = "4d7aac9f6108bacbf7443d2bb695d6585515c0123f2f2db9e97cfeab10567b58"

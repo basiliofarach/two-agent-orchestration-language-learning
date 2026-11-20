@@ -1,0 +1,7 @@
+{
+  "role": "T3",
+  "driver": "script",
+  "system_prompt": null,
+  "few_shot": [],
+  "stop_at_turn": null
+}

@@ -1,5 +1,7 @@
 {
   "source_id": "cefr-sp-wiki-auto",
-  "digest_scope": "pin-file",
-  "note": "The sha256 in sources.json is the digest of this pin file, not of a fetched artefact. A later build replaces it with the artefact digest."
+  "digest_scope": "artefact",
+  "artefact": "cefr-sp-2ba4a50.tar.gz",
+  "bytes": 309110,
+  "note": "The sha256 in sources.json is the digest of the fetched artefact. The build checks it on every read."
 }

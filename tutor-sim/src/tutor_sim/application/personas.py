@@ -15,7 +15,7 @@ from tutor_sim.domain.models.tutor_role import TutorRoleCard
 _LEVELS: tuple[PupilLevel, ...] = ("A1", "A2", "B1", "B2")
 _L1 = ("es", "ot")
 _AGES: tuple[tuple[int, AgeBand], ...] = ((13, "12-14"), (16, "15-17"))
-_CARD = "1"
+_CARD = "2"
 
 
 class ErrorProfileLoader:
@@ -69,8 +69,8 @@ class PersonaCardBuilder:
             interests=("music", "sport"),
             error_profile=profile,
             system_prompt=(
-                f"You are a {age}-year-old {level} learner whose first language "
-                f"group is {l1}. Stay in role. Copy a payload verbatim."
+                f"You are a {age}-year-old school pupil learning English with an "
+                "online tutor. You write the messages a pupil sends."
             ),
             few_shot=(
                 FewShotTurn(

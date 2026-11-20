@@ -10,7 +10,7 @@ import asyncio
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal, TypeVar, cast
+from typing import Literal, TextIO, TypeVar, cast
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -180,8 +180,62 @@ class SeedTally(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     documents: int = 0
+    passages: int = 0
+    present: int = 0
     learners: int = 0
     events: int = 0
+
+    def line(self) -> str:
+        """The completed log line the operator sees."""
+        return (
+            f"seeded {self.documents} documents ({self.passages} passages, "
+            f"each embedded), {self.learners} learners, {self.events} history "
+            f"events; {self.present} documents were already present"
+        )
+
+
+class SeedProgress:
+    """A one-line bar of embedded passages. Silent when the stream is not a TTY.
+
+    The stream is injected, so a test reads what an operator would see.
+    """
+
+    def __init__(self, stream: TextIO, width: int = 30) -> None:
+        self._stream = stream
+        self._width = width
+        self._total = 0
+        self._done = 0
+        self._live = stream.isatty()
+
+    def start(self, total: int) -> None:
+        """The number of passages this run may embed."""
+        self._total = total
+        self._done = 0
+
+    def working(self, label: str) -> None:
+        """Show which document is being embedded now."""
+        self._draw(f"embedding {label}")
+
+    def advance(self, passages: int) -> None:
+        """Count a document's passages as done."""
+        self._done += passages
+        self._draw("")
+
+    def close(self) -> None:
+        """End the bar's line so the summary starts on its own."""
+        if self._live and self._total:
+            self._stream.write("\n")
+            self._stream.flush()
+
+    def _draw(self, label: str) -> None:
+        if not self._live or not self._total:
+            return
+        filled = self._width * self._done // self._total
+        bar = "#" * filled + "-" * (self._width - filled)
+        percent = 100 * self._done // self._total
+        line = f"\r  [{bar}] {percent:3d}% {self._done}/{self._total} {label}"
+        self._stream.write(line.ljust(100)[:100])
+        self._stream.flush()
 
 
 class IngestCatalogue(TransactionalWork):
@@ -194,12 +248,14 @@ class IngestCatalogue(TransactionalWork):
         cipher: CipherPort,
         clock: ClockPort,
         tally: SeedTally,
+        progress: SeedProgress | None = None,
     ) -> None:
         self._documents = documents
         self._learners = learners
         self._cipher = cipher
         self._clock = clock
         self._tally = tally
+        self._progress = progress
         self._when = HistoryInstants(clock)
         self._ids = EventIdentity()
 
@@ -209,13 +265,22 @@ class IngestCatalogue(TransactionalWork):
         await self._learners_of(connection)
 
     async def _documents_of(self, connection: TransactionConnection) -> None:
-        for document in self._documents:
+        splitter = PassageSplitter()
+        sizes = [len(splitter.split(document.content)) for document in self._documents]
+        if self._progress is not None:
+            self._progress.start(sum(sizes))
+        for document, size in zip(self._documents, sizes, strict=True):
             row = await connection.fetch_one(
                 "SELECT 1 FROM kb_document WHERE id = :id",
                 {"id": document.document_id},
             )
             if row is not None:
+                self._tally.present += 1
+                if self._progress is not None:
+                    self._progress.advance(size)
                 continue
+            if self._progress is not None:
+                self._progress.working(document.source_uri)
             ingestion = PostgresCorpusIngestion(
                 connection,
                 LocalEmbedding(BaseSchema().embedding_dimensions()),
@@ -226,6 +291,11 @@ class IngestCatalogue(TransactionalWork):
             )
             await ingestion.ingest(document.corpus())
             self._tally.documents += 1
+            self._tally.passages += size
+            if self._progress is not None:
+                self._progress.advance(size)
+        if self._progress is not None:
+            self._progress.close()
 
     async def _learners_of(self, connection: TransactionConnection) -> None:
         now = self._clock.now()
@@ -300,6 +370,7 @@ class SimulationSeed:
         documents: tuple[SeedDocument, ...],
         learners: tuple[SeedLearner, ...],
         threshold: float,
+        progress: SeedProgress | None = None,
     ) -> SeedTally:
         """Insert what is missing. The tally counts only this call."""
         cipher = cast(CipherPort, self._container.resolve(CipherPort))
@@ -310,7 +381,9 @@ class SimulationSeed:
         if not found[0]:
             await self._unit(PublishPolicy(plan, cipher, clock))
         tally = SeedTally()
-        await self._unit(IngestCatalogue(documents, learners, cipher, clock, tally))
+        await self._unit(
+            IngestCatalogue(documents, learners, cipher, clock, tally, progress)
+        )
         return tally
 
     async def _unit(self, work: TransactionalWork) -> None:
@@ -327,6 +400,7 @@ class SimulationSeedMain:
         learners: tuple[SeedLearner, ...],
         stress: bool = False,
         role: str = "owner",
+        progress: SeedProgress | None = None,
     ) -> SeedTally:
         """Seed and return the tally. The request role never opens a connection."""
         OperatorRole().require_owner(role)
@@ -342,7 +416,7 @@ class SimulationSeedMain:
         engine = DatabaseEngine(owner)
         try:
             return await SimulationSeed(engine, container).apply(
-                selected, learners, threshold
+                selected, learners, threshold, progress
             )
         finally:
             await engine.dispose()
@@ -364,18 +438,23 @@ class SeedProcess:
         return stress, Path(args[0]), Path(args[1])
 
 
-def main(argv: list[str], settings: ApplicationSettings) -> int:
-    """Load the two files and seed. Returns a process status."""
+def main(
+    argv: list[str], settings: ApplicationSettings, stream: TextIO | None = None
+) -> int:
+    """Load the two files and seed. Progress and the summary go to ``stream``."""
+    output = sys.stderr if stream is None else stream
     stress, documents, learners = SeedProcess().arguments(argv)
     loaded_documents = JsonlFile().documents(documents)
     loaded_learners = JsonlFile().learners(learners)
+    progress = SeedProgress(output)
 
-    async def _run() -> None:
-        await SimulationSeedMain().run(
-            settings, loaded_documents, loaded_learners, stress, "owner"
+    async def _run() -> SeedTally:
+        return await SimulationSeedMain().run(
+            settings, loaded_documents, loaded_learners, stress, "owner", progress
         )
 
-    asyncio.run(_run())
+    tally = asyncio.run(_run())
+    output.write(tally.line() + "\n")
     return 0
 
 

@@ -4,8 +4,10 @@ import ipaddress
 from pathlib import Path
 from urllib import parse
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from tutor_sim.domain.models.observation import RunId
 
 
 class LoopbackOllamaUrl:
@@ -48,6 +50,10 @@ class SimulationSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="SIM_", extra="ignore")
 
     api_base_url: str = "http://127.0.0.1:8000"
+    # A turn waits on the local model. httpx's 5 s default timed turns out.
+    api_timeout_seconds: float = Field(default=600.0, gt=0)
+    # ``report`` scores this Tier 1 run; unset scores the latest finished one.
+    run_id: RunId | None = None
     dataset_dir: Path = Path("datasets/sim/unreleased")
     evidence_dir: Path = Path("evidence")
     ollama_base_url: str = "http://127.0.0.1:11434"
@@ -58,6 +64,9 @@ class SimulationSettings(BaseSettings):
     # Echo copies the prompt. It is a test double, not a campaign model.
     role_fixture: bool = False
     sources_path: Path = Path("datasets/sim/unreleased/public/sources.json")
+    # TreeTagger's folder (``bin/tree-tagger``, ``english.par``). Only
+    # ``build`` uses it, to find Grammar Profile examples (DATASET §3.1).
+    treetagger_dir: Path | None = None
 
     @field_validator("ollama_base_url")
     @classmethod

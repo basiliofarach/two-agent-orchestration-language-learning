@@ -65,7 +65,8 @@ class AuditRecordHash:
         keeps the digest of a record sealed before gate rows existed.
         ``history_snapshot``, ``prompt_safety_flags`` and ``context_digest``
         are covered when present and omitted when ``None``, for the same
-        reason.
+        reason. ``decoding_params.think`` is omitted when ``None``, and
+        ``source_support.altered`` when empty, for the same reason.
 
         The prompt is written as the two fields the historical digest
         covered, ``learner_prompt_redacted`` and ``redacted_categories``.
@@ -87,6 +88,14 @@ class AuditRecordHash:
         if record.context_digest is None:
             # Rows sealed before the context digest hashed no such key.
             del payload["context_digest"]
+        support = payload.get("source_support")
+        if isinstance(support, dict) and not support.get("altered"):
+            # Rows sealed before altered spans were recorded hashed no such key.
+            support.pop("altered", None)
+        decoding = payload.get("decoding_params")
+        if isinstance(decoding, dict) and decoding.get("think") is None:
+            # Rows sealed before the thinking mode was recorded hashed no such key.
+            del decoding["think"]
         prompt = HistoricalPrompt.from_stored(record.learner_prompt)
         payload.update(prompt.model_dump(mode="json"))
         return json.dumps(

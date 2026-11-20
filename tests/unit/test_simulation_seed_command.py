@@ -1,5 +1,6 @@
 """The simulation seed refuses the request role and keeps the fault partition out."""
 
+import io
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -14,6 +15,8 @@ from tutor_api.curation.simulation_seed import (
     SeedDocument,
     SeedLearner,
     SeedProcess,
+    SeedProgress,
+    SeedTally,
     SimulationSeedMain,
 )
 from tutor_api.settings import ApplicationSettings
@@ -54,6 +57,53 @@ class Catalogue:
                 "proficiency_level": "A1",
                 "history": events,
             }
+        )
+
+
+class Terminal(io.StringIO):
+    """A stream that says it is a terminal, so the bar draws."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+class TestSeedProgress:
+    def test_a_terminal_sees_the_bar_fill_and_name_the_document(self) -> None:
+        stream = Terminal()
+        progress = SeedProgress(stream, width=10)
+        progress.start(4)
+        progress.working("kb://cefr-sp/score/A1")
+        progress.advance(1)
+        progress.advance(3)
+        progress.close()
+        text = stream.getvalue()
+        assert "[----------]   0% 0/4 embedding kb://cefr-sp/score/A1" in text
+        assert "[##--------]  25% 1/4" in text
+        assert "[##########] 100% 4/4" in text
+        assert text.endswith("\n")
+
+    def test_a_redirected_stream_gets_no_bar(self) -> None:
+        stream = io.StringIO()
+        progress = SeedProgress(stream)
+        progress.start(4)
+        progress.working("kb://x")
+        progress.advance(4)
+        progress.close()
+        assert stream.getvalue() == ""
+
+    def test_nothing_to_embed_draws_nothing(self) -> None:
+        stream = Terminal()
+        progress = SeedProgress(stream)
+        progress.start(0)
+        progress.working("kb://x")
+        progress.close()
+        assert stream.getvalue() == ""
+
+    def test_the_summary_names_every_count(self) -> None:
+        tally = SeedTally(documents=8, passages=3675, present=0, learners=16, events=16)
+        assert tally.line() == (
+            "seeded 8 documents (3675 passages, each embedded), 16 learners, "
+            "16 history events; 0 documents were already present"
         )
 
 

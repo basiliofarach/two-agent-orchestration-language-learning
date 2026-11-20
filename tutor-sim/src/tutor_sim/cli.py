@@ -8,14 +8,14 @@ _USAGE = 2
 
 
 class SimulationCli:
-    """``build | realise | freeze | verify | run | episodes | report``.
+    """``build | pupil-messages | freeze | verify | run | episodes | report``.
 
     A known command wires the harness, so a configuration fault surfaces now.
     ``build`` still fails: an exit of 0 would read as a finished fetch.
     """
 
     _COMMANDS = frozenset(
-        {"build", "realise", "freeze", "verify", "run", "episodes", "report"}
+        {"build", "pupil-messages", "freeze", "verify", "run", "episodes", "report"}
     )
 
     def __init__(self, root: SimulationCompositionRoot, errors: TextIO) -> None:

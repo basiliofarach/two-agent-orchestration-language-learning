@@ -1,4 +1,9 @@
-"""Reach Ollama only when the local runtime is up (DEC-0007)."""
+"""Reach Ollama only when the local runtime is up (DEC-0007).
+
+The pin is the weights blob. ``/api/tags`` reports manifest digests, which
+are not the weights, so the check reads each model's modelfile through the
+same endpoint and resolver the API uses.
+"""
 
 from __future__ import annotations
 
@@ -9,15 +14,20 @@ import urllib.request
 import pytest
 from tests.support.runtime_pin import RuntimePin
 
+from tutor_api.adapters.llm.ollama import (
+    ModelfileWeights,
+    PinnedModelName,
+    UrllibOllamaEndpoint,
+)
+
+_BASE = "http://127.0.0.1:11434"
+
 
 class OllamaRuntime:
-    """Minimal client for the local Ollama HTTP API."""
-
-    def __init__(self, base_url: str = "http://127.0.0.1:11434") -> None:
-        self._base_url = base_url
+    """Whether the local runtime answers at all."""
 
     def is_reachable(self) -> bool:
-        request = urllib.request.Request(f"{self._base_url}/api/tags", method="GET")
+        request = urllib.request.Request(f"{_BASE}/api/tags", method="GET")
         try:
             with urllib.request.urlopen(request, timeout=2) as response:
                 return response.status == 200
@@ -25,7 +35,8 @@ class OllamaRuntime:
             return False
 
     def tags_body(self) -> dict[str, object]:
-        request = urllib.request.Request(f"{self._base_url}/api/tags", method="GET")
+        """The raw ``/api/tags`` body. Other live tests list names from it."""
+        request = urllib.request.Request(f"{_BASE}/api/tags", method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:
             payload: object = json.loads(response.read().decode("utf-8"))
         if not isinstance(payload, dict):
@@ -36,17 +47,9 @@ class OllamaRuntime:
 class TestPinnedOllamaRevision:
     @pytest.mark.requires_ollama
     def test_runtime_revision_matches_pin(self) -> None:
-        runtime = OllamaRuntime()
-        if not runtime.is_reachable():
+        if not OllamaRuntime().is_reachable():
             pytest.skip("Ollama is not running on localhost:11434")
-        pin = RuntimePin().weights_sha()
-        body = runtime.tags_body()
-        models = body.get("models", [])
-        if not isinstance(models, list):
-            raise TypeError("models must be a list")
-        digests = []
-        for model in models:
-            if isinstance(model, dict) and isinstance(model.get("digest"), str):
-                digests.append(model["digest"])
-        combined = " ".join(digests)
-        assert pin in combined
+        endpoint = UrllibOllamaEndpoint(_BASE, ModelfileWeights())
+        weights = tuple((name, endpoint.weights(name)) for name in endpoint.names())
+        name = PinnedModelName().resolve(RuntimePin().weights_sha(), weights)
+        assert name

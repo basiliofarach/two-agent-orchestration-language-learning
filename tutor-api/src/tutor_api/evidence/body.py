@@ -46,6 +46,7 @@ class DecodingExcerpt(BaseModel):
     temperature: float = Field(ge=0.0)
     top_p: float = Field(ge=0.0, le=1.0)
     max_tokens: int = Field(ge=1)
+    think: bool | None = None
 
 
 class GateExcerpt(BaseModel):

@@ -25,8 +25,8 @@ class DriftAnomalyGate(OversightGatePort):
 
     1. No retrieval or no generated unit on the turn: ``stop``.
     2. Retrieval confidence below its floor, source support below its
-       floor, a draft longer than the maximum, or more grammar findings
-       than allowed: ``pause``.
+       floor, a draft longer than the maximum, more grammar findings than
+       allowed, or more altered vetted sentences than allowed: ``pause``.
     3. The session already holds ``max_flagged_prompts`` high-severity
        prompts; or, once it has ``min_prior_turns`` drafts, this draft's
        support falls more than ``max_support_drop`` below the session
@@ -79,6 +79,10 @@ class DriftAnomalyGate(OversightGatePort):
             or generated.support.support_ratio < envelope.min_support_ratio
             or len(generated.output_after_checks) > envelope.max_output_characters
             or len(generated.grammar) > envelope.max_grammar_findings
+            or (
+                envelope.max_altered_claims is not None
+                and len(generated.support.altered) > envelope.max_altered_claims
+            )
         )
         if outside:
             return self._citation.cite(

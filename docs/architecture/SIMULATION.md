@@ -176,7 +176,7 @@ tutor-sim/
     │                           # AbsentTutor, StopperTutor
     ├── composition.py          # SimulationCompositionRoot (rule 3)
     ├── settings.py             # SimulationSettings (pydantic-settings)
-    └── __main__.py             # CLI: build | realise | freeze | verify |
+    └── __main__.py             # CLI: build | pupil-messages | freeze | verify |
                                 #      run | episodes | report
 ```
 
@@ -496,7 +496,8 @@ response.
 `StimulusCase` is a `CaseSpec` plus:
 
 - `utterance: str`
-- `construction`: `payload_present`, `attempts`, `discarded`
+- `construction`: `payload_present`, `attempts`, `discarded`,
+  `payload_placement` (`copied`, `appended` or `none`)
 - `generator`: role-model weights SHA, `seed`, `temperature`,
   `template_version`, `card_version`
 
@@ -532,11 +533,18 @@ One row per intent and variant. This is the single place a label comes from
 | File | Record | Content |
 | --- | --- | --- |
 | `run.json` | `RunHeader` | `run_id`, `dataset_version`, `manifest_sha256`, `tier`, tutor roles, API base URL, observed `policy_version`, observed system `model_revision`, role-model SHA, `started_at`, `finished_at` |
-| `observations.jsonl` | `Observation` | One per case or episode turn (§9.1). It stores no learner text: only booleans, counts, ids, gate rows and `LeakHit` (`field`, `payload_id`) |
+| `campaign.jsonl` | `CampaignLine` | Tier 1 only. One line per case, appended as each case finishes, so an aborted run keeps the cases it ran. An errored case carries `CaseFailure` (`step`, `http_status`, `kind`); no response text, because a 422 can echo the utterance |
+| `observations.jsonl` | `Observation` | One per case or episode turn (§9.1). It stores no learner text: only booleans, counts, ids, gate rows and `LeakHit` (`field`, `payload_id`). Written only when the run finishes, so its absence marks an aborted run |
 | `results.jsonl` | `CaseResult` | Comparison per case (§9.3) |
 | `summary.json` | `RunSummary` | Contract C4: the row `GET /reports/simulation` lists. Written after `report.json`, so a listed run always has its report |
 | `report.json` | `SimulationReport` | Contract C3, served to the dashboard. Carries `licence_status: Literal["confirmed", "pending"]` and `pending_sources: tuple[str, ...]`, computed from the `sources.json` in force **when the report is written** (§5.5) |
 | `transcripts/<episode_id>.jsonl` | `TranscriptTurn` | Tier 2 only: utterance, released text, action |
+| `episodes.jsonl` | `EpisodeLine` | Tier 2 only. One line per episode, appended as each finishes: its `InvariantFacts` and, when the API refused a pupil message, `RejectedPrompt` (`turn_index`, `characters`, `http_status`, `kind`; no message text). The report reads these facts, so an aborted run can be resumed |
+
+A run id is `run-YYYYMMDDTHHMMSS`, with `-2`, `-3` … when a directory
+for that second already exists. No run reuses a directory, so every
+earlier run stays on disk. `evidence/tier1-latest.json` (`Tier1Pointer`)
+names the latest Tier 1 run that finished; an aborted run never moves it.
 
 The run header is written first and finished last. A run without
 `finished_at` is reported as incomplete by the API and never summarised.
@@ -711,14 +719,14 @@ No new working directory is introduced.
 | Target | Runs | Effect |
 | --- | --- | --- |
 | `make sim-build` | `python -m tutor_sim build` | Fetch sources; build KB, payloads, cards, roster and plan |
-| `make sim-realise` | `python -m tutor_sim realise` | Generate utterances with the role model; construction checks; noisy twins |
+| `make sim-pupil-messages` | `python -m tutor_sim pupil-messages` | The role model writes each planned pupil message; the payload is appended; construction checks; noisy twins. Formerly `sim-realise` |
 | `make sim-freeze` | `python -m tutor_sim freeze` | Apply the licence-terms rules; write the manifest, including review status; record `test_split_sha256`. Not blocked by a `pending` review |
 | `make sim` | build, then `verify` | DEC-0015's "done when": rebuild from pinned sources and verify the manifest |
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |
-| `make sim-run TIER=1\|2 ROLE=T1..T4 SPLIT=dev\|test` | `python -m tutor_sim run …` | Write `observations.jsonl` and `results.jsonl` |
-| `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json` |
-| `make sim-report RUN=<run_id>` | `python -m tutor_sim report` | Write `report.json` |
+| `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished run: recorded cases are skipped, a cut-off last line is dropped and rerun, and a finished run is refused |
+| `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, append `episodes.jsonl` per episode; then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished Tier 2 run the same way `sim-run` does; a run with `report.json` is refused |
+| `make sim-report [SIM_RUN_ID=<run_id>]` | `python -m tutor_sim report` | Score the latest finished Tier 1 run, or the named one, into its own directory: `results.jsonl`, `report.json`, `summary.json`. An unfinished run is refused |
 
 Tier 2 is its own command, not `sim-run TIER=2`: it scores no case
 (§8.3), so it has no `campaign.jsonl` for `report` to read, and it writes
@@ -818,13 +826,13 @@ in the same BE-01 amendment.
 | build | `RosterBuilder` | `PersonaLearnerRecord` with `uuid5` ids and history events |
 | build | `ExpectationTableLoader`, `CasePlanner` | Intents × personas × payloads. Balanced strata. Applies the expectation row; assigns `req_eval_case`. A test-split case draws only test-split payloads; a payload intent (I5, I6, I8, I10, I11, I12) with no test-split payload in its category fails the build |
 | realise | `PupilRealiser` | Persona card plus intent plus payload into an utterance, through `RoleModelPort` |
-| realise | `ConstructionCheck` | Exact substring check for the payload. Up to 3 attempts, then discard |
+| realise | `PupilPrompt`, `ConstructionCheck` | The model writes the lead-in; the payload bytes are appended unchanged. Exact substring check. One attempt: at temperature 0 a retry repeats the same reply |
 | realise | `NoiseTransformer` | Deterministic, seeded perturbations: typos away from payload spans, L1 code-switch tokens, casing, filler words. Payload bytes untouched |
 | freeze | `LicenceTermsGate`, `Freezer`, `ManifestWriter`, `ManifestVerifier` | DEC-0016 rules 2 and 5. Terms only: the tree rule and admission. Review status is copied, not checked |
 | oracle | `LicenceStatus` | Current `sources.json` and the manifest's source list, giving `licence_status` and `pending_sources` (DEC-0016 rule 1) |
 | run | `SessionPool` | Opens a fresh session per Tier 1 case (§8.2) |
 | run | `Tier1Runner` | Submit, read detail, apply the tutor role, check replay, write the `Observation` |
-| run | `EpisodeRunner` | Tier 2 closed loop. The pupil reads released text only |
+| run | `EpisodeRunner` | Tier 2 closed loop. The pupil reads released text only (`PupilTurnBrief`). When nothing was released it sees its own unanswered message and writes a follow-up; its message is trimmed before it is sent |
 | run | `PolicyVersionGuard` | Aborts the run when `TurnOutcome.policy_version` ≠ `ExpectationTable.policy_version` |
 | oracle | `OutcomeClassifier` | `TurnOutcomeView` to `OutcomeClass` (§9.1) |
 | oracle | `LeakCheck` | `must_not_contain` against the exposed fields (§9.4) |
@@ -837,7 +845,7 @@ in the same BE-01 amendment.
 
 | Role | On `awaiting_tutor_approval` | On `held_for_review` |
 | --- | --- | --- |
-| T1 Diligent | Asks the role model for one `TutorDecision` from the dashboard view. Unparseable output becomes `none`, and is logged as a role failure | Same |
+| T1 Diligent | Asks the role model for one `TutorDecision`. The system prompt is `DiligentTutorCard` (pupils aged 12–17, the four actions); the user turn is `DashboardBrief`: the status, the gate that held the turn, and the draft. The first word of the reply, stripped of punctuation, is the action. Anything else becomes `none`, logged as a role failure. `edit` sends the draft unchanged | Same |
 | T2 Complacent | `approve` | `edit` with `edited_output` set to the draft unchanged, when `record.output_before_checks` is not null; otherwise `none` |
 | T3 Absent | `none` | `none` |
 | T4 Stopper | `stop` at `stop_at_turn`; otherwise `approve` | `override`; `stop` at `stop_at_turn` |
@@ -855,7 +863,7 @@ show those refusals happen. **A tutor decision is recorded as an
 
 ## 8. Runtime view
 
-### 8.1 Build, realise, freeze
+### 8.1 Build, pupil messages, freeze
 
 ```mermaid
 sequenceDiagram
@@ -869,11 +877,12 @@ sequenceDiagram
     Op->>B: make sim-build (seed, policy_version)
     B->>F: fetch each SourceRecord (pinned, sha256)
     B->>S: write kb, payloads (split), personas, tutors, roster, plan
-    Op->>R: make sim-realise
+    Op->>R: make sim-pupil-messages
     loop each CaseSpec in plan
-        R->>M: persona card + intent + payload
-        M-->>R: utterance
-        R->>R: ConstructionCheck (≤3 attempts)
+        R->>M: persona card + intent task (+ payload as context)
+        M-->>R: lead-in
+        R->>R: append payload bytes unchanged
+        R->>R: ConstructionCheck (one attempt)
         R->>R: NoiseTransformer for noisy twins
     end
     R->>S: stimuli/dev.jsonl, stimuli/test.jsonl
@@ -935,7 +944,13 @@ the `CaseSpec`, not from any model.
 4. **S2** has T4 stop at turn *k*. Expected:
    - every later `POST /turns` returns 422;
    - turns 0 to *k* still read and replay.
-5. Tier 2 records `InvariantRow`s only (§9.6).
+5. A pupil message the API refuses with 422 (for example over the
+   2000-character prompt bound) ends the episode at that turn. It is
+   recorded as `RejectedPrompt` in `episodes.jsonl` and named on stderr;
+   the turn has no observation and no tutor action. Aborting instead would
+   block the campaign for good: at temperature 0 the pupil writes the same
+   message on every rerun. Every other failed call aborts the campaign.
+6. Tier 2 records `InvariantRow`s only (§9.6).
 
 ### 8.4 Results to the dashboard
 
@@ -1277,7 +1292,7 @@ BE-07, BE-08
 
 - `PupilRealiser`, `ConstructionCheck`, `NoiseTransformer`.
 - `LicenceTermsGate`, `Freezer`, `ManifestWriter` and `ManifestVerifier`; the
-  `make sim`, `sim-realise` and `sim-freeze` targets.
+  `make sim`, `sim-pupil-messages` and `sim-freeze` targets.
 - *Done when:*
   - `make sim` rebuilds and verifies;
   - payload bytes survive the noise transforms (property test);

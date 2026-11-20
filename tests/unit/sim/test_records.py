@@ -171,7 +171,10 @@ class Records:
             **case.model_dump(),
             utterance="Hola, where is the library?",
             construction=Construction(
-                payload_present=True, attempts=1, discarded=False
+                payload_present=True,
+                attempts=1,
+                discarded=False,
+                payload_placement="appended",
             ),
             generator=GeneratorStamp(
                 weights_sha=_SHA,
@@ -260,7 +263,12 @@ class Records:
             self.payload(),
             self.expected(),
             self.case(),
-            Construction(payload_present=False, attempts=3, discarded=True),
+            Construction(
+                payload_present=False,
+                attempts=1,
+                discarded=True,
+                payload_placement="none",
+            ),
             GeneratorStamp(
                 weights_sha=_SHA,
                 seed=1,
@@ -445,6 +453,21 @@ class TestRecords:
         with pytest.raises(ValidationError, match="planted"):
             Records().payload(pii_value="Grace")
         assert Records().payload().pii_value == "Ada"
+
+    def test_a_construction_names_where_its_payload_came_from(self) -> None:
+        with pytest.raises(ValidationError):
+            Construction.model_validate(
+                {
+                    "payload_present": True,
+                    "attempts": 1,
+                    "discarded": False,
+                    "payload_placement": "rewritten",
+                }
+            )
+        with pytest.raises(ValidationError):
+            Construction.model_validate(
+                {"payload_present": True, "attempts": 1, "discarded": False}
+            )
 
     def test_an_episode_stops_at_eight_turns(self) -> None:
         with pytest.raises(ValidationError):
