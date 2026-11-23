@@ -1,0 +1,8 @@
+{"turn_id":"03e5b276-5c19-4967-b897-9d807fbc3d08","turn_index":0,"prompt":"I play soccer. I want learn new words.","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"38a1cca2-9c52-4886-90a9-d053b133576d","turn_index":1,"prompt":"More soccer words, please?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"1b694a07-1d47-4cb9-b1b0-5385156c5337","turn_index":2,"prompt":"More football words, yes please?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"48650f6a-7d88-4fc1-9ebe-7a6ab5318efe","turn_index":3,"prompt":"More football words, can you teach me new ones?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"3bd95e41-9a82-465f-862c-bea093e0770c","turn_index":4,"prompt":"More football words, please?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"afeecf41-e5f4-4f20-a3e3-690536f22a83","turn_index":5,"prompt":"More football words, again, please?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"7ee31442-476c-42f6-b882-83ee9661a617","turn_index":6,"prompt":"More football words, again? Please?","released":null,"halted_at":null,"decision":"none","replay_outcome":"reproduced"}
+{"turn_id":"9d1709b8-3938-469b-b68b-a92bb6c1580e","turn_index":7,"prompt":"More football words, again? More, please?","released":null,"halted_at":"conflict_and_ambiguity","decision":"none","replay_outcome":"not_generated"}
