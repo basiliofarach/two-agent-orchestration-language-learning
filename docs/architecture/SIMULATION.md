@@ -720,7 +720,7 @@ No new working directory is introduced.
 | --- | --- | --- |
 | `make sim-build` | `python -m tutor_sim build` | Fetch sources; build KB, payloads, cards, roster and plan |
 | `make sim-pupil-messages` | `python -m tutor_sim pupil-messages` | The role model writes each planned pupil message; the payload is appended; construction checks; noisy twins. Formerly `sim-realise` |
-| `make sim-freeze` | `python -m tutor_sim freeze` | Apply the licence-terms rules; write the manifest, including review status; record `test_split_sha256`. Not blocked by a `pending` review |
+| `make sim-freeze` | `python -m tutor_sim freeze` | Apply the licence-terms rules; write the manifest, including review status; record `test_split_sha256`. Not blocked by a `pending` review. A frozen version is never rewritten: the same version with other bytes is refused. A new version moves the frozen manifest to `superseded/<version>/manifest.json` before writing its own, so a run scored against it keeps its checksums. The CEFR-SP baseline is `sim-dataset/unreleased`; the CEFR-J build is `sim-dataset/unreleased-2` |
 | `make sim` | build, then `verify` | DEC-0015's "done when": rebuild from pinned sources and verify the manifest |
 | `make sim-db` | create DB `tutor_sim`; `alembic upgrade head`; `python -m tutor_api.curation.simulation_seed --dataset … [--stress]` | A fresh campaign database |
 | `make sim-serve` | `TUTOR_MODE=simulation POSTGRES_DB=tutor_sim … serve` | The API for a campaign |

@@ -248,11 +248,17 @@ class CampaignCommands:
             existing = (
                 ManifestFile().load(manifest_path) if manifest_path.is_file() else None
             )
+            archived = tuple(
+                ManifestFile().load(path)
+                for path in sorted(
+                    (self._root() / tree / "superseded").glob("*/manifest.json")
+                )
+            )
         except (OSError, ValidationError) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
         try:
-            Freezer(self._clock, self._store).freeze(job, files, existing)
+            Freezer(self._clock, self._store).freeze(job, files, existing, archived)
         except (RejectedSource, StimulusMismatch, FrozenVersion) as exc:
             self._errors.write(f"tutor_sim: {exc}\n")
             return 1
