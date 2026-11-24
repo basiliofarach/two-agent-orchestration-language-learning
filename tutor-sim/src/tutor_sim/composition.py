@@ -29,6 +29,7 @@ from tutor_sim.adapters.role_model import (
 from tutor_sim.adapters.system_clock import SystemClock
 from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.commands import CampaignCommands
+from tutor_sim.application.measures import MeasureSources
 from tutor_sim.application.personas import TutorRoleCards
 from tutor_sim.application.progress import CommandProgress
 from tutor_sim.application.roles import (
@@ -43,6 +44,7 @@ from tutor_sim.catalogue import SourceCatalogue
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.ports.clock import ClockPort
 from tutor_sim.domain.ports.dataset_store import DatasetStorePort
+from tutor_sim.domain.ports.pos_tagger import PosTaggerPort
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.source_fetch import SourceFetchPort
 from tutor_sim.settings import SimulationSettings
@@ -159,6 +161,13 @@ class SimulationCompositionRoot:
         model = RoleModelChoice().choose(self._settings)
         role = DiligentTutor(model, DiligentTutorCard().system())
         roster = TutorRosterChoice().build(role)
+        tagger = TaggerChoice().choose(self._settings)
+        # Measures read the pinned CEFR-J artefacts from the cache, never the web.
+        measures = MeasureSources(
+            CachedOnlySourceFetch(self._settings.cache_dir, digest),
+            tuple(catalogue),
+            tagger,
+        )
         if self._settings.offline:
             cached = CachedOnlySourceFetch(self._settings.cache_dir, digest)
             commands = CampaignCommands(
@@ -171,8 +180,9 @@ class SimulationCompositionRoot:
                 role,
                 roster,
                 stream,
-                self._build(cached, store, tuple(catalogue)),
+                self._build(cached, store, tuple(catalogue), tagger),
                 CommandProgress(stream),
+                measures,
             )
             return WiredHarness(
                 clock=clock,
@@ -195,8 +205,9 @@ class SimulationCompositionRoot:
             role,
             roster,
             stream,
-            self._build(fetch, store, tuple(catalogue)),
+            self._build(fetch, store, tuple(catalogue), tagger),
             CommandProgress(stream),
+            measures,
         )
         return WiredHarness(
             clock=clock,
@@ -211,6 +222,7 @@ class SimulationCompositionRoot:
         fetch: SourceFetchPort,
         store: DatasetStorePort,
         catalogue: tuple[SourceRecord, ...],
+        tagger: PosTaggerPort | None,
     ) -> DatasetBuild:
         return DatasetBuild(
             fetch,
@@ -218,5 +230,5 @@ class SimulationCompositionRoot:
             catalogue,
             self._settings.dataset_dir,
             self._settings.seed,
-            TaggerChoice().choose(self._settings),
+            tagger,
         )

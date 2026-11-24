@@ -8,7 +8,7 @@ REPO := $(abspath ..)
 
 .PHONY: help sync test check up down smoke-model lint-imports print-model-sha \
 	lint-migrations migrate seed serve sandbox-test sandbox-lifecycle evidence \
-	purge eval sim sim-build sim-pupil-messages sim-freeze sim-run sim-episodes sim-report sim-db sim-serve
+	purge eval sim sim-build sim-pupil-messages sim-freeze sim-run sim-episodes sim-report sim-measures sim-db sim-serve
 
 # Harness paths are repository-rooted. ``$(RUN)`` keeps this directory as the
 # working directory so ApplicationSettings still finds tutor-api/.env.
@@ -62,6 +62,7 @@ help:
 	@echo "                    SIM_RUN_ID=<run_id> continues an unfinished run"
 	@echo "  make sim-episodes Tier 2 episodes; writes evidence/runs/<run_id>/ with transcripts"
 	@echo "  make sim-report   score the latest finished run (SIM_RUN_ID=<run_id> for another)"
+	@echo "  make sim-measures level fit, pupil level, I2 target structure of SIM_RUN_ID=<run_id> (TreeTagger)"
 	@echo "  make sim-db       create tutor_sim, migrate it, seed C1 and C2"
 	@echo "  make sim-serve    the API in simulation mode, on tutor_sim"
 
@@ -170,6 +171,12 @@ sim-episodes:
 sim-report:
 	@echo "[report] score the Tier 1 run"
 	@$(SIM_ENV) $(RUN) python -m tutor_sim report
+
+# A Tier 1 run's replies are read back through the API, so sim-serve must be
+# up on the database that ran it: measure before the next sim-db.
+sim-measures:
+	@echo "[measures] level fit and target structure of SIM_RUN_ID, via TreeTagger"
+	@$(SIM_ENV) $(RUN) python -m tutor_sim measures
 
 # Recreates tutor_sim each time, so a seed never mixes with an older one.
 # If tutor_sim holds audit records from simulation runs it stops instead;

@@ -540,6 +540,8 @@ One row per intent and variant. This is the single place a label comes from
 | `report.json` | `SimulationReport` | Contract C3, served to the dashboard. Carries `licence_status: Literal["confirmed", "pending"]` and `pending_sources: tuple[str, ...]`, computed from the `sources.json` in force **when the report is written** (§5.5) |
 | `transcripts/<episode_id>.jsonl` | `TranscriptTurn` | Tier 2 only: utterance, released text, action |
 | `episodes.jsonl` | `EpisodeLine` | Tier 2 only. One line per episode, appended as each finishes: its `InvariantFacts` and, when the API refused a pupil message, `RejectedPrompt` (`turn_index`, `characters`, `http_status`, `kind`; no message text). The report reads these facts, so an aborted run can be resumed |
+| `measures.jsonl` | `MeasuredText` | Written by `measures`, once. One line per measured text: `text_id` (case id, or `<episode_id>#<turn_index>`), `kind` (`reply` or `pupil`), persona level, intent, `listed_words`, `coverage`, and for a released I2 exercise `target_item_id` and `target_present`. No text |
+| `measures.json` | `RunMeasures` | Written after `measures.jsonl`, by atomic rename. Level fit, pupil level and target structure (§9.5) per persona level and overall, the TreeTagger, wordlist and Profile revisions, and `unreadable`: Tier 1 replies the API no longer returned. A measured run is never measured again |
 
 A run id is `run-YYYYMMDDTHHMMSS`, with `-2`, `-3` … when a directory
 for that second already exists. No run reuses a directory, so every
@@ -727,6 +729,7 @@ No new working directory is introduced.
 | `make sim-run` | `python -m tutor_sim run` | Tier 1. Claim a new `runs/<run_id>/`; append `campaign.jsonl` per case; on finish write `observations.jsonl` and move `tier1-latest.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished run: recorded cases are skipped, a cut-off last line is dropped and rerun, and a finished run is refused |
 | `make sim-episodes` | `python -m tutor_sim episodes` | Tier 2. Run every episode in the frozen `episodes/plan.jsonl` with the T1–T4 roster; write `runs/<run_id>/transcripts/<episode_id>.jsonl`, append `episodes.jsonl` per episode; then a tier `"2"` `report.json` (invariant rows, no scored cases) and `summary.json`. `SIM_RUN_ID=<run_id>` resumes an unfinished Tier 2 run the same way `sim-run` does; a run with `report.json` is refused |
 | `make sim-report [SIM_RUN_ID=<run_id>]` | `python -m tutor_sim report` | Score the latest finished Tier 1 run, or the named one, into its own directory: `results.jsonl`, `report.json`, `summary.json`. An unfinished run is refused |
+| `make sim-measures SIM_RUN_ID=<run_id>` | `python -m tutor_sim measures` | Level fit, pupil level and I2 target structure of one reported run, Tier 1 or 2, through TreeTagger and the CEFR-J Wordlist (§9.5): `measures.jsonl`, `measures.json`. A Tier 1 run's replies are read back from the API, so run it before the next `sim-db`. A run already measured, or one without `report.json`, is refused |
 
 Tier 2 is its own command, not `sim-run TIER=2`: it scores no case
 (§8.3), so it has no `campaign.jsonl` for `report` to read, and it writes
@@ -818,8 +821,10 @@ in the same BE-01 amendment.
 | build | `GrammarProfileLoader` | Reads the teachers' sheet (ID, English name, CEFR-J level) and the item list (variant ID, pattern, regex). Maps CEFR-J sub-levels to CEFR bands |
 | build | `GrammarExampleMiner` | Tags each CEFR-SP sentence once through `PosTaggerPort`. Matches item regexes. Picks up to 5 examples per item at or below the item's level: the matches sorted by the SHA-256 of the sentence text, first five. Deterministic, with no random draw |
 | build | `KbCorpusBuilder` | Grammar documents, sentence documents and the fault partition, all as `KbDocumentRecord` (C1) |
-| measure | `LevelAssigner` | CEFR-J v1.6 coverage of content words, for measures only: level fit of drafts and pupil level fidelity (§9.5) |
-| measure | `TargetStructureCheck` | Whether a released I2 exercise contains a match for its target item's regex (§9.5) |
+| measure | `LevelAssigner` | CEFR-J v1.6 coverage of surface words: the lowest band that covers 95 percent. Not used by `measures`, which reads lemmas |
+| measure | `CefrjWordlist`, `LemmaKey`, `LevelFit` | The `ALL` sheet of the CEFR-J Wordlist v1.6, each headword at its easiest level. A text is tagged through `PosTaggerPort` and each token looked up by its TreeTagger lemma (`played` → `play`), falling back to the word; `coverage` is the share of listed words at or below the persona's level (§9.5) |
+| measure | `TargetStructureCheck`, `TargetItems` | Whether a released I2 exercise contains a match for its target item's regex on the tagged text (§9.5) |
+| measure | `Tier1Texts`, `Tier2Texts`, `ReleasedText`, `RunMeasurer`, `MeasureSummary` | Collect the texts of one finished run, read each Tier 1 reply back from `GET /turns/{id}` (`output_after_checks`), measure, and summarise with nearest-rank quantiles |
 | build | `SyntheticPiiGenerator` | Seeded names, emails, phones and addresses in English and Spanish forms. Never a real person's data |
 | build | `PayloadBankBuilder`, `SplitAssigner` | Normalise and deduplicate; 30/70 seeded split stratified by source |
 | build | `PersonaCardBuilder`, `ErrorProfileLoader` | Persona grid, traits and few-shot selection. Error profiles from aggregate counts only |
@@ -1086,6 +1091,44 @@ by the API. It is built only from `RedactedText`, so that boundary is typed
 | Construction discard rate | discarded / attempted, per persona |
 | Stratum disparity | benign cases (I1–I3) held, per L1 × age band × level |
 
+**How `measures` computes the three CEFR-J measures.** `make sim-measures
+SIM_RUN_ID=<run_id>` reads one finished run (it has `report.json`) and
+writes `measures.jsonl` and `measures.json` beside it (§5.3). The run's
+own files are not changed.
+
+- **Texts.**
+  - Tier 1: the pupil message of every benign case (I1–I3), and each such
+    case's reply when its outcome is `released_for_approval`. Other
+    intents carry planted payload text, which says nothing about level.
+  - Tier 2: every pupil message, and every reply the pupil was given
+    (`released` in the transcript). A T3 turn and a held turn release
+    nothing, so they have no reply to measure.
+- **Where a reply comes from.**
+  - `observations.jsonl` keeps no text (§5.3), so a Tier 1 reply is read
+    back once from `GET /turns/{id}` (`output_after_checks`), measured,
+    and dropped. That needs `make sim-serve` on the database that ran the
+    run, so measure before the next `sim-db`.
+  - A reply the API no longer returns is counted in `unreadable`, not
+    guessed.
+  - Tier 2 replies come from the run's transcripts, so a Tier 2 run can
+    be measured at any time.
+- **Same dataset.** A Tier 1 run must have been scored against the tree
+  frozen now: its stimuli give each case's intent, topic and pupil
+  message. A run scored against another `dataset_version` is refused.
+- **Level fit and pupil level.**
+  - Each text is tagged by TreeTagger. Each token is looked up in the
+    CEFR-J Wordlist v1.6 by its lemma, because the list holds headwords
+    (`play`), not forms (`played`).
+  - `coverage` is the share of listed words at or below the persona's
+    level. A text with no listed word is `unscored`.
+  - Quantiles are nearest-rank (p10, p25, p50, p75, p90), each a value
+    some text had.
+- **Target structure.** It applies to a released I2 reply whose topic is a
+  Grammar Profile item (`gp-<id>`), checked with that item's own regex on
+  the tagged reply.
+- **Inputs.** The wordlist and the Profile are read from the pinned cache,
+  never downloaded. Without TreeTagger the command is refused.
+
 ### 9.6 Invariants — must hold; any violation fails the run
 
 | Id | Invariant |
@@ -1237,6 +1280,8 @@ BE-01
 - The fault partition, the only hand-written KB content: a contradictory
   pair and two poisoned variants with canaries.
 - `LevelAssigner` and `TargetStructureCheck`, used by measures only.
+  `measures` (§9.5) wires `TargetStructureCheck` and the lemma-based
+  `LevelFit`; `LevelAssigner` stays unwired.
 - *Done when:*
   - Only annotator-agreed A1–B2 sentences are loaded.
   - Every grammar document's examples match its regex and sit at or below

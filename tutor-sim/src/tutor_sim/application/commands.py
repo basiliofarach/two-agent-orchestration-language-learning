@@ -1,10 +1,10 @@
 """The operator commands.
 
-build, pupil-messages, freeze, verify, run, episodes and report.
+build, pupil-messages, freeze, verify, run, episodes, report and measures.
 """
 
 from pathlib import Path
-from typing import TextIO, TypeVar
+from typing import Literal, TextIO, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -27,6 +27,18 @@ from tutor_sim.application.freeze import (
     RejectedSource,
     StimulusFile,
     StimulusMismatch,
+)
+from tutor_sim.application.measures import (
+    MeasureSources,
+    MeasureSummary,
+    MeasureUnavailable,
+    NearestRank,
+    PendingText,
+    PersonaLevels,
+    ReleasedText,
+    RunMeasurer,
+    Tier1Texts,
+    Tier2Texts,
 )
 from tutor_sim.application.oracle import (
     InvariantFacts,
@@ -60,8 +72,10 @@ from tutor_sim.application.tier1 import (
 from tutor_sim.domain.models.case import EpisodeSpec, StimulusCase, TopicName
 from tutor_sim.domain.models.identity import SimulationNamespace
 from tutor_sim.domain.models.manifest import RoleModelPin
+from tutor_sim.domain.models.measures import MeasuredText, RunMeasures
 from tutor_sim.domain.models.observation import CampaignLine, Observation
-from tutor_sim.domain.models.report import CaseResult
+from tutor_sim.domain.models.persona import PersonaCard
+from tutor_sim.domain.models.report import CaseResult, SimulationReport
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.models.storage import DatasetTree
 from tutor_sim.domain.ports.clock import ClockPort
@@ -73,7 +87,7 @@ from tutor_sim.settings import SimulationSettings
 
 
 class CampaignCommands:
-    """build, pupil-messages, freeze, verify, run, episodes and report.
+    """build, pupil-messages, freeze, verify, run, episodes, report, measures.
 
     ``build`` reads the pinned sources and writes the dataset and
     ``plan.json``; it needs a ``DatasetBuild``, which the composition root
@@ -82,6 +96,11 @@ class CampaignCommands:
     ``run`` is Tier 1 and ``report`` scores it. ``episodes`` is Tier 2: it
     runs every frozen episode and writes its own tier ``"2"`` run, with
     invariant rows and no scored cases (SIMULATION §8.3).
+
+    ``measures`` reads a finished run's texts through TreeTagger and the
+    CEFR-J wordlist and writes ``measures.json`` beside its report
+    (SIMULATION §9.5). It needs ``MeasureSources``, which the composition
+    root supplies.
     """
 
     def __init__(
@@ -97,9 +116,11 @@ class CampaignCommands:
         errors: TextIO,
         build: DatasetBuild | None = None,
         progress: CommandProgress | None = None,
+        measures: MeasureSources | None = None,
     ) -> None:
         self._settings = settings
         self._build = build
+        self._measure_sources = measures
         self._progress = progress
         self._clock = clock
         self._store = store
@@ -126,6 +147,8 @@ class CampaignCommands:
             return self._episodes()
         if command == "report":
             return self._report()
+        if command == "measures":
+            return self._measures()
         self._errors.write(f"tutor_sim: {command} is not a command\n")
         return 2
 
@@ -578,6 +601,112 @@ class CampaignCommands:
         )
         return 0
 
+    def _measures(self) -> int:
+        """Measure one finished run, once. Its evidence files are not touched."""
+        sources = self._measure_sources
+        if sources is None:
+            self._errors.write("tutor_sim: measures needs the CEFR-J sources\n")
+            return 1
+        run_id = self._settings.run_id
+        if run_id is None:
+            self._errors.write("tutor_sim: measures needs SIM_RUN_ID=<run_id>\n")
+            return 1
+        runs = RunDirectory(self._settings.evidence_dir)
+        run = runs.path(run_id)
+        if not (run / "report.json").is_file():
+            self._errors.write(f"tutor_sim: run {run_id} has no report yet\n")
+            return 1
+        if (run / "measures.json").exists():
+            self._errors.write(f"tutor_sim: run {run_id} is already measured\n")
+            return 1
+        tree = self._verified()
+        if tree is None:
+            return 1
+        report = SimulationReport.model_validate_json(
+            (run / "report.json").read_text(encoding="utf-8")
+        )
+        personas = PersonaLevels(self._pupil_cards())
+        tier: Literal["1", "2"] = "2"
+        try:
+            if (run / "campaign.jsonl").is_file():
+                tier = "1"
+                pending = self._tier1_pending(tree, report, run, personas)
+                if self._tutor is None:
+                    self._errors.write(
+                        "tutor_sim: a Tier 1 run's replies are read from the API; "
+                        "measures needs a tutor client\n"
+                    )
+                    return 1
+                reader: ReleasedText | None = ReleasedText(self._tutor)
+            else:
+                pending = self._tier2_pending(tree, run, personas)
+                reader = None
+            measurer = RunMeasurer(
+                sources.fit(), sources.targets(), reader, self._progress
+            )
+            measured = measurer.measure(pending)
+            tagger = sources.tagger_revision()
+        except (MeasureUnavailable, FileNotFoundError, DamagedCampaign) as exc:
+            self._errors.write(f"tutor_sim: {exc}\n")
+            return 1
+        summary = MeasureSummary(NearestRank())
+        record = RunMeasures(
+            run_id=run_id,
+            tier=tier,
+            dataset_version=report.dataset_version,
+            tagger_revision=tagger,
+            wordlist_revision=sources.revision("cefr-j-wordlist") or "unknown",
+            profile_revision=sources.revision("cefr-j-grammar-profile"),
+            level_fit=summary.coverage(measured.texts, "reply"),
+            pupil_level=summary.coverage(measured.texts, "pupil"),
+            target_structure=summary.targets(measured.texts),
+            unreadable=measured.unreadable,
+        )
+        MeasureFile().write(run, measured.texts, record)
+        self._finish(
+            f"measured {len(measured.texts)} texts "
+            f"({measured.unreadable} replies unreadable): run {run_id}"
+        )
+        return 0
+
+    def _tier1_pending(
+        self,
+        tree: DatasetTree,
+        report: SimulationReport,
+        run: Path,
+        personas: PersonaLevels,
+    ) -> tuple[PendingText, ...]:
+        """The run must have been scored against the tree frozen now."""
+        manifest = ManifestFile().load(self._root() / tree / "manifest.json")
+        if report.dataset_version != manifest.dataset_version:
+            msg = (
+                f"run {report.run_id} was scored against {report.dataset_version}; "
+                f"the frozen tree is {manifest.dataset_version}"
+            )
+            raise MeasureUnavailable(msg)
+        lines = CampaignFile().read(run / "campaign.jsonl")
+        return Tier1Texts(personas).pending(
+            self._read(tree, "stimuli/test.jsonl"), self._observations(lines)
+        )
+
+    def _tier2_pending(
+        self, tree: DatasetTree, run: Path, personas: PersonaLevels
+    ) -> tuple[PendingText, ...]:
+        """Texts come from the run's transcripts; personas from the frozen plan."""
+        specs = EpisodePlanFile().read(self._root() / tree / "episodes/plan.jsonl")
+        persona_of = {spec.episode_id: spec.persona_id for spec in specs}
+        episodes: list[tuple[str, str]] = []
+        for line in EpisodeTrailFile().read(run / "episodes.jsonl"):
+            persona = persona_of.get(line.episode_id)
+            if persona is None:
+                msg = f"{line.episode_id} is not in the frozen episode plan"
+                raise MeasureUnavailable(msg)
+            episodes.append((line.episode_id, persona))
+        return Tier2Texts(personas).pending(run / "transcripts", tuple(episodes))
+
+    def _pupil_cards(self) -> tuple[PersonaCard, ...]:
+        return PersonaCardFile().load(self._root() / "public" / "personas")
+
     def _run_id(self) -> str:
         return "run-" + self._clock.now().strftime("%Y%m%dT%H%M%S")
 
@@ -742,6 +871,15 @@ class EpisodeTrailFile(JsonlFile):
         """Add one finished episode, so an aborted run keeps what it ran."""
         self._append(path, row)
 
+    def read(self, path: Path) -> tuple[EpisodeLine, ...]:
+        """A finished run's episodes, unchanged. A bad line is damage."""
+        try:
+            return tuple(
+                EpisodeLine.model_validate_json(line) for line in self._read(path)
+            )
+        except ValidationError as exc:
+            raise DamagedCampaign(path.name) from exc
+
 
 class ObservationFile(JsonlFile):
     """Observations only. An errored case is absent here and present in the campaign."""
@@ -757,3 +895,26 @@ class ResultFile(JsonlFile):
     def write(self, path: Path, rows: tuple[CaseResult, ...]) -> None:
         """Replace the results file the report just scored."""
         self._write(path, tuple(row.model_dump_json() for row in rows))
+
+
+class MeasureFile:
+    """``measures.jsonl`` (one line per text, no text), then ``measures.json``.
+
+    The summary lands last, by atomic rename, so a run with a summary has
+    every line behind it.
+    """
+
+    def write(
+        self, run: Path, texts: tuple[MeasuredText, ...], record: RunMeasures
+    ) -> None:
+        """Write both files."""
+        lines = run / "measures.jsonl"
+        partial = lines.with_name(f".{lines.name}.partial")
+        partial.write_text(
+            "".join(text.model_dump_json() + "\n" for text in texts), encoding="utf-8"
+        )
+        partial.replace(lines)
+        summary = run / "measures.json"
+        partial = summary.with_name(f".{summary.name}.partial")
+        partial.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+        partial.replace(summary)

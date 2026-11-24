@@ -126,8 +126,13 @@ on TreeTagger output (`word_TAG_lemma`), not on plain text. TreeTagger is
 use needs a licence from the developer. It is a build-time tool on the
 harness side, never part of the system under test. Its terms were read
 (`licence_review: confirmed`, 2026-11-17); the binary is not
-redistributed. It is also used for one measure: whether a generated
-exercise contains its target structure (SIMULATION §9.5).
+redistributed. It is also used by `make sim-measures` (SIMULATION §9.5),
+still on the harness side:
+
+- whether a generated exercise contains its target structure;
+- the lemma of each word, so the CEFR-J Wordlist (which lists headwords,
+  not inflected forms) can place a reply or a pupil message against the
+  persona's level.
 
 Each KB document records `source_uri`, `version`, `review_status` (REQ-KB),
 **plus** `licence`, `cefr_level` and `level_method`. The last three are
