@@ -293,3 +293,15 @@ def test_the_composition_root_wires_the_measures(tmp_path: Path) -> None:
     assert SimulationCli(root, errors).main(["measures"]) == 1
     assert "needs SIM_RUN_ID" in errors.getvalue()
     assert "needs the CEFR-J sources" not in errors.getvalue()
+
+
+def test_a_run_over_an_unverified_dataset_tree_is_refused(tmp_path: Path) -> None:
+    settings = _tier1_ready(tmp_path)
+    for manifest in settings.dataset_dir.glob("*/manifest.json"):
+        manifest.unlink()
+    client = ReadsRecord({_EXERCISE: "a cat"})
+    code, errors = _measure(settings, _TIER1, client)
+    assert code == 1
+    assert "no manifest" in errors
+    assert client.reads == []
+    assert not (settings.evidence_dir / "runs" / _TIER1 / "measures.json").exists()

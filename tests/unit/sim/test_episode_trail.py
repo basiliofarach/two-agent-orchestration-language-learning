@@ -143,3 +143,15 @@ class TestEpisodeTrailFile:
         path.write_text('{"broken": true}\n{"episode_id": "e-1", "facts": []}\n')
         with pytest.raises(DamagedCampaign):
             EpisodeTrailFile().recover(path)
+
+    def test_a_finished_trail_with_a_damaged_line_is_refused_on_read(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "episodes.jsonl"
+        trail = EpisodeTrailFile()
+        trail.write(path, (EpisodeLine(episode_id="e-1", facts=()),))
+        assert [line.episode_id for line in trail.read(path)] == ["e-1"]
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write('{"broken": true}\n')
+        with pytest.raises(DamagedCampaign):
+            trail.read(path)

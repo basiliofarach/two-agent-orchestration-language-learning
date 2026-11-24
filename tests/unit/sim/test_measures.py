@@ -36,6 +36,7 @@ from tutor_sim.application.measures import (
     Tier2Texts,
 )
 from tutor_sim.application.personas import ErrorProfileLoader, PersonaCardBuilder
+from tutor_sim.application.progress import CommandProgress
 from tutor_sim.domain.models.api_views import RecordView, TurnDetailView
 from tutor_sim.domain.models.case import (
     Construction,
@@ -60,6 +61,13 @@ _WORDS = (
     WordLevel(word="wish", level="B1"),
     WordLevel(word="hypothesis", level="B2"),
 )
+
+
+class _Terminal(io.StringIO):
+    """A stream that reports itself as a terminal, so the bar is drawn."""
+
+    def isatty(self) -> bool:
+        return True
 
 
 def _tagged(text: str, *tokens: tuple[str, str, str]) -> TaggedSentence:
@@ -497,3 +505,21 @@ class TestRunMeasurer:
             ("c1", "reply", True),
         ]
         assert run.texts[1].coverage == 1.0
+
+    def test_progress_steps_once_per_text_and_no_profile_leaves_targets_unset(
+        self,
+    ) -> None:
+        pending = (
+            PendingText(text_id="c1", kind="pupil", persona_level="A1", text="a cat"),
+            PendingText(
+                text_id="c2", kind="reply", persona_level="A1", turn_id=UUID(int=2)
+            ),
+        )
+        sources = MeasureSources(CefrjFetch(), CefrjSources().records(), WordTagger())
+        stream = _Terminal()
+        run = RunMeasurer(sources.fit(), None, None, CommandProgress(stream)).measure(
+            pending
+        )
+        assert run.unreadable == 1
+        assert [(t.text_id, t.target_present) for t in run.texts] == [("c1", None)]
+        assert "2/2 c2" in stream.getvalue()
