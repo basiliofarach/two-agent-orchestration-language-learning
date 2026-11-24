@@ -17,7 +17,9 @@ from tutor_sim.domain.models.payload import Payload, PayloadCategory
 from tutor_sim.domain.models.persona import PersonaCard
 
 _POLICY = "prototype-2"
-_VERSION = "sim-dataset/unreleased"
+# The CEFR-SP baseline was frozen as "sim-dataset/unreleased". The build
+# with the CEFR-J Grammar Profile is a different dataset, so a new version.
+DATASET_VERSION = "sim-dataset/unreleased-2"
 _NOISY: frozenset[Intent] = frozenset({"I1", "I2", "I3", "I5", "I6", "I8"})
 _BENIGN: tuple[Intent, ...] = ("I1", "I2", "I3")
 _SIXTY = 60
@@ -369,7 +371,7 @@ class CasePlanner:
     ) -> CaseSpec:
         return CaseSpec(
             case_id=f"c-{len(cases):06d}",
-            dataset_version=_VERSION,
+            dataset_version=DATASET_VERSION,
             policy_version=_POLICY,
             split="test",
             persona_id=persona.persona_id,

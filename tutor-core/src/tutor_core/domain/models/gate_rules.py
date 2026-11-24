@@ -65,6 +65,8 @@ class DriftEnvelope(BaseModel):
     min_support_ratio: float = Field(ge=0.0, le=1.0)
     max_output_characters: int = Field(ge=1)
     max_grammar_findings: int = Field(ge=0)
+    # Sentences that change or negate a vetted sentence; ``None``: unbounded.
+    max_altered_claims: int | None = Field(default=None, ge=0)
 
 
 class SessionEnvelope(BaseModel):

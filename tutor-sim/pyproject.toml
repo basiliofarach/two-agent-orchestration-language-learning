@@ -5,6 +5,7 @@ description = "Role-based simulation harness. It reaches the tutor API over HTTP
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28",
+    "pyarrow>=18",
     "pydantic>=2.10",
     "pydantic-settings>=2.8",
 ]

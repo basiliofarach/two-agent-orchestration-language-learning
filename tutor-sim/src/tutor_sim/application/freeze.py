@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -182,8 +183,24 @@ class FreezeIdentity:
         return existing.model_dump(exclude=kept) == proposed.model_dump(exclude=kept)
 
 
+class SupersededPath:
+    """Where a superseded version's manifest is kept, inside its tree."""
+
+    def of(self, version: str) -> str:
+        """``superseded/<version as one directory name>/manifest.json``."""
+        name = re.sub(r"[^A-Za-z0-9.-]", "_", version).replace("..", "_")
+        name = name.lstrip(".") or "_"
+        return f"superseded/{name}/manifest.json"
+
+
 class Freezer:
-    """Admit the sources, then write the manifest through the dataset store."""
+    """Admit the sources, then write the manifest through the dataset store.
+
+    A frozen version is never rewritten. A different version supersedes
+    it: the frozen manifest is first kept at ``SupersededPath``, so a run
+    scored against it can still name the bytes it used. ``archived`` is
+    every manifest already kept there.
+    """
 
     def __init__(self, clock: ClockPort, store: DatasetStorePort) -> None:
         self._clock = clock
@@ -198,16 +215,24 @@ class Freezer:
         job: FreezeJob,
         files: tuple[FileDigest, ...],
         existing: Manifest | None = None,
+        archived: tuple[Manifest, ...] = (),
     ) -> Manifest:
         """Pending is allowed. A frozen version is not rewritten."""
         self._gate.admit(job.sources, job.tree)
         self._cases.require(job)
         manifest = self._writer.build(job, files)
-        if existing is not None:
+        if existing is not None and existing.dataset_version == job.dataset_version:
             if not self._identity.same(existing, manifest):
                 msg = "this dataset version is already frozen"
                 raise FrozenVersion(msg)
             return existing
+        kept = {item.dataset_version: item for item in archived}
+        earlier = kept.get(job.dataset_version)
+        if earlier is not None and not self._identity.same(earlier, manifest):
+            msg = "this dataset version is already frozen (superseded)"
+            raise FrozenVersion(msg)
+        if existing is not None:
+            self._supersede(existing, kept.get(existing.dataset_version), job)
         self._store.write(
             DatasetWrite(
                 relative_path="manifest.json",
@@ -217,6 +242,27 @@ class Freezer:
             )
         )
         return manifest
+
+    def _supersede(
+        self, existing: Manifest, earlier: Manifest | None, job: FreezeJob
+    ) -> None:
+        """Keep the frozen manifest. An archive of it must match it."""
+        if earlier is not None:
+            if earlier != existing:
+                msg = (
+                    f"the kept manifest of {existing.dataset_version} "
+                    "differs from the frozen one"
+                )
+                raise FrozenVersion(msg)
+            return
+        self._store.write(
+            DatasetWrite(
+                relative_path=SupersededPath().of(existing.dataset_version),
+                body=existing.model_dump_json().encode("utf-8"),
+                redistributable=job.tree == "public",
+                tree=job.tree,
+            )
+        )
 
 
 class ManifestVerifier:

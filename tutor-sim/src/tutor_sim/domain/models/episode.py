@@ -27,3 +27,18 @@ class EpisodeTranscript(BaseModel):
     episode_id: str = Field(min_length=1)
     turns: tuple[EpisodeTurn, ...]
     stopped: bool
+
+
+class RejectedPrompt(BaseModel):
+    """A pupil message the API refused. The episode ends at that turn.
+
+    The message text is not kept: only its length, which is what the
+    2000-character prompt bound reads.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    turn_index: int = Field(ge=0, le=7)
+    characters: int = Field(ge=0)
+    http_status: int
+    kind: str = Field(min_length=1)

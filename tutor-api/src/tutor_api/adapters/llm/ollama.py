@@ -219,7 +219,7 @@ class UrllibOllamaEndpoint(OllamaEndpoint):
 
     def generate(self, model_name: str, prompt: str, decoding: DecodingParams) -> str:
         """POST ``/api/generate`` and return the response text."""
-        body = {
+        body: dict[str, object] = {
             "model": model_name,
             "prompt": prompt,
             "stream": False,
@@ -229,6 +229,9 @@ class UrllibOllamaEndpoint(OllamaEndpoint):
                 "num_predict": decoding.max_tokens,
             },
         }
+        if decoding.think is not None:
+            # Unrecorded leaves Ollama's default, as before the field existed.
+            body["think"] = decoding.think
         payload = self._post("/api/generate", body)
         text = payload.get("response")
         if not isinstance(text, str):

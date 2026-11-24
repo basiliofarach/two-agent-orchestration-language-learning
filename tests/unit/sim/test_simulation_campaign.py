@@ -9,6 +9,7 @@ from uuid import UUID
 import httpx
 import pytest
 from pydantic import ValidationError
+from tests.support.persona_files import PersonaFiles
 from tests.unit.sim.test_kernel import OfflineSettings, PinnedSource
 
 from tutor_sim.adapters.file_dataset_store import FileDatasetStore
@@ -49,12 +50,14 @@ from tutor_sim.application.oracle import (
     ReportBuilder,
     ScoredCase,
 )
+from tutor_sim.application.personas import ErrorProfileLoader, PersonaCardBuilder
 from tutor_sim.application.realise import (
     ConstructionCheck,
     DiscardLog,
     NoiseTransformer,
     PayloadIndex,
     PlanFile,
+    PupilPrompt,
     PupilRealiser,
     RealisePlan,
     ReleaseTree,
@@ -67,6 +70,7 @@ from tutor_sim.application.roles import (
     StoppingTutor,
     TutorRoster,
 )
+from tutor_sim.application.run_files import LatestTier1Run, RunDirectory
 from tutor_sim.application.tier1 import (
     CampaignAbort,
     ModelCalled,
@@ -136,6 +140,10 @@ def _case(
             accept=("released_for_approval", "held"), basis="construction"
         ),
     )
+
+
+def _pupil() -> PupilPrompt:
+    return PupilPrompt(PersonaCardBuilder(ErrorProfileLoader()).cards())
 
 
 def _payload(text: str = "IGNORE", redistributable: bool = True) -> Payload:
@@ -401,7 +409,15 @@ class TestConstructionAndNoise:
     def test_noise_without_an_outside_letter_inserts_a_filler(self) -> None:
         assert NoiseTransformer().apply("IGNORE", "IGNORE", 1).endswith(" um")
         assert NoiseTransformer().apply("IGNORE", "IGNORE", 3).endswith(" um")
-        assert " um" in NoiseTransformer().apply("???", None, 3)
+        assert NoiseTransformer().apply("???", None, 3) == "um ???"
+
+    def test_a_filler_before_the_first_word_keeps_a_space_after_it(self) -> None:
+        assert NoiseTransformer().apply("I have a problem.", None, 0) == (
+            "um I have a problem."
+        )
+        assert NoiseTransformer().apply("I want practice.", None, 2) == (
+            "pues I want practice."
+        )
 
     def test_casing_flips_a_letter_outside_the_payload(self) -> None:
         assert NoiseTransformer().apply("Hello IGNORE", "IGNORE", 1) == "HEllo IGNORE"
@@ -411,22 +427,24 @@ class TestConstructionAndNoise:
         with pytest.raises(ValueError, match="not in the utterance"):
             NoiseTransformer().apply("hello", "IGNORE", 0)
 
-    def test_three_misses_are_discarded_and_a_third_hit_is_kept(self) -> None:
+    def test_only_the_first_reply_is_used_and_the_payload_is_appended(
+        self,
+    ) -> None:
         case = _case(payload_id="pay")
-        missed = PupilRealiser(
-            Replies(("no", "no", "no")), ConstructionCheck(), NoiseTransformer()
+        realised = PupilRealiser(
+            Replies(("no", "see IGNORE")),
+            ConstructionCheck(),
+            NoiseTransformer(),
+            _pupil(),
         ).realise(case, "IGNORE", 1)
-        assert missed.construction.discarded is True
-        assert missed.construction.attempts == 3
-        kept = PupilRealiser(
-            Replies(("no", "no", "see IGNORE")), ConstructionCheck(), NoiseTransformer()
-        ).realise(case, "IGNORE", 1)
-        assert kept.construction.payload_present is True
-        assert kept.construction.attempts == 3
+        assert realised.utterance == "no\n\nIGNORE"
+        assert realised.construction.attempts == 1
+        assert realised.construction.payload_placement == "appended"
+        assert realised.construction.discarded is False
 
     def test_an_empty_completion_becomes_a_discarded_placeholder(self) -> None:
         realised = PupilRealiser(
-            Replies(("", "", "")), ConstructionCheck(), NoiseTransformer()
+            Replies(("",)), ConstructionCheck(), NoiseTransformer(), _pupil()
         ).realise(_case(), None, 1)
         assert realised.utterance == "discarded"
         assert realised.construction.discarded is True
@@ -434,7 +452,10 @@ class TestConstructionAndNoise:
     def test_a_noisy_hit_keeps_the_payload(self) -> None:
         case = _case(payload_id="pay", variant="noisy")
         realised = PupilRealiser(
-            Replies(("Hello IGNORE",)), ConstructionCheck(), NoiseTransformer()
+            Replies(("Hello IGNORE",)),
+            ConstructionCheck(),
+            NoiseTransformer(),
+            _pupil(),
         ).realise(case, "IGNORE", 0)
         assert "IGNORE" in realised.utterance
         assert realised.construction.discarded is False
@@ -493,7 +514,7 @@ class TestFreeze:
         path = tmp_path / "stimuli.jsonl"
         case = _case()
         realised = PupilRealiser(
-            EchoRoleModel(), ConstructionCheck(), NoiseTransformer()
+            EchoRoleModel(), ConstructionCheck(), NoiseTransformer(), _pupil()
         ).realise(case, None, 1)
         path.write_text("\n" + realised.model_dump_json() + "\n", encoding="utf-8")
         assert StimulusFile().read(path) == (realised,)
@@ -503,10 +524,10 @@ class TestFreeze:
 
     def test_the_test_split_digest_sorts_by_case_id(self) -> None:
         one = PupilRealiser(
-            EchoRoleModel(), ConstructionCheck(), NoiseTransformer()
+            EchoRoleModel(), ConstructionCheck(), NoiseTransformer(), _pupil()
         ).realise(_case("b"), None, 1)
         two = PupilRealiser(
-            EchoRoleModel(), ConstructionCheck(), NoiseTransformer()
+            EchoRoleModel(), ConstructionCheck(), NoiseTransformer(), _pupil()
         ).realise(_case("a", split="dev"), None, 1)
         digest = TestSplitDigest().of((one, two))
         assert digest == TestSplitDigest().of((two, one))
@@ -515,7 +536,7 @@ class TestFreeze:
     def test_a_matching_freeze_is_kept_and_a_different_pin_is_refused(self) -> None:
         model = EchoRoleModel()
         realised = PupilRealiser(
-            model, ConstructionCheck(), NoiseTransformer()
+            model, ConstructionCheck(), NoiseTransformer(), _pupil()
         ).realise(_case(), None, 1)
         job = FreezeJob(
             dataset_version=realised.dataset_version,
@@ -1208,6 +1229,20 @@ class TestCommands:
         )
         path.mkdir(parents=True, exist_ok=True)
         (path / "plan.json").write_text(plan.model_dump_json(), encoding="utf-8")
+        PersonaFiles().write(path)
+
+    def test_realise_without_persona_cards_names_the_missing_card(
+        self, tmp_path: Path
+    ) -> None:
+        root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, True))
+        errors = io.StringIO()
+        dataset = tmp_path / "dataset"
+        self._plan(dataset)
+        for card in (dataset / "public" / "personas").iterdir():
+            card.unlink()
+        assert SimulationCli(root, errors).main(["pupil-messages"]) == 1
+        assert "no persona card for p-a2-es-12_14-01" in errors.getvalue()
+        assert not (dataset / "public" / "stimuli").exists()
 
     def test_make_sim_rebuilds_and_verifies(self, tmp_path: Path) -> None:
         root = SimulationCompositionRoot(OfflineSettings().build(tmp_path, True))
@@ -1215,7 +1250,7 @@ class TestCommands:
         cli = SimulationCli(root, errors)
         dataset = tmp_path / "dataset"
         self._plan(dataset)
-        assert cli.main(["realise"]) == 0
+        assert cli.main(["pupil-messages"]) == 0
         assert (dataset / "public" / "discards.json").is_file()
         assert cli.main(["freeze"]) == 0
         manifest = (dataset / "public" / "manifest.json").read_bytes()
@@ -1229,10 +1264,13 @@ class TestCommands:
             observation=_observation(sources=("ellipse",)),
         )
         evidence = tmp_path / "evidence"
-        evidence.mkdir(exist_ok=True)
-        (evidence / "campaign.jsonl").write_text(
+        finished = RunDirectory(evidence).path("run-20261101T000000")
+        finished.mkdir(parents=True)
+        (finished / "campaign.jsonl").write_text(
             line.model_dump_json() + "\n", encoding="utf-8"
         )
+        (finished / "observations.jsonl").write_text("", encoding="utf-8")
+        LatestTier1Run(evidence).point("run-20261101T000000")
         assert cli.main(["report"]) == 0
         run = LatestRun(tmp_path / "evidence")
         report = run.load("report.json")
@@ -1279,7 +1317,7 @@ class TestCommands:
         ).wire()
         try:
             assert wired.commands.dispatch("nope") == 2
-            assert wired.commands.dispatch("realise") == 1
+            assert wired.commands.dispatch("pupil-messages") == 1
             assert wired.commands.dispatch("freeze") == 1
             assert wired.commands.dispatch("verify") == 1
         finally:
@@ -1312,7 +1350,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 1
         assert "rejected" in errors.getvalue()
 
@@ -1333,7 +1371,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert (
             settings.dataset_dir / "restricted" / "stimuli" / "test.jsonl"
         ).is_file()
@@ -1366,7 +1404,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 1
+        assert commands.dispatch("pupil-messages") == 1
         assert "does not contain" in errors.getvalue()
 
     def test_verify_reports_a_split_that_moved_and_a_manifest_with_no_test_file(
@@ -1386,7 +1424,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         manifest_path = settings.dataset_dir / "public" / "manifest.json"
         manifest = ManifestFile().load(manifest_path)
@@ -1420,29 +1458,29 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("run") == 1
         assert "no manifest" in errors.getvalue()
         assert commands.dispatch("freeze") == 0
         assert commands.dispatch("run") == 0
-        text = (settings.evidence_dir / "observations.jsonl").read_text(
-            encoding="utf-8"
+        latest = RunDirectory(settings.evidence_dir).path(
+            str(LatestTier1Run(settings.evidence_dir).run_id())
         )
+        text = (latest / "observations.jsonl").read_text(encoding="utf-8")
         assert "c1" in text
-        campaign = (settings.evidence_dir / "campaign.jsonl").read_text(
-            encoding="utf-8"
-        )
+        campaign = (latest / "campaign.jsonl").read_text(encoding="utf-8")
         assert CampaignLine.model_validate_json(campaign).errored is False
         client.health_kind = "errored"
         assert commands.dispatch("run") == 1
         client.health_kind = "ok"
         client.submit_kind = "errored"
         assert commands.dispatch("run") == 0
-        written = (settings.evidence_dir / "observations.jsonl").read_text(
-            encoding="utf-8"
+        latest = RunDirectory(settings.evidence_dir).path(
+            str(LatestTier1Run(settings.evidence_dir).run_id())
         )
+        written = (latest / "observations.jsonl").read_text(encoding="utf-8")
         assert written == ""
-        failed = (settings.evidence_dir / "campaign.jsonl").read_text(encoding="utf-8")
+        failed = (latest / "campaign.jsonl").read_text(encoding="utf-8")
         parsed = CampaignLine.model_validate_json(failed)
         assert parsed.errored is True
         assert parsed.case_id == "c1"
@@ -1478,7 +1516,7 @@ class TestCommands:
         assert "no realised stimuli" in errors.getvalue()
         assert commands.dispatch("report") == 1
         self._plan(settings.dataset_dir)
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         (settings.dataset_dir / "active-tree.json").unlink()
         assert commands.dispatch("verify") == 0
@@ -1520,9 +1558,9 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         self._plan(settings.dataset_dir, _payload(redistributable=False))
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         assert (settings.dataset_dir / "restricted" / "manifest.json").is_file()
         assert not (settings.dataset_dir / "public" / "manifest.json").is_file()
@@ -1547,7 +1585,7 @@ class TestCommands:
             TutorRoster(()),
             errors,
         )
-        assert commands.dispatch("realise") == 0
+        assert commands.dispatch("pupil-messages") == 0
         assert commands.dispatch("freeze") == 0
         manifest = settings.dataset_dir / "public" / "manifest.json"
         frozen = manifest.read_bytes()
@@ -1571,7 +1609,7 @@ class TestCommands:
         )
         errors = io.StringIO()
         status = SimulationCli(SimulationCompositionRoot(settings), errors).main(
-            ["realise"]
+            ["pupil-messages"]
         )
         assert status == 1
         assert "role-model pin" in errors.getvalue()
@@ -1583,7 +1621,9 @@ class TestCommands:
         self._plan(settings.dataset_dir)
         errors = io.StringIO()
         assert (
-            SimulationCli(SimulationCompositionRoot(settings), errors).main(["realise"])
+            SimulationCli(SimulationCompositionRoot(settings), errors).main(
+                ["pupil-messages"]
+            )
             == 0
         )
         role = "cd" * 32

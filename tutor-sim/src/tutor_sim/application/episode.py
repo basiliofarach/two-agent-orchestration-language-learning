@@ -3,11 +3,12 @@
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from tutor_sim.application.oracle import InvariantFacts, OutcomeClassifier
 from tutor_sim.application.tier1 import (
     CampaignAbort,
+    FailedCall,
     HaltedDecision,
     ModeGuard,
     PolicyVersionGuard,
@@ -17,12 +18,41 @@ from tutor_sim.application.tier1 import (
 )
 from tutor_sim.domain.models.api_views import TurnOutcomeView
 from tutor_sim.domain.models.case import EpisodeSpec
-from tutor_sim.domain.models.episode import EpisodeTranscript, EpisodeTurn
+from tutor_sim.domain.models.client_call import ActionCall
+from tutor_sim.domain.models.episode import (
+    EpisodeTranscript,
+    EpisodeTurn,
+    RejectedPrompt,
+)
 from tutor_sim.domain.models.observation import ActionAttempt, Observation
 from tutor_sim.domain.models.tutor_role import DashboardView, TutorDecision
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.tutor_client import TutorClientPort
 from tutor_sim.domain.ports.tutor_role import TutorRolePort
+
+
+class PupilTurnBrief:
+    """What the pupil is asked to answer on each turn of an episode."""
+
+    def render(self, released: str | None, last: str | None) -> str:
+        """The tutor's released reply, or the pupil's own unanswered message.
+
+        Without the second case the pupil gets the same request every turn
+        nothing is released, and at temperature 0 writes the same message.
+        """
+        if released:
+            return (
+                f"Your tutor replied:\n\n{released}\n\n"
+                "Write your next message to your tutor."
+            )
+        if last:
+            return (
+                "Your tutor has not answered your last message yet. "
+                f"You wrote:\n\n{last}\n\n"
+                "Write a short follow-up message to your tutor. "
+                "Do not repeat your last message."
+            )
+        return "Begin the lesson. Write your first message to your English tutor."
 
 
 class DuplicateEpisode(Exception):
@@ -81,12 +111,31 @@ class TranscriptFile:
 
 
 class EpisodeRecord(BaseModel):
-    """The transcript, and one set of invariant facts per submitted turn."""
+    """The transcript, and one set of invariant facts per submitted turn.
+
+    ``rejected`` is the pupil message the API refused, if one ended the
+    episode.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     transcript: EpisodeTranscript
     facts: tuple[InvariantFacts, ...]
+    rejected: RejectedPrompt | None = None
+
+
+class EpisodeLine(BaseModel):
+    """One finished episode in ``runs/<run_id>/episodes.jsonl``.
+
+    The report reads the facts; a transcript does not carry them. A
+    resumed Tier 2 run keeps these lines and skips their episodes.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    episode_id: str = Field(min_length=1)
+    facts: tuple[InvariantFacts, ...]
+    rejected: RejectedPrompt | None = None
 
 
 class StopCheck(BaseModel):
@@ -116,6 +165,12 @@ class EpisodeRunner:
 
     Only an approve or edit the API accepted counts as released. Every
     turn's ``policy_version`` must be the frozen manifest's, as in Tier 1.
+
+    A pupil message the API refuses with 422 (``session_rejected``: the
+    prompt bound, or a session the API will not take a turn for) ends the
+    episode and is recorded as ``rejected``. At temperature 0 the pupil
+    writes that message again on every rerun, so aborting would block the
+    campaign for good. Every other failed call still aborts.
     """
 
     def __init__(
@@ -133,6 +188,8 @@ class EpisodeRunner:
         self._transcripts = transcripts
         self._roster = RetainedLearner()
         self._action = TutorAction(client)
+        self._failed = FailedCall()
+        self._brief = PupilTurnBrief()
         self._observe = TurnObservation()
         self._class = OutcomeClassifier()
         self._halted = HaltedDecision()
@@ -150,31 +207,47 @@ class EpisodeRunner:
         self._mode.check(self._client.health())
         listed = self._client.learners()
         if listed.kind != "ok":
-            msg = "the learner roster could not be read"
+            msg = (
+                f"the learner roster could not be read: {self._failed.describe(listed)}"
+            )
             raise CampaignAbort(msg)
         self._roster.require(learner_id, listed.body)
         opened = self._client.open_session(learner_id, tutor_id)
         if opened.kind != "ok" or opened.body is None:
-            msg = "the episode session did not open"
+            msg = f"the episode session did not open: {self._failed.describe(opened)}"
             raise CampaignAbort(msg)
         session_id = opened.body.session_id
         released: str | None = None
         turns: list[EpisodeTurn] = []
         observations: list[Observation] = []
         stop: ActionAttempt | None = None
+        rejected: RejectedPrompt | None = None
         prompt = ""
         for index in range(spec.max_turns):
-            prompt = self._pupil.complete(persona, released or "Begin the lesson.")
+            brief = self._brief.render(released, prompt or None)
+            prompt = self._pupil.complete(persona, brief).strip()
             submitted = self._client.submit(session_id, learner_id, prompt, ())
+            if submitted.kind == "session_rejected":
+                rejected = RejectedPrompt(
+                    turn_index=index,
+                    characters=len(prompt),
+                    http_status=submitted.http_status,
+                    kind=submitted.kind,
+                )
+                break
             if submitted.kind != "ok" or submitted.body is None:
-                msg = "a turn in the episode was not accepted"
+                msg = (
+                    "a turn in the episode was not accepted: "
+                    f"{self._failed.describe(submitted)}"
+                )
                 raise CampaignAbort(msg)
             body = submitted.body
             self._policy.check(body.policy_version, policy_version)
             decision = self._role.decide(self._view(body, index))
             attempt = self._action.attempt(session_id, body.turn_id, tutor_id, decision)
-            if attempt is None:
-                msg = "the tutor action was not recorded"
+            if isinstance(attempt, ActionCall):
+                failed = self._failed.describe(attempt)
+                msg = f"the tutor action was not recorded: {failed}"
                 raise CampaignAbort(msg)
             observation, replay = self._observation(
                 spec, index, session_id, body, attempt
@@ -212,6 +285,7 @@ class EpisodeRunner:
         return EpisodeRecord(
             transcript=transcript,
             facts=self._facts(tuple(observations), check),
+            rejected=rejected,
         )
 
     def _view(self, body: TurnOutcomeView, index: int) -> DashboardView:
@@ -221,6 +295,7 @@ class EpisodeRunner:
                 if body.halted_at is not None or body.refused
                 else "awaiting_tutor_approval"
             ),
+            halted_at=body.halted_at,
             output_before_checks=body.reply,
             turn_index=index,
             policy_version=body.policy_version,
@@ -237,15 +312,19 @@ class EpisodeRunner:
         """Read, replay and audit the turn just acted on."""
         detail = self._client.detail(body.turn_id)
         if detail.kind != "ok" or detail.body is None:
-            msg = "a turn in the episode could not be read"
+            failed = self._failed.describe(detail)
+            msg = f"a turn in the episode could not be read: {failed}"
             raise CampaignAbort(msg)
         replay = self._client.replay(body.turn_id)
         if replay.kind != "ok" or replay.body is None:
-            msg = "a turn in the episode could not be replayed"
+            msg = (
+                "a turn in the episode could not be replayed: "
+                f"{self._failed.describe(replay)}"
+            )
             raise CampaignAbort(msg)
         audit = self._client.audit(session_id)
         if audit.kind != "ok" or audit.body is None:
-            msg = "the episode audit could not be read"
+            msg = f"the episode audit could not be read: {self._failed.describe(audit)}"
             raise CampaignAbort(msg)
         outcome = self._class.classify(
             body.halted_at, self._halted.of(body), body.refused, body.status

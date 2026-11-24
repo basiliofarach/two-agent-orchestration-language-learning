@@ -38,6 +38,8 @@ build/
 
 # Simulation artefacts that must not be redistributed (DEC-0016).
 datasets/sim/*/restricted/
+# The case plan carries payload text from restricted sources.
+datasets/sim/*/plan.json
 .cache/sim/
 
 # Models — pinned by SHA in the ADR, never committed as weights.

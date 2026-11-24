@@ -11,9 +11,15 @@ from tutor_sim.adapters.digest import ArtefactDigest
 from tutor_sim.adapters.file_dataset_store import FileDatasetStore
 from tutor_sim.adapters.http_source_fetch import CachedOnlySourceFetch, HttpSourceFetch
 from tutor_sim.adapters.http_tutor_client import HttpTutorClient
+from tutor_sim.adapters.pos_tagger import (
+    PinnedBytes,
+    TreeTaggerProcess,
+    TreeTaggerTokens,
+)
 from tutor_sim.adapters.role_model import (
     EchoRoleModel,
     OllamaRoleModel,
+    PosTaggerPin,
     RoleChatLimits,
     RoleModelfile,
     RoleModelPin,
@@ -21,12 +27,16 @@ from tutor_sim.adapters.role_model import (
     UrllibRoleChat,
 )
 from tutor_sim.adapters.system_clock import SystemClock
+from tutor_sim.application.build import DatasetBuild
 from tutor_sim.application.commands import CampaignCommands
+from tutor_sim.application.measures import MeasureSources
 from tutor_sim.application.personas import TutorRoleCards
+from tutor_sim.application.progress import CommandProgress
 from tutor_sim.application.roles import (
     AbsentTutor,
     ComplacentTutor,
     DiligentTutor,
+    DiligentTutorCard,
     StoppingTutor,
     TutorRoster,
 )
@@ -34,6 +44,7 @@ from tutor_sim.catalogue import SourceCatalogue
 from tutor_sim.domain.models.source import SourceRecord
 from tutor_sim.domain.ports.clock import ClockPort
 from tutor_sim.domain.ports.dataset_store import DatasetStorePort
+from tutor_sim.domain.ports.pos_tagger import PosTaggerPort
 from tutor_sim.domain.ports.role_model import RoleModelPort
 from tutor_sim.domain.ports.source_fetch import SourceFetchPort
 from tutor_sim.settings import SimulationSettings
@@ -100,6 +111,23 @@ class TutorRosterChoice:
         )
 
 
+class TaggerChoice:
+    """TreeTagger when a folder is set; its files must match the pin."""
+
+    def choose(self, settings: SimulationSettings) -> TreeTaggerProcess | None:
+        """``None`` without a folder. A file off its pin fails the wiring."""
+        folder = settings.treetagger_dir
+        if folder is None:
+            return None
+        pin = PosTaggerPin(settings.runtime_pin_path)
+        return TreeTaggerProcess(
+            PinnedBytes(folder / "bin" / "tree-tagger", pin.binary_sha256()),
+            PinnedBytes(folder / "english.par", pin.parameter_sha256()),
+            pin.version(),
+            TreeTaggerTokens(),
+        )
+
+
 class WiredHarness(BaseModel):
     """The objects one command run holds."""
 
@@ -131,9 +159,17 @@ class SimulationCompositionRoot:
         store = FileDatasetStore(self._settings.dataset_dir)
         clock = SystemClock()
         model = RoleModelChoice().choose(self._settings)
-        role = DiligentTutor(model, "You are a diligent tutor. Answer with one action.")
+        role = DiligentTutor(model, DiligentTutorCard().system())
         roster = TutorRosterChoice().build(role)
+        tagger = TaggerChoice().choose(self._settings)
+        # Measures read the pinned CEFR-J artefacts from the cache, never the web.
+        measures = MeasureSources(
+            CachedOnlySourceFetch(self._settings.cache_dir, digest),
+            tuple(catalogue),
+            tagger,
+        )
         if self._settings.offline:
+            cached = CachedOnlySourceFetch(self._settings.cache_dir, digest)
             commands = CampaignCommands(
                 self._settings,
                 clock,
@@ -144,17 +180,21 @@ class SimulationCompositionRoot:
                 role,
                 roster,
                 stream,
+                self._build(cached, store, tuple(catalogue), tagger),
+                CommandProgress(stream),
+                measures,
             )
             return WiredHarness(
                 clock=clock,
-                fetch=CachedOnlySourceFetch(self._settings.cache_dir, digest),
+                fetch=cached,
                 store=store,
                 commands=commands,
                 client=None,
             )
         hosts = CatalogueHosts().from_records(catalogue)
-        client = httpx.Client()
+        client = httpx.Client(timeout=self._settings.api_timeout_seconds)
         tutor = HttpTutorClient(client, self._settings.api_base_url)
+        fetch = HttpSourceFetch(client, self._settings.cache_dir, digest, hosts)
         commands = CampaignCommands(
             self._settings,
             clock,
@@ -165,11 +205,30 @@ class SimulationCompositionRoot:
             role,
             roster,
             stream,
+            self._build(fetch, store, tuple(catalogue), tagger),
+            CommandProgress(stream),
+            measures,
         )
         return WiredHarness(
             clock=clock,
-            fetch=HttpSourceFetch(client, self._settings.cache_dir, digest, hosts),
+            fetch=fetch,
             store=store,
             commands=commands,
             client=client,
+        )
+
+    def _build(
+        self,
+        fetch: SourceFetchPort,
+        store: DatasetStorePort,
+        catalogue: tuple[SourceRecord, ...],
+        tagger: PosTaggerPort | None,
+    ) -> DatasetBuild:
+        return DatasetBuild(
+            fetch,
+            store,
+            catalogue,
+            self._settings.dataset_dir,
+            self._settings.seed,
+            tagger,
         )

@@ -1,12 +1,17 @@
 """The campaign database name and the URL Alembic is handed."""
 
+import io
+
 import pytest
 
 from tutor_api.curation.simulation_database import (
     DatabaseIdentifier,
     DatabaseUrl,
+    ResetRefused,
     SimulationDatabase,
+    SimulationDatabaseMain,
 )
+from tutor_api.settings import ApplicationSettings
 
 
 class TestSimulationDatabase:
@@ -31,3 +36,25 @@ class TestSimulationDatabase:
             "postgresql+psycopg://owner:secret@127.0.0.1:5432/tutor_sim"
             "?sslmode=verify-full&sslrootcert=/tmp/ca.pem#root"
         )
+
+    def test_the_drop_forces_out_open_connections(self) -> None:
+        assert SimulationDatabase("tutor_sim").drop_statement() == (
+            'DROP DATABASE IF EXISTS "tutor_sim" WITH (FORCE)'
+        )
+
+    def test_a_reset_never_drops_the_database_the_owner_url_names(self) -> None:
+        owner = "postgresql+psycopg://owner:secret@127.0.0.1:5432/tutor_sim"
+        with pytest.raises(ResetRefused, match="owner URL names it"):
+            SimulationDatabase("tutor_sim").reset(owner, discard_audit=True)
+
+    def test_an_unknown_flag_is_a_usage_error(self) -> None:
+        errors = io.StringIO()
+        settings = ApplicationSettings(
+            _env_file=None,  # type: ignore[call-arg]
+            database_url="postgresql+psycopg://o:s@127.0.0.1:1/tutor",
+        )
+        status = SimulationDatabaseMain(
+            settings, io.StringIO(), SimulationDatabase(), errors
+        ).run(("--wipe",))
+        assert status == 2
+        assert "usage" in errors.getvalue()

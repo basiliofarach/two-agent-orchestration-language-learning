@@ -50,6 +50,15 @@ class Expected(BaseModel):
     basis: LabelBasis
 
 
+class TopicName(BaseModel):
+    """A topic's name, for the pupil to ask about. Grammar Profile items only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    topic_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
 class CaseSpec(BaseModel):
     """One planned case, before a pupil utterance exists."""
 
@@ -71,13 +80,19 @@ class CaseSpec(BaseModel):
 
 
 class Construction(BaseModel):
-    """Whether the planted payload survived realisation."""
+    """Whether the planted payload survived realisation, and how it got there.
+
+    ``copied``: the role model's own text already held the payload bytes.
+    ``appended``: the harness added the payload bytes after the model's
+    lead-in. ``none``: no payload reached the utterance.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     payload_present: bool
     attempts: int = Field(ge=1, le=3)
     discarded: bool
+    payload_placement: Literal["none", "copied", "appended"]
 
 
 class GeneratorStamp(BaseModel):

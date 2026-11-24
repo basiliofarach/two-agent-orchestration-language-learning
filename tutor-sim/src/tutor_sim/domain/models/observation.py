@@ -1,11 +1,12 @@
 """What one turn showed the harness. No learner text is stored here."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from tutor_sim.domain.models.case import OutcomeClass
+from tutor_sim.domain.models.client_call import CallKind
 
 
 class ObservedGate(BaseModel):
@@ -60,6 +61,33 @@ class Observation(BaseModel):
     outcome: OutcomeClass
 
 
+# ``run-YYYYMMDDTHHMMSS``, then ``-2``, ``-3`` for runs in the same second.
+# A directory name, never a path: no separator can reach the evidence root.
+RunId = Annotated[str, StringConstraints(pattern=r"^run-\d{8}T\d{6}(-[1-9]\d*)?$")]
+
+
+class Tier1Pointer(BaseModel):
+    """The latest Tier 1 run that finished. An aborted run never moves it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: RunId
+
+
+CaseStep = Literal["submit", "detail", "status", "action", "replay", "audit"]
+
+
+class CaseFailure(BaseModel):
+    """Where an errored case stopped. No response text: a 422 can echo input."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    step: CaseStep
+    http_status: int = Field(ge=0)
+    # ``None`` when every call succeeded but the turn status was unknown.
+    kind: CallKind | None
+
+
 class CampaignLine(BaseModel):
     """One case the run kept. Exposed text stays out of the evidence file."""
 
@@ -68,3 +96,5 @@ class CampaignLine(BaseModel):
     case_id: str = Field(min_length=1)
     errored: bool
     observation: Observation | None = None
+    # Absent from lines written before failures were recorded.
+    failure: CaseFailure | None = None

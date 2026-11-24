@@ -49,6 +49,8 @@ class DashboardView(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: Literal["awaiting_tutor_approval", "held_for_review"]
+    # The gate that held the turn, as ``POST /turns`` returns it.
+    halted_at: str | None = None
     output_before_checks: str | None = None
     turn_index: int = Field(default=0, ge=0)
     policy_version: str = ""

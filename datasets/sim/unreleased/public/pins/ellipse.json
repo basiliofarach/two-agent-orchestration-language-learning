@@ -1,5 +1,7 @@
 {
   "source_id": "ellipse",
-  "digest_scope": "pin-file",
-  "note": "The sha256 in sources.json is the digest of this pin file, not of a fetched artefact. A later build replaces it with the artefact digest."
+  "digest_scope": "artefact",
+  "artefact": "ellipse-710963b.tar.gz",
+  "bytes": 11245934,
+  "note": "The sha256 in sources.json is the digest of the fetched artefact. The build checks it on every read."
 }

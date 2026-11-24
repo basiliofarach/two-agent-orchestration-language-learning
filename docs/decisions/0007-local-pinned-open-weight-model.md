@@ -18,6 +18,22 @@ loopback from a proxy, so an environment proxy would otherwise receive the
 prompt. A comparison run against a hosted model remains a second
 `LanguageModelPort` adapter, not a setting on this one.
 
+*Amended:* 2026-11-19 — Qwen3 decodes in its non-thinking mode
+(`think: false`), with `max_tokens` raised from 256 to 512. With the mode
+left to Ollama's default, the thinking phase ran at temperature 0 until it
+used the whole 256-token budget, and the answer came back empty. In the
+first Tier 1 simulation run, all 166 generated turns that passed the four
+gates had an empty reply. Non-thinking is one of the model's two supported
+modes and suits short tutoring replies. Temperature 0 stays, because replay
+(rule 7) needs it, and Qwen3's guidance warns against greedy decoding in
+thinking mode. A thinking budget that is cut off and then forced to answer
+was rejected: Ollama has no such budget, so it would take two calls per
+turn, unaudited intermediate text, and an ad hoc method. `think` is
+recorded in `decoding_params`, so a turn and its replay name the mode.
+Records sealed before the field existed hold no `think` key and hash as
+before; their replay now diverges, because they were produced with thinking
+on. The first run is kept as evidence of the fault, not scored.
+
 ## Context
 
 The Content Generation Agent needs one LLM. Constraints:

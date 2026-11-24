@@ -1,0 +1,10 @@
+{
+  "run_id": "run-20261120T135150",
+  "dataset_version": "sim-dataset/unreleased-2",
+  "tier": "1",
+  "finished_at": "2026-11-23T13:55:24.828715Z",
+  "label": "simulated:sim-dataset/unreleased-2",
+  "passed_invariants": false,
+  "licence_status": "confirmed",
+  "complete": true
+}
